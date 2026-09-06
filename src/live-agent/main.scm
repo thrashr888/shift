@@ -6,7 +6,14 @@
   #:use-module (ice-9 threads)
   #:use-module (ice-9 textual-ports)
   #:use-module (srfi srfi-1)
+  #:use-module (live-agent settings)
+  #:use-module (live-agent input)
+  #:use-module (live-agent models)
+  #:use-module (live-agent policy)
+  #:use-module (live-agent transcript)
+  #:use-module (live-agent builtins)
   #:use-module (live-agent compaction)
+  #:use-module (live-agent context)
   #:use-module (live-agent json)
   #:use-module (live-agent extensions)
   #:use-module (live-agent generation)
@@ -20,6 +27,29 @@
   #:export (main))
 
 (define turn-active? #f)
+(define turn-thread #f)
+;; A private inherited pipe carries lifecycle results to the MCP supervisor.
+;; Model output and terminal prompts are never control messages.
+(define control-port
+  (let ((fd (getenv "SHIFT_CONTROL_FD")))
+    (and fd (let ((port (fdopen (string->number fd) "w")))
+              (fcntl port F_SETFD FD_CLOEXEC)
+              port))))
+(define operation-status "ok")
+(define operation-error #f)
+(define operation-span #f)
+(define (emit-control! state)
+  (when control-port
+    (display (json-write
+              (json-object (cons "state" state)
+                           (cons "status" operation-status)
+                           (cons "error" (or operation-error json-null))
+                           (cons "span_id" (or operation-span json-null)))) control-port)
+    (newline control-port)
+    (force-output control-port)))
+(define (operation-failed! detail)
+  (set! operation-status "error")
+  (set! operation-error detail))
 
 (define supported-tool-names
   '("read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension"))
@@ -48,7 +78,8 @@
   (sigaction
    SIGINT
    (lambda _
-     (when turn-active? (throw 'turn-cancelled "cancelled by user")))))
+     (when turn-thread
+       (system-async-mark (lambda () (throw 'turn-cancelled "cancelled by user")) turn-thread)))))
 
 (define (usage)
   (display
@@ -59,7 +90,7 @@
     "       shift session-fork PARENT CHILD\n")))
 
 (define (parse-arguments args)
-  (let loop ((rest args) (agent #f) (state-dir #f) (watch? #t)
+  (let loop ((rest args) (agent #f) (state-dir #f) (watch? (isatty? (current-input-port)))
              (session-name #f) (session-mode #f) (list? #f)
              (initial-prompt #f) (fork-parent #f) (fork-child #f))
     (cond
@@ -121,6 +152,12 @@
    (string-append
     "Commands:\n"
     "  /show             inspect the active generation\n"
+    "  /settings [save [project|user]]  inspect or save defaults\n"
+    "  /model [list|PROVIDER/MODEL]     inspect or switch model\n"
+    "  /mode [manual|plan|accept|auto]  execution policy\n"
+    "  /effort [default|low|medium|high|max]  model effort\n"
+    "  /fast [on|off]                  fast provider service\n"
+    "  /context [limit TOKENS]         usage and context budget\n"
     "  /thinking [MODE]  show or set off/on/low/medium/high\n"
     "  /stream [on|off]  show or set streaming output\n"
     "  /eval EXPR        transactionally add a live Scheme definition\n"
@@ -151,13 +188,13 @@
             (generation-id generation)
             (generation-fingerprint generation)
             (generation-ref generation 'agent-name)
-            (generation-ref generation 'agent-provider)
-            (generation-ref generation 'agent-model)
-            (generation-ref generation 'agent-base-url)
-            (generation-ref generation 'agent-api-key-environment)
-            (generation-ref generation 'agent-stream?)
-            (generation-ref generation 'agent-thinking)
-            (generation-ref generation 'agent-keep-alive)
+            (setting-ref generation 'agent-provider)
+            (setting-ref generation 'agent-model)
+            (setting-ref generation 'agent-base-url)
+            (setting-ref generation 'agent-api-key-environment)
+            (setting-ref generation 'agent-stream?)
+            (setting-ref generation 'agent-thinking)
+            (setting-ref generation 'agent-keep-alive)
             (generation-ref generation 'agent-tools)
             (generation-ref generation 'agent-shell-policy)
             (length (generation-patches generation))
@@ -178,10 +215,10 @@
             (generation-ref generation 'agent-name)
             (generation-id generation)
             (short-fingerprint (generation-fingerprint generation))
-            (generation-ref generation 'agent-model)
-            (generation-ref generation 'agent-provider)
-            (enabled-label (generation-ref generation 'agent-stream?))
-            (let ((thinking (generation-ref generation 'agent-thinking)))
+            (setting-ref generation 'agent-model)
+            (setting-ref generation 'agent-provider)
+            (enabled-label (setting-ref generation 'agent-stream?))
+            (let ((thinking (setting-ref generation 'agent-thinking)))
               (if (boolean? thinking) (enabled-label thinking) thinking))
             (enabled-label watch?)
             (length (generation-ref generation 'agent-tools))
@@ -199,6 +236,15 @@
              (append (list #f (exception-message exception))
                      (exception-irritants exception))))
     (lambda _ (format #f "~s" exception))))
+
+(define (caught-error-detail key arguments)
+  (catch #t
+    (lambda ()
+      (if (and (>= (length arguments) 3) (string? (cadr arguments))
+               (list? (caddr arguments)))
+          (apply format #f (cadr arguments) (caddr arguments))
+          (format #f "~a: ~s" key arguments)))
+    (lambda _ (format #f "~a: ~s" key arguments))))
 
 (define* (start-agent-watcher! runtime #:optional (on-reloaded (lambda () #t)))
   (let ((stopped? #f)
@@ -271,6 +317,9 @@
    (runtime-generation-summaries runtime)))
 
 (define* (show-traces tracer #:optional (query #f) (span-id #f))
+  (if (not (builtin-enabled? 'tracing))
+      (display "Tracing built-in is disabled.\n")
+      (begin
   (format #t "trace file ~a~%session ~a~%" (tracer-path tracer)
           (tracer-session-id tracer))
   (call-with-values
@@ -309,7 +358,7 @@
                                     (not (string-null? preview)))
                                (format #f "  ~s" preview)
                                "")))))
-           spans)))))
+           spans)))))))
 
 (define (execute-traces tracer arguments)
   (catch #t
@@ -390,6 +439,7 @@
   (with-exception-handler
       (lambda (exception)
         (let ((detail (exception-detail exception)))
+          (operation-failed! detail)
           (format (current-error-port)
                   "~a rejected; the active generation is unchanged: ~a~%"
                   label
@@ -459,20 +509,55 @@
    description))
 
 (define (set-live-setting! runtime label binding source-value display-value)
-  (when
-      (try-transition
-       label
-       (lambda ()
-         (runtime-eval!
-          runtime
-          (format #f "(set! ~a ~a)" binding source-value))))
-    (format #t "~a ~a · generation ~a~%"
-            label display-value
-            (generation-id (runtime-current runtime)))))
+  (let ((value (call-with-input-string source-value read)))
+    (when (and (pair? value) (eq? (car value) 'quote)) (set! value (cadr value)))
+    (setting-set! binding value)
+    (runtime-record! runtime 'setting-changed `((setting . ,binding) (value . ,value)))
+    (format #t "~a ~a · saved for this session~%" label display-value)))
+
+(define last-usage (json-object))
+(define last-estimate 0)
+(define (show-context generation)
+  (format #t "Context: ~a estimated input tokens; limit ~a; output reserve ~a.~%"
+    last-estimate (or (model-context-limit generation) 'unknown)
+    (setting-ref generation 'output-reserve))
+  (format #t "Last reported usage: ~a~%" (json-write last-usage)))
+
+(define (handle-preference-command runtime line)
+  (let* ((generation (runtime-current runtime)) (parts (string-tokenize line))
+         (command (car parts)) (value (and (pair? (cdr parts)) (cadr parts))))
+    (cond
+      ((string=? command "/settings")
+       (if (equal? value "save")
+           (let ((scope (if (= (length parts) 3) (string->symbol (caddr parts)) 'project)))
+             (unless (memq scope '(user project)) (error "save scope must be project or user"))
+             (format #t "Saved defaults: ~a~%" (settings-save! generation scope)))
+           (settings-show generation)))
+      ((string=? command "/model")
+       (cond ((not value) (show-model generation) (display "Use /model list or /model PROVIDER/MODEL.\n"))
+             ((string=? value "list") (model-list! generation))
+             (else (model-select! value) (show-model generation))))
+      ((string=? command "/context")
+       (when value
+         (unless (and (string=? value "limit") (= (length parts) 3)) (error "use /context limit TOKENS"))
+         (setting-set! 'context-limit (string->number (caddr parts))))
+       (show-context generation))
+      ((string=? command "/mode")
+       (when value (setting-set! 'mode (string->symbol value)))
+       (format #t "Mode: ~a~%" (setting-ref generation 'mode))
+       (when (eq? (setting-ref generation 'mode) 'auto)
+         (display "Auto is conservative: read-only tools run; other tools require approval until model approval evaluation is complete.\n")))
+      ((string=? command "/effort")
+       (when value (setting-set! 'effort (string->symbol value))) (show-model generation))
+      ((string=? command "/fast")
+       (when value
+         (unless (member value '("on" "off")) (error "use /fast on|off"))
+         (setting-set! 'fast (string=? value "on")))
+       (show-model generation)))))
 
 (define (handle-thinking-command runtime line)
   (let* ((generation (runtime-current runtime))
-         (current (generation-ref generation 'agent-thinking))
+         (current (setting-ref generation 'agent-thinking))
          (value
           (if (string=? line "/thinking")
               ""
@@ -495,7 +580,7 @@
 
 (define (handle-stream-command runtime line)
   (let* ((generation (runtime-current runtime))
-         (current (generation-ref generation 'agent-stream?))
+         (current (setting-ref generation 'agent-stream?))
          (value
           (if (string=? line "/stream")
               ""
@@ -519,6 +604,9 @@
 
 (define (handle-command runtime tracer session line)
   (cond
+   ((member (car (string-tokenize line)) '("/settings" "/model" "/context" "/mode" "/effort" "/fast"))
+    (try-transition "settings" (lambda () (handle-preference-command runtime line)))
+    'continue)
    ((string=? line "/help") (show-help) 'continue)
    ((string=? line "/show") (show-generation runtime) 'continue)
    ((or (string=? line "/thinking") (string-prefix? "/thinking " line))
@@ -620,20 +708,22 @@
 (define (tool-name value)
   (if (symbol? value) (symbol->string value) value))
 
-(define live-change-intent-words
-  '("fix" "change" "update" "modify" "edit" "remember" "configure"
-    "switch" "enable" "disable" "always" "start" "stop" "add"
-    "implement" "create" "write" "refactor" "remove" "rename" "patch"))
-
-(define (explicit-live-change-request? text)
-  (let ((lower (string-downcase text)))
-    (any (lambda (word) (string-contains lower word))
-         live-change-intent-words)))
-
 (define (read-user-line prompt)
-  (if (isatty? (current-input-port))
-      (readline prompt)
-      (get-line (current-input-port))))
+  (if (and control-port (string=? prompt "shift> "))
+      (begin
+        (display prompt)
+        (force-output)
+        (emit-control! "ready")
+        (let ((line (get-line (current-input-port))))
+          (set! operation-status "ok")
+          (set! operation-error #f)
+          (set! operation-span #f)
+          line))
+      (if (isatty? (current-input-port))
+          (let ((line (readline prompt)))
+            (when (string=? prompt "shift> ") (input-remember! line))
+            line)
+          (get-line (current-input-port)))))
 
 (define (terminal-settings)
   (catch #t
@@ -649,6 +739,7 @@
 (define (read-approval-key prompt)
   (display prompt)
   (force-output)
+  (emit-control! "needs_approval")
   (if (not (isatty? (current-input-port)))
       (read-user-line "")
       (let ((saved (terminal-settings)))
@@ -694,6 +785,8 @@
                  (map tool-name (generation-ref generation 'agent-tools)))))
           (unless (member name enabled)
             (error "the interrupted tool is no longer enabled" name))
+          (unless (authorize-tool runtime generation name arguments)
+            (error "recovery tool denied by current mode or approval"))
           (when (member name '("live_eval" "extension"))
             (error
              "live mutations cannot be replayed because their outcome is ambiguous; inspect the generation, then discard this record"
@@ -714,7 +807,7 @@
                       (execute-tool
                        name arguments (getcwd)
                        (generation-ref generation 'agent-shell-policy)
-                       confirm-shell)))
+                       (lambda _ #t))))
                  (output (tool-result-output outcome)))
             (trace-end!
              span (if (tool-result-success? outcome) "OK" "ERROR")
@@ -801,7 +894,7 @@
     (lambda (key . arguments)
       (make-tool-result
        #f
-       (format #f "live evaluation rejected (~a): ~s" key arguments)))))
+       (string-append "live evaluation rejected: " (caught-error-detail key arguments))))))
 
 (define (execute-extension runtime generation arguments)
   (catch #t
@@ -886,7 +979,7 @@
             (loop (cdr remaining)
                   (string-append result "\n\n" (car remaining)))))))
 
-(define (select-context-with-trace tracer parent generation line)
+(define (select-context-with-trace runtime tracer parent generation line)
   (let ((span
          (trace-start!
           tracer "context.select" "RETRIEVER"
@@ -909,6 +1002,8 @@
           (let* ((sections
                   (map
                    (lambda (path)
+                     (unless (authorize-tool runtime generation "read" (json-object (cons "path" path)))
+                       (error "context read denied" path))
                      (let ((result
                             (execute-tool
                              "read"
@@ -936,6 +1031,22 @@
            (error.message . ,(format #f "~s" arguments))))
         (apply throw key arguments)))))
 
+(define interactive-approval? (make-parameter #t))
+(define (authorize-tool runtime generation name arguments)
+  (let* ((decision (tool-decision (setting-ref generation 'mode) name arguments))
+         (allowed? (case decision
+                     ((allow) #t)
+                     ((ask) (and (interactive-approval?)
+                       (begin
+                         (format #t "\nTool requests: ~a\n~a\n" name (json-write arguments))
+                         (let ((answer (read-approval-key "Approve tool? [y/N] ")))
+                           (or (and (char? answer) (char-ci=? answer #\y))
+                               (and (string? answer) (member (string-downcase (string-trim-both answer)) '("y" "yes"))))))))
+                     (else #f))))
+    (runtime-record! runtime 'tool-approval
+      `((tool . ,name) (mode . ,(setting-ref generation 'mode)) (decision . ,decision) (approved . ,(if allowed? #t #f))))
+    allowed?))
+
 (define (execute-tool-calls runtime tracer parent generation provider calls
                             messages enabled-tools)
   (let loop ((remaining calls) (result messages))
@@ -957,11 +1068,12 @@
                      (input.value . ,(json-write (tool-call-arguments call))))
                    parent))
                  (outcome
-                  (if (not enabled?)
+                  (if (or (not enabled?)
+                          (not (authorize-tool runtime generation name (tool-call-arguments call))))
                       (make-tool-result
                        #f
                        (format #f
-                               "tool unavailable in this turn: ~a. It was not enabled by the active image or the user's explicit intent. Continue without it."
+                               "tool unavailable in this turn: ~a. The active image, execution mode, or approval denied it. Continue without it."
                                name))
                       (begin
                         ;; This write-ahead record is deliberately retained if
@@ -988,7 +1100,7 @@
                                (tool-call-arguments call)
                                (getcwd)
                                (generation-ref generation 'agent-shell-policy)
-                               confirm-shell))))
+                               (lambda _ #t)))))
                           (lambda (key . arguments)
                             (if (cancelled? key)
                                 (begin
@@ -1018,69 +1130,6 @@
                             name
                             output)))))))))
 
-(define (usage-attributes completion)
-  (let* ((root (completion-usage completion))
-         (openai-usage
-          (and (json-object? root)
-               (json-object-ref root "usage" #f)))
-         (prompt
-          (if (and openai-usage (json-object? openai-usage))
-              (json-object-ref openai-usage "prompt_tokens" #f)
-              (and (json-object? root)
-                   (json-object-ref root "prompt_eval_count" #f))))
-         (output
-          (if (and openai-usage (json-object? openai-usage))
-              (json-object-ref openai-usage "completion_tokens" #f)
-              (and (json-object? root)
-                   (json-object-ref root "eval_count" #f))))
-         (prompt-details
-          (and openai-usage
-               (json-object? openai-usage)
-               (json-object-ref openai-usage "prompt_tokens_details" #f)))
-         (completion-details
-          (and openai-usage
-               (json-object? openai-usage)
-               (json-object-ref openai-usage "completion_tokens_details" #f)))
-         (cached
-          (and prompt-details
-               (json-object? prompt-details)
-               (json-object-ref prompt-details "cached_tokens" #f)))
-         (cache-write
-          (and prompt-details
-               (json-object? prompt-details)
-               (json-object-ref prompt-details "cache_write_tokens" #f)))
-         (reasoning
-          (and completion-details
-               (json-object? completion-details)
-               (json-object-ref completion-details "reasoning_tokens" #f)))
-         (cache-hit?
-          (and (number? cached) (> cached 0)))
-         (uncached
-          (and (number? prompt) (number? cached)
-               (max 0 (- prompt cached))))
-         (metric
-          (lambda (name)
-            (and (json-object? root) (json-object-ref root name #f)))))
-    (append
-     (if prompt `((llm.token_count.prompt . ,prompt)) '())
-     (if output `((llm.token_count.completion . ,output)) '())
-     (if cached `((llm.token_count.prompt_cached . ,cached)) '())
-     (if (number? cached)
-         `((llm.prompt_cache.hit . ,cache-hit?)
-           (llm.prompt_cache.status . ,(if cache-hit? "hit" "miss")))
-         '())
-     (if uncached `((llm.token_count.prompt_uncached . ,uncached)) '())
-     (if cache-write `((llm.token_count.prompt_cache_write . ,cache-write)) '())
-     (if reasoning `((llm.token_count.reasoning . ,reasoning)) '())
-     (if (metric "total_duration")
-         `((llm.total_duration_ns . ,(metric "total_duration"))) '())
-     (if (metric "load_duration")
-         `((llm.load_duration_ns . ,(metric "load_duration"))) '())
-     (if (metric "prompt_eval_duration")
-         `((llm.prompt_eval_duration_ns . ,(metric "prompt_eval_duration"))) '())
-     (if (metric "eval_duration")
-         `((llm.eval_duration_ns . ,(metric "eval_duration"))) '()))))
-
 (define (messages-character-count messages)
   (fold (lambda (message total)
           (+ total (string-length (json-write message))))
@@ -1089,7 +1138,7 @@
 (define (complete-with-trace tracer parent generation-id provider model base-url
                              api-key messages enabled-tools stream? thinking
                              keep-alive prompt-cache-key round
-                             prompt-attributes)
+                             prompt-attributes effort fast? reserve)
   (let ((span
          (trace-start!
           tracer (string-append (symbol->string provider) ".chat") "LLM"
@@ -1122,10 +1171,19 @@
                (provider-complete
                 provider model base-url api-key messages enabled-tools
                 stream? thinking keep-alive prompt-cache-key
-                on-content on-thinking)))
+                on-content on-thinking
+                effort fast? reserve)))
           (when (or thinking-started? content-started?)
             (newline)
             (force-output))
+          (set! last-usage
+            (let ((raw (completion-usage completion)))
+              (let ((value (json-object-ref raw "usage"
+                (apply json-object (filter (lambda (entry)
+                  (member (car entry) '("prompt_eval_count" "eval_count" "total_duration")))
+                  (json-object-entries raw))))))
+                (if (json-object-ref raw "service_tier" #f)
+                    (apply json-object (acons "service_tier" (json-object-ref raw "service_tier") (json-object-entries value))) value))))
           (trace-end!
            span "OK"
            (append
@@ -1143,30 +1201,24 @@
         (apply throw key arguments)))))
 
 (define (provider-turn! runtime tracer parent generation history line turn-count)
-  (let* ((provider (generation-ref generation 'agent-provider))
-         (model (generation-ref generation 'agent-model))
-         (base-url (generation-ref generation 'agent-base-url))
+  (let* ((provider (setting-ref generation 'agent-provider))
+         (model (setting-ref generation 'agent-model))
+         (base-url (setting-ref generation 'agent-base-url))
          (key-environment
-          (generation-ref generation 'agent-api-key-environment))
+          (setting-ref generation 'agent-api-key-environment))
          (api-key (and key-environment (getenv key-environment)))
          (configured-tools
           (map tool-name (generation-ref generation 'agent-tools)))
-         ;; Mutation tools are absent unless this user turn contains explicit
-         ;; change intent. This prevents opportunistic "helpful" writes when
-         ;; the user only asked for information or content in the response.
          (enabled-tools
-          (filter
-           (lambda (name)
-             (and
-              (within-process-tool-ceiling? name)
-              (or (not (member name '("live_eval" "write" "edit")))
-                  (explicit-live-change-request? line))))
-           configured-tools))
+          (filter (lambda (name)
+                    (and (within-process-tool-ceiling? name)
+                         (or (not (string=? name "traces")) (builtin-enabled? 'tracing))))
+                  configured-tools))
          (max-rounds
           (generation-ref generation 'agent-max-tool-rounds))
-         (stream? (generation-ref generation 'agent-stream?))
-         (thinking (generation-ref generation 'agent-thinking))
-         (keep-alive (generation-ref generation 'agent-keep-alive))
+         (stream? (setting-ref generation 'agent-stream?))
+         (thinking (setting-ref generation 'agent-thinking))
+         (keep-alive (setting-ref generation 'agent-keep-alive))
          (system
           (make-message
            "system" (generation-ref generation 'agent-system-prompt)))
@@ -1174,7 +1226,7 @@
           (generation-call generation 'agent-transform-user line))
          (selected
           (select-context-with-trace
-           tracer parent generation transformed-line))
+           runtime tracer parent generation transformed-line))
          (context-paths (car selected))
          (context-text (cadr selected))
          (context-messages
@@ -1190,7 +1242,7 @@
          (user-message (make-message "user" transformed-line))
          (cache-prefix (append (list system) history))
          (cache-cohort
-          (if (explicit-live-change-request? line) "mutation" "normal"))
+          "session")
          (prompt-cache-key
           (string-append
            "shift-" (generation-fingerprint generation) "-" cache-cohort))
@@ -1210,12 +1262,31 @@
           (build-provider-messages
            system history context-messages user-message)))
     (let loop ((messages working) (round 0))
+      (set! last-estimate (estimate-input-tokens messages enabled-tools))
+      (when (context-over-budget? last-estimate (model-context-limit generation)
+                                  (setting-ref generation 'output-reserve))
+        (let* ((prefix (compaction-prefix history 4))
+               (tail (drop messages (+ 1 (length history) (length context-messages)))))
+          (when (null? prefix)
+            (error "Context budget exceeded; current turn is too large to compact safely. Use /compact, /reset, or a larger /context limit."))
+          (let* ((summary (summarize-compaction generation prefix))
+                 (compacted (compact-history-with-summary history summary 4)))
+            (set! history compacted)
+            (set! messages (append (list system) history context-messages tail))
+            (set! last-estimate (estimate-input-tokens messages enabled-tools))
+            (runtime-record! runtime 'session-compacted
+              `((reason . token-budget) (estimated-tokens . ,last-estimate)))
+            (display "Compacted earlier turns before the request.\n")))
+        (when (context-over-budget? last-estimate (model-context-limit generation)
+                                    (setting-ref generation 'output-reserve))
+          (error "Context still exceeds the budget; original checkpoint retained. Reduce input or increase /context limit.")))
       (let* ((outcome
               (complete-with-trace
                tracer parent (generation-id generation)
                provider model base-url api-key messages
                enabled-tools stream? thinking keep-alive prompt-cache-key round
-               prompt-attributes))
+               prompt-attributes (effective-effort generation) (effective-fast? generation)
+               (setting-ref generation 'output-reserve)))
              (completion (car outcome))
              (content-streamed? (cdr outcome))
              (calls (completion-tool-calls completion))
@@ -1244,19 +1315,23 @@
                (+ round 1))))))))
 
 (define (summarize-compaction generation prefix)
-  (if (string=? (generation-ref generation 'agent-model) "demo")
+  (when (context-over-budget? (+ 256 (estimate-input-tokens prefix '()))
+                              (model-context-limit generation)
+                              (setting-ref generation 'output-reserve))
+    (error "Earlier context exceeds the summarizer budget; original history retained. Select a larger-context model."))
+  (if (string=? (setting-ref generation 'agent-model) "demo")
       (format #f "Compacted ~a earlier messages from the demo session."
               (length prefix))
-      (let* ((provider (generation-ref generation 'agent-provider))
+      (let* ((provider (setting-ref generation 'agent-provider))
              (key-environment
-              (generation-ref generation 'agent-api-key-environment))
+              (setting-ref generation 'agent-api-key-environment))
              (api-key (and key-environment (getenv key-environment)))
-             (keep-alive (generation-ref generation 'agent-keep-alive))
+             (keep-alive (setting-ref generation 'agent-keep-alive))
              (completion
               (provider-complete
                provider
-               (generation-ref generation 'agent-model)
-               (generation-ref generation 'agent-base-url)
+               (setting-ref generation 'agent-model)
+               (setting-ref generation 'agent-base-url)
                api-key
                (list
                 (make-message
@@ -1300,7 +1375,7 @@
                         (compaction.prefix_messages . ,(length prefix))
                         (compaction.keep_recent . ,keep-recent)))))
                 (dynamic-wind
-                  (lambda () (set! turn-active? #t))
+                  (lambda () (set! turn-active? #t) (set! turn-thread (current-thread)))
                   (lambda ()
                     (catch #t
                       (lambda ()
@@ -1326,11 +1401,13 @@
                         (trace-end!
                          span (if (cancelled? key) "CANCELLED" "ERROR")
                          `((error.message . ,(format #f "~s" arguments))))
+                        (operation-failed! (format #f "~s" arguments))
+                        (when (cancelled? key) (set! operation-status "cancelled"))
                         (format (current-error-port)
                                 "compaction failed; original history retained: ~s~%"
                                 arguments)
                         history)))
-                  (lambda () (set! turn-active? #f)))))))))
+                  (lambda () (set! turn-active? #f) (set! turn-thread #f)))))))))
 
 (define (perform-turn! runtime tracer history line turn-count)
   (let* ((generation (runtime-current runtime))
@@ -1340,14 +1417,15 @@
            `((generation.id . ,(generation-id generation))
              (turn.number . ,turn-count)
              (input.value . ,line)))))
+    (set! operation-span (trace-span-id span))
     (record-input! runtime generation turn-count line)
     (dynamic-wind
-      (lambda () (set! turn-active? #t))
+      (lambda () (set! turn-active? #t) (set! turn-thread (current-thread)))
       (lambda ()
         (catch #t
           (lambda ()
             (let ((new-history
-                   (if (string=? (generation-ref generation 'agent-model) "demo")
+                   (if (string=? (setting-ref generation 'agent-model) "demo")
                        (demo-turn! runtime generation history line turn-count)
                        (provider-turn!
                         runtime tracer span generation history line turn-count))))
@@ -1362,79 +1440,128 @@
                    runtime 'turn-cancelled
                    `((generation . ,(generation-id generation))
                      (turn . ,turn-count)))
+                  (set! operation-status "cancelled")
                   (display "turn cancelled; conversation state is unchanged.\n")
                   #f)
                 (let ((detail (format #f "~s: ~s" key arguments)))
+                  (operation-failed! detail)
                   (trace-end! span "ERROR" `((error.message . ,detail)))
                   (format (current-error-port) "turn failed: ~a~%" detail)
                   #f)))))
-      (lambda () (set! turn-active? #f)))))
+      (lambda () (set! turn-active? #f) (set! turn-thread #f)))))
 
+(define mcp-stdio? #f)
+(define mcp-http? (and (isatty? (current-input-port)) (not control-port)))
+(define mcp-port 7331)
+(define (transport-arguments args)
+  (let loop ((remaining args) (out '()))
+    (cond
+      ((null? remaining) (reverse out))
+      ((string=? (car remaining) "--mcp")
+       (set! mcp-stdio? #t) (set! mcp-http? #f) (loop (cdr remaining) out))
+      ((string=? (car remaining) "--no-mcp")
+       (set! mcp-http? #f) (loop (cdr remaining) out))
+      ((string=? (car remaining) "--mcp-port")
+       (unless (pair? (cdr remaining)) (error "--mcp-port requires a port"))
+       (let ((port (string->number (cadr remaining))))
+         (unless (and (integer? port) (> port 0) (< port 65536)) (error "invalid MCP port"))
+         (set! mcp-port port) (set! mcp-http? #t))
+       (loop (cddr remaining) out))
+      (else (loop (cdr remaining) (cons (car remaining) out))))))
+
+;; Both transports call this one controller; only it advances conversation
+;; state. Read-only status stays available while a turn owns the mutation lock.
 (define (repl runtime tracer watch? session checkpoint! initial-prompt)
-  (show-banner runtime watch? session)
-  (force-output)
-  (let loop ((turn-count (if session (session-next-turn session) 1))
-             (history (if session (session-history session) '()))
-             (pending initial-prompt))
-    (if pending
-        (let ((result
-               (perform-turn! runtime tracer history pending turn-count)))
-          (if result
-              (let ((next-turn (+ turn-count 1))
-                    (next-history
-                     (compact-history! runtime tracer (cadr result) #f)))
-                (checkpoint! next-history next-turn)
-                (loop next-turn next-history #f))
-              (loop turn-count history #f)))
-        (let ((line (read-user-line "shift> ")))
-      (cond
-       ((eof-object? line)
-        (checkpoint! history turn-count)
-        (newline))
-       ((string-null? (string-trim-both line))
-        (loop turn-count history #f))
-       ((string-prefix? "/" line)
-        (case (handle-command runtime tracer session line)
-          ((quit)
-           (checkpoint! history turn-count)
-           #t)
-          ((reset)
-           (display "Conversation state cleared.\n")
-           (checkpoint! '() 1)
-           (loop 1 '() #f))
-          ((compact)
-           (let ((compacted (compact-history! runtime tracer history #t)))
-             (checkpoint! compacted turn-count)
-             (loop turn-count compacted #f)))
+  (let ((history (if session (normalize-messages (session-history session)) '()))
+        (turn-count (if session (session-next-turn session) 1))
+        (lock (make-mutex)))
+    (define (process! line)
+      (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
+      (let ((action
+             (cond
+               ((string-null? (string-trim-both line)) 'continue)
+               ((string-prefix? "/" line) (handle-command runtime tracer session line))
+               (else
+                 (let ((result (perform-turn! runtime tracer history line turn-count)))
+                   (when result
+                     (set! history (compact-history! runtime tracer (cadr result) #f))
+                     (set! turn-count (+ turn-count 1)))) 'continue))))
+        (case action
+          ((reset) (set! history '()) (set! turn-count 1) (display "Conversation state cleared.\n"))
+          ((compact) (set! history (compact-history! runtime tracer history #t)))
           ((recover-retry)
-           (let ((recovery-message
-                  (try-transition
-                   "tool recovery"
-                   (lambda () (retry-interrupted-tool! runtime tracer)))))
-             (let ((recovered-history
-                    (if recovery-message
-                        (append history (list recovery-message))
-                        history)))
-               (checkpoint! recovered-history turn-count)
-               (loop turn-count recovered-history #f))))
-          (else
-           (checkpoint! history turn-count)
-           (loop turn-count history #f))))
-       (else
-        (let ((result (perform-turn! runtime tracer history line turn-count)))
-          (if result
-              (let ((next-turn (+ turn-count 1))
-                    (next-history
-                     (compact-history! runtime tracer (cadr result) #f)))
-                (checkpoint! next-history next-turn)
-                (loop next-turn next-history #f))
-              (loop turn-count history #f)))))))))
+           (let ((message (try-transition "tool recovery" (lambda () (retry-interrupted-tool! runtime tracer)))))
+             (when message (set! history (append history (list message)))))))
+        (checkpoint! history turn-count)
+        action))
+    (define (dispatch method argument)
+      (if (eq? method 'cancel)
+          (begin
+            (when turn-thread
+              (system-async-mark (lambda () (throw 'turn-cancelled "cancelled by MCP client")) turn-thread))
+            "Cancellation requested.")
+      (if (eq? method 'status)
+          (json-object (cons "pid" (getpid)) (cons "project" (getcwd))
+            (cons "session" (if session (session-name session) json-null))
+            (cons "generation" (generation-id (runtime-current runtime)))
+            (cons "turn" turn-count) (cons "messages" (length history))
+            (cons "busy" turn-active?) (cons "settings" (settings-object (runtime-current runtime))))
+          (begin
+            (unless (and (string? argument) (<= (string-length argument) 262144)) (error "invalid input"))
+            (when (and (eq? method 'prompt) (string-prefix? "/" argument))
+              (error "shift_prompt accepts prompts; use shift_inspect for read-only commands"))
+            (when (and (eq? method 'inspect)
+                       (not (or (member argument '("/show" "/settings" "/context" "/session" "/generations" "/traces" "/extensions"))
+                                (string-prefix? "/trace " argument) (string-prefix? "/traces " argument))))
+              (error "command is not read-only; change settings in the terminal"))
+            (unless (try-mutex lock) (error "session busy; retry after the active operation finishes"))
+            (dynamic-wind
+              (lambda () #t)
+              (lambda ()
+                (let ((output (open-output-string)))
+                  (parameterize ((current-output-port output) (current-error-port output) (interactive-approval? #f))
+                    (process! argument))
+                  (when (not (string=? operation-status "ok")) (error "session operation failed" (get-output-string output)))
+                  (get-output-string output)))
+              (lambda () (unlock-mutex lock)))))))
+    (let ((stop-mcp!
+            (if (and mcp-http? (builtin-enabled? 'mcp))
+                (catch #t
+                  (lambda () ((builtin-ref 'mcp 'start-mcp!) mcp-port dispatch))
+                  (lambda _ (error "MCP port unavailable; choose --mcp-port PORT or --no-mcp" mcp-port)))
+                (lambda () #t))))
+      (dynamic-wind
+        (lambda () #t)
+        (lambda ()
+          (if mcp-stdio?
+              ((builtin-ref 'mcp 'run-mcp-stdio) dispatch)
+              (begin
+                (show-banner runtime watch? session)
+                (show-model (runtime-current runtime))
+                (when (and mcp-http? (builtin-enabled? 'mcp))
+                  (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
+                (force-output)
+                (when initial-prompt (with-mutex lock (process! initial-prompt)))
+                (let loop ()
+                  (let ((line (read-user-line "shift> ")))
+                    (cond
+                      ((eof-object? line) (newline))
+                      ((try-mutex lock)
+                       (let ((action (dynamic-wind
+                                       (lambda () #t)
+                                       (lambda () (process! line))
+                                       (lambda () (unlock-mutex lock)))))
+                         (unless (eq? action 'quit) (loop))))
+                      (else (display "Session busy with an MCP operation.\n") (loop))))))))
+        (lambda () (stop-mcp!))))))
 
 (define (main args)
   (call-with-values
-      (lambda () (parse-arguments args))
+      (lambda () (parse-arguments (transport-arguments args)))
     (lambda (agent-path state-directory watch? requested-session-name session-mode
              list? initial-prompt fork-parent fork-child)
+      (when mcp-stdio? (set! watch? #f))
+      (when (and mcp-stdio? (not (builtin-enabled? 'mcp))) (error "MCP built-in is disabled"))
       (unless (and agent-path state-directory)
         (usage)
         (exit 2))
@@ -1459,6 +1586,8 @@
               (display "No durable sessions.\n")
               (for-each (lambda (name) (display name) (newline)) names)))
         (exit 0))
+      (when (and (not requested-session-name) (isatty? (current-input-port)) (not control-port) (not mcp-stdio?))
+        (set! requested-session-name "default") (set! session-mode 'auto))
       (let* ((session
               (and requested-session-name
                    (try-transition
@@ -1489,9 +1618,12 @@
                     (and session (session-id session))
                     (and session (session-name session))))))
         (unless runtime (exit 1))
+        (settings-init! state-directory (and session runtime-state-directory))
+        (load-dotenv! (string-append (getcwd) "/.env"))
+        (input-init! state-directory)
         (install-cancellation-handler!)
         (let ((checkpoint-history
-               (if session (session-history session) '()))
+               (if session (normalize-messages (session-history session)) '()))
               (checkpoint-turn
                (if session (session-next-turn session) 1)))
           (define (checkpoint! history next-turn)
@@ -1525,5 +1657,3 @@
               (stop-watcher!)
               (trace-close! tracer)
               (when session (close-session! session))))))))))
-
-(main (cdr (command-line)))

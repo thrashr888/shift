@@ -15,9 +15,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "extensions/shift"))
 
-from session_bridge import LiveSession, McpServer  # noqa: E402
+from shift_mcp import LiveSession, McpServer  # noqa: E402
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
@@ -223,7 +223,7 @@ class McpBridgeTest(unittest.TestCase):
         self.process = subprocess.Popen(
             [
                 "python3",
-                str(ROOT / "scripts/session_bridge.py"),
+                str(ROOT / "extensions/shift/shift_mcp.py"),
                 "--state-dir",
                 str(self.state_dir),
             ],
@@ -317,6 +317,8 @@ class McpBridgeTest(unittest.TestCase):
         recovery = self.call("live_session_recovery", {"action": "status"})
         self.assertIn("may have partially executed", recovery["output"])
         retried = self.call("live_session_recovery", {"action": "retry"})
+        self.assertEqual(retried["state"], "needs_approval")
+        retried = self.call("live_session_approve", {"approved": True})
         self.assertIn("Recovery result:", retried["output"])
         self.assertFalse(recovery_path.exists())
 
@@ -336,7 +338,7 @@ class McpBridgeTest(unittest.TestCase):
         self.assertIn("thinking on", setting["output"])
 
         prompt = self.call("live_session_add_prompt", {"text": "Call me Paul."})
-        self.assertIn("generation 3", prompt["output"])
+        self.assertIn("generation 2", prompt["output"])
 
         extensions = self.call("live_extension", {"action": "list"})
         self.assertEqual(extensions["state"], "ready")
@@ -356,7 +358,7 @@ class McpBridgeTest(unittest.TestCase):
                 )
             },
         )
-        self.assertIn("generation 4", shell_settings["output"])
+        self.assertIn("generation 3", shell_settings["output"])
 
         approval_boundary = self.call(
             "live_session_send",
@@ -423,9 +425,10 @@ class McpBridgeTest(unittest.TestCase):
             {"session": "alpha", "mode": "resume", "agent": "test/session-agent.scm"},
         )
         self.assertIn("session alpha · resumed · turn 3", resumed["output"])
-        self.assertIn("generation 2", resumed["output"])
+        self.assertIn("generation 1", resumed["output"])
+        self.assertIn("thinking on", resumed["output"])
         self.assertEqual(resumed["next_turn"], 3)
-        self.assertEqual(resumed["generation"], 2)
+        self.assertEqual(resumed["generation"], 1)
         self.assertTrue(
             self.call("live_session_status", {"session": "beta"})["running"]
         )
@@ -516,6 +519,9 @@ class HotReloadTest(unittest.TestCase):
             (project_root / "bin").mkdir()
             (project_root / "agent").mkdir()
             (project_root / "extensions").mkdir()
+            (project_root / "extensions/shift").symlink_to(
+                ROOT / "extensions/shift", target_is_directory=True
+            )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
             shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
             agent_path = project_root / "agent/default.scm"
@@ -575,6 +581,9 @@ class OpenAIStreamingTest(unittest.TestCase):
             (project_root / "bin").mkdir()
             (project_root / "agent").mkdir()
             (project_root / "extensions").mkdir()
+            (project_root / "extensions/shift").symlink_to(
+                ROOT / "extensions/shift", target_is_directory=True
+            )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
             shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
             (project_root / "README.md").write_text("# deterministic SSE fixture\n")
@@ -593,6 +602,7 @@ class OpenAIStreamingTest(unittest.TestCase):
             session = LiveSession(project_root, project_root / ".shift")
             self.assertEqual(session.start()["state"], "ready")
 
+            session.send("/mode plan")
             response = session.send("read the readme", 10)
             self.assertEqual(response["state"], "ready")
             self.assertIn("assistant> streamed tool ok", response["output"])
@@ -633,6 +643,9 @@ class SubagentMilestoneTest(unittest.TestCase):
             (project_root / "bin").mkdir()
             (project_root / "agent").mkdir()
             (project_root / "extensions").mkdir()
+            (project_root / "extensions/shift").symlink_to(
+                ROOT / "extensions/shift", target_is_directory=True
+            )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
             shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
             (project_root / "README.md").write_text(
@@ -666,6 +679,7 @@ class SubagentMilestoneTest(unittest.TestCase):
                 )["content"][0]["text"]
             )
             self.assertEqual(started["state"], "ready")
+            bridge.call_tool("live_session_send", {"session": "parent", "text": "/mode plan"})
 
             with self.assertRaisesRegex(ValueError, "read, rg, traces, or live_eval"):
                 bridge.call_tool(
@@ -780,6 +794,9 @@ class CancellationTest(unittest.TestCase):
             (project_root / "bin").mkdir()
             (project_root / "agent").mkdir()
             (project_root / "extensions").mkdir()
+            (project_root / "extensions/shift").symlink_to(
+                ROOT / "extensions/shift", target_is_directory=True
+            )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
             shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
             image = (ROOT / "test/session-agent.scm").read_text()
@@ -832,6 +849,9 @@ class TraceToolTest(unittest.TestCase):
             (project_root / "bin").mkdir()
             (project_root / "agent").mkdir()
             (project_root / "extensions").mkdir()
+            (project_root / "extensions/shift").symlink_to(
+                ROOT / "extensions/shift", target_is_directory=True
+            )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
             shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
             image = (ROOT / "test/session-agent.scm").read_text()
@@ -848,6 +868,7 @@ class TraceToolTest(unittest.TestCase):
             (project_root / "agent/default.scm").write_text(image)
             session = LiveSession(project_root, project_root / ".shift")
             self.assertEqual(session.start()["state"], "ready")
+            session.send("/mode plan")
             response = session.send("inspect your trace", 10)
             self.assertEqual(response["state"], "ready")
             self.assertIn("trace inspected", response["output"])

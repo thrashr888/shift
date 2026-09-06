@@ -1,10 +1,15 @@
-# Extension artifacts
+# Extensions
 
-Each `*.scm` file in this directory is a named, persistent live patch. The
-harness never auto-loads artifacts. Use `/extension-load NAME` to apply one as a
-new validated generation and `/extension-disable NAME` to remove that exact
-patch.
+`shift/` contains trusted, shipped built-ins: Ollama, OpenAI, Claude, tracing, and MCP.
+They are enabled by default, load only where needed, and can be excluded using
+`SHIFT_BUILTINS`. They run outside the restricted live image and require restart
+after edits. There is no package registry or automatic third-party discovery.
 
-Artifacts use the same restricted top-level contract as `live_eval`: `define`,
-`define*`, `set!`, or `begin`, targeting only `agent-*` or `extension-*`
-bindings. Existing artifact files are never overwritten.
+Top-level `*.scm` files are user-owned live behavior artifacts. They do not
+load automatically. Use `/extension-load NAME` to apply one as a validated
+generation and `/extension-disable NAME` to remove that exact patch. Successful
+loads persist in named sessions.
+
+Artifacts use the restricted top-level contract: `define`, `define*`, `set!`, or
+`begin`, targeting `agent-*` or `extension-*` bindings. Existing artifact files
+are never overwritten. An artifact cannot enable disabled trusted built-ins.

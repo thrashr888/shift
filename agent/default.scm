@@ -33,9 +33,9 @@
    "asked to change project files; answer ordinary content requests in the conversation. "
    "Use one most-likely path at a time instead "
    "of guessing several paths in parallel. Use shell only when the narrower tools "
-   "cannot perform the task. In this Scheme project, an import means #:use-module or "
-   "(use-modules unless the user names another language; search those literal forms "
-   "before inspecting Python helpers. Named Scheme artifacts can be created, listed, loaded, "
+   "cannot perform the task. Inspect project files to identify the language and test commands. "
+   "When editing Shift itself, Scheme imports use #:use-module or (use-modules. "
+   "Named Scheme artifacts can be created, listed, loaded, "
    "disabled, or exported with the extension tool; use them when a successful live "
    "change should persist beyond this process. Thinking is "
    "already carried separately; never emit think tags or repeat a final answer in content. "
@@ -43,7 +43,7 @@
    "a list of project-relative files. If asked to repair context selection, redefine "
    "that function with live_eval; string-contains and boolean string-contains? are "
    "available, and the new generation applies on the next turn. "
-   "This project is Scheme running on GNU Guile; guild's .go outputs are Guile object files, not Go source or binaries."))
+   "Your live behavior uses Scheme on GNU Guile; the working project may use any language."))
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.

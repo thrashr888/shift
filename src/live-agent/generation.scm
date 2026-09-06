@@ -187,8 +187,8 @@
         (thinking (module-ref module 'agent-thinking))
         (keep-alive (module-ref module 'agent-keep-alive))
         (tools (module-ref module 'agent-tools)))
-    (unless (memq provider '(ollama openai))
-      (error "agent-provider must be ollama or openai" provider))
+    (unless (memq provider '(ollama openai claude))
+      (error "agent-provider must be ollama, openai, or claude" provider))
     (unless (and (string? model) (not (string-null? model)))
       (error "agent-model must be a non-empty string" model))
     (unless (and (string? base-url) (not (string-null? base-url)))
@@ -248,6 +248,23 @@
     (eval-all! source-text module)
     (for-each (lambda (patch) (eval-all! patch module)) patches)
     (validate-module! module)
+    ;; Optional behavior cases belong to the agent image. The unpatched image
+    ;; may intentionally be a failing baseline; every patched candidate must pass.
+    (when (and (pair? patches) (module-defined? module 'agent-context-cases))
+      (let ((cases (module-ref module 'agent-context-cases))
+            (selector (module-ref module 'agent-select-context)))
+        (unless (and (list? cases) (<= (length cases) 32))
+          (error "agent-context-cases must be a list of at most 32 cases"))
+        (for-each
+         (lambda (entry)
+           (unless (and (list? entry) (= (length entry) 2)
+                        (string? (car entry)) (list? (cadr entry)))
+             (error "context case must contain a query and expected paths" entry))
+           (let ((actual (selector (car entry))))
+             (unless (equal? actual (cadr entry))
+               (error (format #f "candidate context check failed for query ~s: expected ~s, got ~s"
+                              (car entry) (cadr entry) actual)))))
+         cases)))
     (make-generation
      id
      module

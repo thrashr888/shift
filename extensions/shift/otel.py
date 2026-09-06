@@ -72,9 +72,9 @@ def main() -> int:
     )
     # The exporter is optional observability, never part of the agent's critical
     # path. Keep collector failures quiet and bound shutdown latency.
-    logging.getLogger(
-        "opentelemetry.exporter.otlp.proto.http.trace_exporter"
-    ).setLevel(logging.CRITICAL)
+    logging.getLogger("opentelemetry.exporter.otlp.proto.http.trace_exporter").setLevel(
+        logging.CRITICAL
+    )
     exporter = OTLPSpanExporter(endpoint=collector_url(args.endpoint), timeout=1)
     provider.add_span_processor(
         BatchSpanProcessor(

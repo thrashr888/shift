@@ -32,7 +32,7 @@
 
 (define-record-type <session-state>
   (%make-session-state name id directory history next-turn generation-id
-                       fingerprint patches created-at resumed? lock lock-port)
+                       fingerprint patches created-at resumed? fork lock lock-port)
   session-state?
   (name session-name)
   (id session-id)
@@ -44,6 +44,7 @@
   (patches session-patches)
   (created-at session-created-at)
   (resumed? session-resumed?)
+  (fork session-fork)
   (lock session-lock)
   (lock-port session-lock-port))
 
@@ -169,7 +170,7 @@
        (require-array root "patches" string? "Scheme source strings"
                       max-persisted-patches)
        (json-object-ref root "created_at" (timestamp))
-       #t (make-mutex) lock-port))))
+       #t (json-object-ref root "fork" json-null) (make-mutex) lock-port))))
 
 (define (open-session! state-directory name mode)
   (unless (safe-session-name? name)
@@ -192,7 +193,7 @@
               (read-session directory name lock-port)
               (%make-session-state
                name (fresh-session-id) directory '() 1 1 #f '()
-               (timestamp) #f (make-mutex) lock-port)))
+               (timestamp) #f json-null (make-mutex) lock-port)))
         (lambda (key . arguments)
           (unless (port-closed? lock-port) (close-port lock-port))
           (apply throw key arguments))))))
@@ -300,6 +301,11 @@
                  (cons "created_at" forked-at))))))
         (when authority-content
           (atomic-write! child-authority authority-content))
+        (let ((parent-settings (string-append (dirname parent-path) "/settings.json"))
+              (child-settings (string-append (dirname child-path) "/settings.json")))
+          (when (file-exists? parent-settings)
+            (when (> (stat:size (stat parent-settings)) 32768) (error "parent settings too large"))
+            (atomic-write! child-settings (call-with-input-file parent-settings get-string-all))))
         (atomic-write! child-path (string-append (json-write child) "\n"))
         child))))
 
@@ -316,6 +322,7 @@
             (json-object
              (cons "version" 1)
              (cons "name" (session-name state))
+             (cons "fork" (session-fork state))
              (cons "id" (session-id state))
              (cons "created_at" (session-created-at state))
              (cons "updated_at" (timestamp))

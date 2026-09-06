@@ -1,4 +1,4 @@
-(use-modules (srfi srfi-64)
+(use-modules (ice-9 textual-ports) (srfi srfi-64)
              (live-agent json)
              (live-agent trace))
 
@@ -17,7 +17,9 @@
 (trace-end! child "OK" '((output.value . "hi")))
 (trace-end! root "OK" '((output.value . "hi")))
 
-(define lines (trace-tail tracer 10))
+(define lines
+  (call-with-input-file (tracer-path tracer)
+    (lambda (port) (list (get-line port) (get-line port)))))
 (test-equal "writes both completed spans" 2 (length lines))
 
 (define child-json (json-read (car lines)))
@@ -41,7 +43,10 @@
                   (turn.number . 17)
                   (input.value . "remember the old deploy port"))))
 (trace-end! named-span "OK" '((output.value . "Use port 4317 after compaction.")))
-(define named-json (json-read (car (trace-tail named-tracer 1))))
+(define named-json
+  (call-with-values
+      (lambda () (trace-search named-tracer #:span-id (trace-span-id named-span)))
+    (lambda (hits . _) (car hits))))
 (define named-attributes (json-object-ref named-json "attributes"))
 (test-equal "a resumed session keeps its trace identity"
   "stable-session-id"

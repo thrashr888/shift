@@ -1,6 +1,7 @@
 # Live updates
 
-The harness watches its selected agent image by default. A distinct saved file
+In terminal sessions, the harness watches its selected agent image by default.
+For redirected input it skips the watcher; use `--watch` to opt in. A distinct saved file
 is rebuilt in a fresh Guile module, validated against the same authority ceiling
 as `/reload`, and atomically becomes the current generation. Active session
 patches are reapplied to the candidate. A turn that already captured an older
@@ -18,7 +19,7 @@ temporarily incomplete files safe to iterate on.
 
 The boundary is intentional: this watches `agent/default.scm` (or the image
 selected by `--agent`). It does not dynamically load changes to `src/live-agent`
-inside the authority-bearing process. Those modules own validation, filesystem
+or the trusted built-ins in `extensions/shift` inside the running process. Those modules own validation, filesystem
 confinement, shell approval, transport, and tracing, so treating an arbitrary
 source save as a trusted in-process production upgrade would erase the safety
 boundary.

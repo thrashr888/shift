@@ -9,6 +9,8 @@ import os
 import pty
 import re
 import signal
+import select
+import codecs
 import subprocess
 import sys
 import termios
@@ -18,8 +20,6 @@ from pathlib import Path
 from typing import Any
 
 
-PROMPT = "shift> "
-APPROVAL_PROMPT = "Approve this command? [y/N] "
 MAX_TRANSCRIPT_CHARS = 2 * 1024 * 1024
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 EXTENSION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -34,6 +34,15 @@ SUPPORTED_TOOLS = {
     "extension",
 }
 SUBAGENT_TOOLS = {"read", "rg", "traces", "live_eval"}
+
+
+def builtin_enabled(name: str) -> bool:
+    return name in {
+        item.strip()
+        for item in os.environ.get("SHIFT_BUILTINS", "ollama,openai,tracing,mcp").split(
+            ","
+        )
+    }
 
 
 def fresh_hex(byte_count: int) -> str:
@@ -54,6 +63,8 @@ def append_trace_span(
     attributes: dict[str, Any],
     links: list[dict[str, Any]] | None = None,
 ) -> None:
+    if not builtin_enabled("tracing"):
+        return
     end_ns = time.time_ns()
     value: dict[str, Any] = {
         "trace_id": trace_id,
@@ -338,7 +349,7 @@ class LiveSession:
         self._transcript = ""
         self._condition = threading.Condition()
         self._command_lock = threading.Lock()
-        self._busy = False
+        self._boundary = {"state": "stopped", "status": "ok"}
         self.tool_ceiling: tuple[str, ...] | None = None
 
     def _authority_ceiling(self) -> tuple[str, ...] | None:
@@ -374,6 +385,13 @@ class LiveSession:
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
 
+    @property
+    def busy(self) -> bool:
+        return self._running() and self._boundary["state"] in {
+            "running",
+            "needs_approval",
+        }
+
     def _running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
@@ -389,17 +407,36 @@ class LiveSession:
                 self._base_cursor += removed
             self._condition.notify_all()
 
-    def _reader(self, fd: int) -> None:
-        while True:
-            try:
-                chunk = os.read(fd, 65536)
-            except OSError:
-                break
-            if not chunk:
-                break
-            self._append(chunk.decode("utf-8", errors="replace"))
-        with self._condition:
-            self._condition.notify_all()
+    def _reader(self, fd: int, control_fd: int) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        control = b""
+        try:
+            while True:
+                readable, _, _ = select.select([fd, control_fd], [], [])
+                # The child flushes terminal output before its control frame.
+                if fd in readable or control_fd in readable:
+                    while select.select([fd], [], [], 0)[0]:
+                        chunk = os.read(fd, 65536)
+                        if not chunk:
+                            return
+                        self._append(decoder.decode(chunk))
+                if control_fd in readable:
+                    chunk = os.read(control_fd, 65536)
+                    if not chunk:
+                        return
+                    control += chunk
+                    while b"\n" in control:
+                        line, control = control.split(b"\n", 1)
+                        event = json.loads(line)
+                        with self._condition:
+                            self._boundary = event
+                            self._condition.notify_all()
+        except (OSError, ValueError):
+            pass
+        finally:
+            os.close(control_fd)
+            with self._condition:
+                self._condition.notify_all()
 
     def _resolve_agent(self, requested: str | None) -> Path:
         candidate = (self.project_root / (requested or "agent/default.scm")).resolve()
@@ -426,13 +463,8 @@ class LiveSession:
         deadline = time.monotonic() + timeout_seconds
         with self._condition:
             while True:
-                segment = self._segment(cursor)
-                clean_segment = self._clean(segment)
-                if clean_segment.endswith(APPROVAL_PROMPT):
-                    state = "needs_approval"
-                    break
-                if clean_segment.endswith(PROMPT):
-                    state = "ready"
+                state = self._boundary["state"]
+                if state in {"ready", "needs_approval"}:
                     break
                 if not self._running():
                     state = "stopped"
@@ -444,6 +476,9 @@ class LiveSession:
                 self._condition.wait(min(remaining, 0.25))
             return {
                 "state": state,
+                "status": self._boundary.get("status"),
+                "error": self._boundary.get("error"),
+                "span_id": self._boundary.get("span_id"),
                 "output": self._clean(self._segment(cursor)),
                 "cursor": self._cursor(),
             }
@@ -457,7 +492,7 @@ class LiveSession:
 
     def _awaiting_approval(self) -> bool:
         with self._condition:
-            return self._clean(self._transcript).endswith(APPROVAL_PROMPT)
+            return self._boundary["state"] == "needs_approval"
 
     def start(
         self,
@@ -501,7 +536,7 @@ class LiveSession:
                 return self.send(initial_prompt)
             return {
                 **self.status(),
-                "state": "ready",
+                **self._boundary,
                 "output": "Session already running.",
             }
         if mode not in {"auto", "new", "resume"}:
@@ -515,11 +550,14 @@ class LiveSession:
         self.state_root.mkdir(parents=True, exist_ok=True)
         marker = self._cursor()
         master_fd, slave_fd = pty.openpty()
+        control_read, control_write = os.pipe()
+        self._boundary = {"state": "running", "status": None}
         terminal_attributes = termios.tcgetattr(slave_fd)
         terminal_attributes[3] &= ~(termios.ECHO | termios.ECHONL)
         termios.tcsetattr(slave_fd, termios.TCSANOW, terminal_attributes)
         environment = os.environ.copy()
         environment.setdefault("TERM", "dumb")
+        environment["SHIFT_CONTROL_FD"] = str(control_write)
         if normalized_ceiling is not None:
             environment["SHIFT_TOOL_CEILING"] = ",".join(normalized_ceiling)
         else:
@@ -544,16 +582,24 @@ class LiveSession:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 close_fds=True,
+                pass_fds=(control_write,),
                 start_new_session=True,
             )
+        except Exception:
+            os.close(master_fd)
+            os.close(control_read)
+            raise
         finally:
             os.close(slave_fd)
+            os.close(control_write)
         self.process = process
         self.master_fd = master_fd
         self.tool_ceiling = normalized_ceiling
         if normalized_ceiling is not None and normalized_ceiling != stored_ceiling:
             self._save_authority_ceiling(normalized_ceiling)
-        threading.Thread(target=self._reader, args=(master_fd,), daemon=True).start()
+        threading.Thread(
+            target=self._reader, args=(master_fd, control_read), daemon=True
+        ).start()
         result = self._wait_for_boundary(marker, 15)
         result.update(self.status())
         return result
@@ -562,6 +608,8 @@ class LiveSession:
         effective_ceiling = self.tool_ceiling or self._authority_ceiling()
         result = {
             "session": self.name,
+            "busy": self.busy,
+            "operation_status": self._boundary.get("status"),
             "running": self._running(),
             "pid": self.process.pid if self._running() and self.process else None,
             "cursor": self._cursor(),
@@ -587,45 +635,43 @@ class LiveSession:
     def send(self, text: str, timeout_seconds: float = 180) -> dict[str, Any]:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
-        if self._awaiting_approval():
-            raise RuntimeError(
-                "a shell request is waiting; approve or deny it before sending input"
-            )
         with self._command_lock:
+            if self._awaiting_approval():
+                raise RuntimeError(
+                    "a shell request is waiting; approve or deny it before sending input"
+                )
+            if self.busy:
+                raise RuntimeError(
+                    "the live session is busy; wait or cancel before sending input"
+                )
             marker = self._cursor()
             with self._condition:
-                self._busy = True
-            try:
-                self._write(text.encode("utf-8") + b"\n")
-                return self._wait_for_boundary(marker, timeout_seconds)
-            finally:
-                with self._condition:
-                    self._busy = False
+                self._boundary = {"state": "running", "status": None}
+            self._write(text.encode("utf-8") + b"\n")
+            return self._wait_for_boundary(marker, timeout_seconds)
 
     def approve(self, approved: bool, timeout_seconds: float = 180) -> dict[str, Any]:
         if not isinstance(approved, bool):
             raise ValueError("approved must be a boolean")
-        if not self._awaiting_approval():
-            raise RuntimeError("the live session is not waiting for shell approval")
         with self._command_lock:
+            if not self._awaiting_approval():
+                raise RuntimeError("the live session is not waiting for shell approval")
             marker = self._cursor()
             with self._condition:
-                self._busy = True
-            try:
-                self._write(b"y" if approved else b"n")
-                return self._wait_for_boundary(marker, timeout_seconds)
-            finally:
-                with self._condition:
-                    self._busy = False
+                self._boundary = {"state": "running", "status": None}
+            self._write(b"y" if approved else b"n")
+            return self._wait_for_boundary(marker, timeout_seconds)
 
     def cancel(self, timeout_seconds: float = 15) -> dict[str, Any]:
         if not self._running() or self.process is None:
             raise RuntimeError("the live session has no running turn to cancel")
         with self._condition:
-            busy = self._busy
+            busy = self.busy
         if not (busy or self._awaiting_approval()):
             raise RuntimeError("the live session is idle; there is no turn to cancel")
         marker = self._cursor()
+        with self._condition:
+            self._boundary = {"state": "running", "status": None}
         os.killpg(self.process.pid, signal.SIGINT)
         result = self._wait_for_boundary(marker, timeout_seconds)
         result.update(self.status())
@@ -925,7 +971,10 @@ class McpServer:
                 child.stop()
                 raise ValueError("extension must be a safe extension artifact name")
             extension_result = child.send(f"/extension-load {extension_name}", 15)
-            if extension_result.get("state") != "ready":
+            if (
+                extension_result.get("state") != "ready"
+                or extension_result.get("status") != "ok"
+            ):
                 child.stop()
                 raise RuntimeError(f"child extension failed to load: {extension_name}")
 
@@ -968,7 +1017,7 @@ class McpServer:
             if cancelled
             else (
                 "OK"
-                if outcome.get("state") == "ready" and not assertion_failed
+                if outcome.get("status") == "ok" and not assertion_failed
                 else "ERROR"
             )
         )
@@ -1043,6 +1092,8 @@ class McpServer:
         return {
             "result": result_text,
             "state": outcome.get("state"),
+            "status": status.lower(),
+            "error": outcome.get("error"),
             "trajectory_ref": str(child.state_dir / "session.json"),
             "trace_ref": {
                 "parent_trace_id": parent_trace_id,
@@ -1050,7 +1101,9 @@ class McpServer:
                 "child_trace_id": run_trace_id,
                 "run_span_id": run_span_id,
                 "join_span_id": join_span_id,
-            },
+            }
+            if builtin_enabled("tracing")
+            else None,
             "generation_ref": {
                 "parent_generation": parent_checkpoint["generation_id"],
                 "parent_fingerprint": parent_checkpoint["fingerprint"],
@@ -1240,10 +1293,12 @@ class McpServer:
 
 
 def main() -> int:
+    if not builtin_enabled("mcp"):
+        raise SystemExit("mcp built-in is disabled; enable it in SHIFT_BUILTINS")
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-dir")
     options = parser.parse_args()
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     state_dir = (
         Path(options.state_dir) if options.state_dir else project_root / ".shift"
     )

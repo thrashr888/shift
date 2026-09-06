@@ -8,7 +8,8 @@
             tool-result?
             tool-result-success?
             tool-result-output
-            execute-tool))
+            execute-tool
+            tool-schema))
 
 (define-record-type <tool-result>
   (make-tool-result success? output)
@@ -272,3 +273,171 @@
         (else (error "tool is not implemented" name)))))
     (lambda (key . args)
       (make-tool-result #f (format #f "tool error (~a): ~s" key args)))))
+
+(define (function-tool name description properties required)
+  (json-object
+   (cons "type" "function")
+   (cons "function"
+         (json-object
+          (cons "name" name)
+          (cons "description" description)
+          (cons "parameters"
+                (json-object
+                 (cons "type" "object")
+                 (cons "properties" properties)
+                 (cons "required" (apply json-array required))
+                 (cons "additionalProperties" #f)))))))
+
+(define (string-parameter description)
+  (json-object (cons "type" "string") (cons "description" description)))
+
+(define (tool-schema name)
+  (cond
+   ((string=? name "read")
+    (function-tool
+     "read"
+     "Read one exact UTF-8 text file inside the current project. Try the most likely path first; only try another path if it fails."
+     (json-object (cons "path" (string-parameter "Project-relative file path")))
+     '("path")))
+   ((string=? name "rg")
+    (function-tool
+     "rg"
+     (string-append
+      "Search project text with ripgrep without invoking a shell. Queries are "
+      "literal by default, so punctuation such as Scheme parentheses is safe. "
+      "For Guile module imports, search the literal forms #:use-module and "
+      "(use-modules separately. "
+      "Set regex to true only when regular-expression behavior is intentional. "
+      "Results are bounded and project-confined.")
+     (json-object
+      (cons "query" (string-parameter "Text to find; interpreted literally unless regex is true"))
+      (cons "path" (string-parameter "Optional project-relative file or directory; defaults to ."))
+      (cons "glob" (string-parameter "Optional ripgrep glob such as *.scm"))
+      (cons "regex"
+            (json-object
+             (cons "type" "boolean")
+             (cons "description" "Interpret query as a regular expression; defaults to false"))))
+     '("query")))
+   ((string=? name "write")
+    (function-tool
+     "write"
+     "Atomically create or replace one UTF-8 text file inside the project. Parent directories must already exist."
+     (json-object
+      (cons "path" (string-parameter "Project-relative file path"))
+      (cons "content" (string-parameter "Complete new file content")))
+     '("path" "content")))
+   ((string=? name "edit")
+    (function-tool
+     "edit"
+     "Atomically edit one project text file by exact replacement. By default old_text must occur exactly once."
+     (json-object
+      (cons "path" (string-parameter "Project-relative file path"))
+      (cons "old_text" (string-parameter "Exact text to replace"))
+      (cons "new_text" (string-parameter "Replacement text"))
+      (cons "replace_all"
+            (json-object
+             (cons "type" "boolean")
+             (cons "description" "Replace every occurrence; defaults to false"))))
+     '("path" "old_text" "new_text")))
+   ((string=? name "shell")
+    (json-object
+     (cons "type" "function")
+     (cons "function"
+           (json-object
+            (cons "name" "shell")
+            (cons "description"
+                  (string-append
+                   "Run a shell command after explicit user approval. Use only "
+                   "when read cannot accomplish the task; do not use shell to "
+                   "discover or read a conventional project file."))
+            (cons "parameters"
+                  (json-object
+                   (cons "type" "object")
+                   (cons "properties"
+                         (json-object
+                          (cons "command"
+                                (json-object
+                                 (cons "type" "string")
+                                 (cons "description" "Command to run from the project root")))))
+                   (cons "required" (json-array "command"))
+                   (cons "additionalProperties" #f)))))))
+   ((string=? name "live_eval")
+    (function-tool
+     "live_eval"
+     (string-append
+      "Transactionally change your live Scheme behavior. Before calling, explain "
+      "to the user what binding will change, why, and the expected effect. Top-level "
+      "forms are limited to define, define*, set!, or begin and may target only "
+      "agent-* or extension-* bindings. The next user turn sees the generation; "
+      "/rollback undoes it. After the result, explain the before/after generations "
+      "and whether the expected behavior was achieved or still needs a retry.")
+     (json-object
+      (cons "expression"
+            (string-parameter "One or more restricted Scheme definitions or assignments"))
+      (cons "summary"
+            (string-parameter "Plain-language description of exactly what changes"))
+      (cons "expected_behavior"
+            (string-parameter "Observable behavior expected on the next user turn")))
+     '("expression" "summary" "expected_behavior")))
+   ((string=? name "traces")
+    (function-tool
+     "traces"
+     (string-append
+      "Inspect this running session's own completed trace spans. Use this to "
+      "verify tool outcomes, errors, generation identity, context selection, "
+      "compaction, and cancellation instead of trusting narration. Results "
+      "are session-scoped and bounded. Search the complete durable trace after "
+      "compaction, then fetch an exact span_id when full stored attributes are needed.")
+     (json-object
+      (cons "query"
+            (json-object
+             (cons "type" "string")
+             (cons "maxLength" 256)
+             (cons "description" "Case-insensitive literal search across stored span JSON")))
+      (cons "span_id"
+            (json-object
+             (cons "type" "string")
+             (cons "maxLength" 256)
+             (cons "description" "Exact span ID to retrieve with full stored attributes")))
+      (cons "name" (string-parameter "Exact span name filter, such as agent.turn"))
+      (cons "kind" (string-parameter "Exact OpenInference kind filter"))
+      (cons "status" (string-parameter "Exact status filter"))
+      (cons "generation"
+            (json-object
+             (cons "type" "integer")
+             (cons "minimum" 1)))
+      (cons "turn"
+            (json-object
+             (cons "type" "integer")
+             (cons "minimum" 1)))
+      (cons "limit"
+            (json-object
+             (cons "type" "integer")
+             (cons "minimum" 1)
+             (cons "maximum" 50)
+             (cons "description" "Most recent spans to return; defaults to 12")))
+      (cons "errors_only"
+            (json-object
+             (cons "type" "boolean")
+             (cons "description" "Only return ERROR or CANCELLED spans"))))
+     '()))
+   ((string=? name "extension")
+    (function-tool
+     "extension"
+     (string-append
+      "Manage persistent Scheme extension artifacts. Actions: list; create a named "
+      "artifact from expression without enabling it; load it into a new generation; "
+      "disable its exact patch; or export all active live patches under a name. "
+      "Explain user-visible changes before create, load, disable, or export.")
+     (json-object
+      (cons "action"
+            (json-object
+             (cons "type" "string")
+             (cons "enum" (json-array "list" "create" "load" "disable" "export"))))
+      (cons "name" (string-parameter "Artifact name for actions other than list"))
+      (cons "expression"
+            (string-parameter "Restricted Scheme patch required by create"))
+      (cons "description"
+            (string-parameter "Short purpose recorded in the artifact header")))
+     '("action")))
+   (else (error "unknown live tool" name))))

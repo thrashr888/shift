@@ -56,13 +56,14 @@ shift> hello
 ...response using the restored prompt...
 ```
 
-Edit `agent/default.scm` while the process is running and the validated file is
-automatically activated as another atomic generation. Existing live patches are
+In a terminal, edit `agent/default.scm` while the process is running and the
+validated file is automatically activated as another atomic generation. Existing live patches are
 retained, and a turn already in flight remains pinned to the generation that
 started it. An invalid or incomplete save is rejected once, leaves the working
 generation active, and is retried after the file changes again. `/reload` is
 still available explicitly; `/reload-clean` intentionally drops session patches.
-Pass `--no-watch` to disable automatic source watching.
+Pass `--no-watch` to disable source watching. Redirected/scripted input defaults
+to watch off; pass `--watch` to opt in there.
 
 ## Durable named sessions
 
@@ -130,10 +131,37 @@ Live patches are limited to 16 KiB and 64 active patches. Their top-level forms
 may only be `define`, `define*`, `set!`, or `begin`, and definitions or
 assignments must target `agent-*` or `extension-*` names. They still run in the
 curated Scheme module and the complete candidate image must pass validation
-before it activates. The provider only sees `live_eval` on turns where the user
-expresses explicit change intent (for example “fix,” “update,” “change,” or
-“configure”), which blocks unsolicited self-rewrites. This narrows accidental
-mutation; it is not a resource or semantic sandbox.
+before it activates. Every model tool execution crosses the process-owned mode
+and approval policy; prompt keywords never authorize mutations. This is a
+constrained language surface, not a resource or semantic sandbox.
+
+See [daily-driver usage](docs/daily-driver.md) for saved settings, history, Claude,
+approval modes, context budgets, and the live localhost MCP endpoint.
+
+## Built-in extensions
+
+Ollama, OpenAI-compatible transport, Claude, tracing, and the MCP server are shipped as
+trusted built-ins under `extensions/shift/`. They are enabled automatically;
+there is no per-session load command. Provider modules load only when selected,
+and interactive sessions start MCP at `http://127.0.0.1:7331/mcp` in the same process.
+
+To keep a smaller process, set an explicit built-in allowlist before launch:
+
+```sh
+SHIFT_BUILTINS=ollama,tracing ./bin/shift
+SHIFT_BUILTINS=ollama ./bin/shift                  # no trace files/exporter
+SHIFT_BUILTINS= ./bin/shift --agent test/session-agent.scm "hello"
+```
+
+An unset variable enables `ollama,openai,claude,tracing,mcp`; an empty value disables
+all five. A disabled selected provider fails explicitly. This configuration is
+process-owned and inherited by child sessions, so live Scheme cannot re-enable
+a disabled built-in. Use a shell environment setting to retain your preference.
+The default works without any configuration.
+
+These built-ins contain trusted I/O code and require a restart after edits.
+The restricted behavior artifacts below remain a separate live patch mechanism.
+See [the ablation and implementation report](docs/ablation-2026-09-04.md).
 
 ## Persistent extension artifacts
 
@@ -171,7 +199,9 @@ it automatically with `make demo-context-scripted`. The first answer comes from
 the 2024 runbook in generation 1; the user naturally challenges that source,
 and the repaired selector uses the 2026 runbook in generation 2. `/traces` and
 Phoenix show both selected paths and exactly which generation produced each
-answer. See `demo/context-selection/README.md`.
+answer. The demo image also supplies eight `agent-context-cases`; a patched candidate
+that misses deployment or case variations is rejected before activation. See
+`demo/context-selection/README.md`.
 
 ![Live context selector repaired between generations](docs/assets/context-repair-demo.gif)
 
@@ -262,48 +292,23 @@ without waiting for Enter.
 `live_eval` can only use the curated Scheme surface and cannot introduce
 process, filesystem, network, dynamic-loading, or ambient evaluation authority.
 
-## Attach from Codex
+## Attach to the live session
 
-The repository includes a project-scoped MCP server in `.codex/config.toml`.
-Open this trusted repository as a Codex project (or restart the Codex task after
-pulling the config), then Codex can operate multiple named live harness sessions
-through typed tools:
+Start `./bin/shift`, then connect an HTTP MCP client to
+`http://127.0.0.1:7331/mcp`. The endpoint shares the terminal's process, settings,
+conversation, generation, and approval policy. It dies with the session.
+Use `--mcp-port PORT` for another port or `--no-mcp` to disable it.
 
-- list, create, resume, inspect, read, prompt, approve, and stop named sessions
-- cancel in-flight work; compact history; search/fetch traces; and manage recovery
-- set thinking or streaming and apply restricted live Scheme expressions
-- append system-prompt guidance for later turns
-- list, create, load, disable, and export extensions
-- fork a fixed checkpoint and supervise one generation-attributed child under a
-  durable, narrower tool ceiling
+`shift_status`, `shift_prompt`, `shift_inspect`, and `shift_cancel` operate on
+that live session. Mutating requests serialize; status remains available.
 
-Each name maps to an independent child process and durable checkpoint. The
-bridge launches the same `bin/shift` under a pseudo-terminal, so it
-sees the real streaming output and approval boundaries rather than a parallel
-mock implementation. A prompt call returns at either the next `shift>`
-prompt or a shell approval; Codex must then call the separate approval tool with
-an explicit boolean. That tool is approval-gated in the Codex project config and
-refuses input unless a shell request is actually pending. The bridge process
-owns running processes, while restart-safe state, journals, and traces live
-under `.shift/sessions/NAME`.
+Clients that prefer to launch a dedicated process can use `./bin/shift --mcp`
+(stdio). `bin/shift-mcp` is now a compatibility launcher for it. The existing
+Codex project registration still uses this dedicated-process entry point;
+use an HTTP URL in client configuration to attach to an existing terminal.
 
-Because source watching is enabled by default, Codex can edit the live agent
-image with its normal project tools and observe the running process activate
-that save. This applies to the live image, not authority-bearing stable runtime
-modules. See `docs/live-updates.md` for the boundary and a production release
-path.
-
-For the guarded “use the harness to improve the harness” loop, run
-`make dogfood` or start the `dogfood` session from Codex. Begin with docs, tests,
-or the live image; keep stable-runtime edits under external diff review and
-restart validation. See `docs/dogfooding.md` for the concrete loop and remaining
-gates.
-
-Run the MCP server directly for protocol debugging with:
-
-```sh
-./bin/shift-mcp
-```
+See [daily-driver MCP details](docs/daily-driver.md#live-mcp) for policy,
+transport, session persistence, and the legacy Python supervisor.
 
 ## Traces and Phoenix
 
@@ -413,13 +418,21 @@ src/live-agent/session.scm    durable named-session checkpoints
 src/live-agent/compaction.scm boundary-safe history reduction
 src/live-agent/recovery.scm   interrupted-tool write-ahead record
 src/live-agent/extensions.scm persistent artifact lifecycle
-src/live-agent/provider.scm   streaming Ollama and Chat Completions adapters
+src/live-agent/provider.scm   completion data and lazy provider dispatch
 src/live-agent/prompt.scm     cache-friendly request assembly and persistence split
-src/live-agent/trace.scm      JSONL spans and optional OTLP bridge
+src/live-agent/trace.scm      optional tracing boundary
 src/live-agent/tools.scm      stable capability checks
 src/live-agent/json.scm       dependency-free JSON codec
 src/live-agent/main.scm       interactive shell
-scripts/session_bridge.py     dependency-free MCP-to-live-PTY bridge
+src/live-agent/builtins.scm   fixed, process-owned built-in selection
+extensions/shift/mcp.scm     in-process HTTP and stdio MCP server
+extensions/shift/claude.scm  native Claude provider
+extensions/shift/shift_mcp.py legacy multi-process supervisor
+extensions/shift/ollama.scm    native Ollama provider
+extensions/shift/openai.scm    OpenAI-compatible provider
+extensions/shift/http.scm      shared bounded curl transport
+extensions/shift/tracing.scm  JSONL spans and search
+extensions/shift/otel.py      optional Phoenix/OTLP exporter
 bin/shift                     primary interactive entry point
 bin/shift-mcp                 project-scoped Codex MCP entry point
 .codex/config.toml            local MCP registration for trusted projects

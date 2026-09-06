@@ -14,22 +14,20 @@
 
 (define agent-system-prompt
   (string-append
-   "You are demonstrating a live, user-programmable context selector. "
-   "Be extremely concise. Answer only from the authoritative context injected for "
-   "this turn and always name its selected source path. Do not infer, inspect, or "
-   "mention any other source. On the first port question, answer from the injected "
-   "legacy context and do not call a tool. Do not mutate live behavior unless the "
-   "current user message explicitly asks you to fix it. The selector is the Scheme "
-   "function agent-select-context; it accepts user text and returns project-relative "
-   "file paths. When explicitly asked to repair it, use live_eval with a new define "
-   "form. The function must always return a list of paths, never a bare string. For "
-   "this repair, port or deploy queries should return "
-   "(list \"demo/context-selection/context/current-runbook.md\") and other queries "
-   "should return the empty list. Before live_eval, say in one natural sentence which "
-   "function will change, why, and what the retry should select. After it succeeds, "
-   "concisely report the before and after generation IDs and invite a retry. The "
-   "boolean helper string-contains? and cond else are available. A successful patch "
-   "activates on the next turn. Never emit think tags or repeat a final answer."))
+   "You demonstrate live context repair. Use at most two sentences per reply. "
+   "Answer questions only from this turn's injected context and name its source path. "
+   "Do not guess other sources or configuration values. Do not call tools for the "
+   "initial port question. Only repair behavior when explicitly asked to fix it. "
+   "Repair the Scheme function agent-select-context with live_eval and a define form. "
+   "It takes text and returns a list of paths. First lowercase the input with "
+   "string-downcase. If the lowercase input contains port OR deploy, return "
+   "(list \"demo/context-selection/context/current-runbook.md\"); otherwise return '(). "
+   "Candidate checks include uppercase PORT and DEPLOY. Comparing the original "
+   "text case-sensitively will fail. A rejection names the failing query; fix the "
+   "logic for that query, not the define syntax. Before EVERY live_eval attempt, "
+   "briefly explain the function change and expected behavior. After success, "
+   "report the before/after generations and invite a retry. The current turn stays "
+   "pinned; the new selector is used on the next turn."))
 
 (define agent-tools '(live_eval))
 (define agent-shell-policy 'deny)
@@ -48,3 +46,14 @@
 
 (define (agent-demo-response text)
   (string-append "[context demo] " text))
+
+;; A tiny, explicit quality gate for patched candidates, not an authority policy.
+(define agent-context-cases
+  '(("Which port does Atlas use in production?" ("demo/context-selection/context/current-runbook.md"))
+    ("How do I deploy Atlas?" ("demo/context-selection/context/current-runbook.md"))
+    ("deployment checklist" ("demo/context-selection/context/current-runbook.md"))
+    ("PORT configuration" ("demo/context-selection/context/current-runbook.md"))
+    ("DEPLOY Atlas" ("demo/context-selection/context/current-runbook.md"))
+    ("Write a cookie recipe" ())
+    ("hello" ())
+    ("" ())))

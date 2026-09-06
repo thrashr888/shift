@@ -1,6 +1,8 @@
 (use-modules (srfi srfi-64)
              (live-agent json)
-             (live-agent provider))
+             (live-agent provider)
+             (shift ollama)
+             (shift openai))
 
 (test-begin "provider")
 
