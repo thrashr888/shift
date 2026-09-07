@@ -96,6 +96,24 @@ Shell `deny` and process tool ceilings still apply. Mode is process-owned data;
 `live_eval` cannot change it. Explicit terminal slash commands are user operations.
 Auto does not run a model classifier or silently infer approval from prompt words.
 
+## File changes
+
+`read` output begins with `# PATH · N bytes · sha256 PREFIX`. The session ledger at
+`.shift/sessions/NAME/changes.jsonl` remembers the last hash it saw for every path
+that was read, edited, or written. A `write` or `edit` against a file that changed
+on disk since then fails before approval and names the turn that saw it; read the
+file again to continue. Mutations are prepared without touching the project, shown
+as a unified diff with a diffstat at the approval prompt, journaled with their pre-
+and post-images under `blobs/`, and committed atomically only if the file still
+matches the prepared pre-image. `/undo`, receipts, and `/recover restore` build on
+this ledger and arrive with the coding built-in described in
+[the coding workflow RFC](coding-workflow-rfc.md).
+
+`make build` compiles the runtime into `build/`; `bin/shift` and `make test` load
+those modules and fall back to source, with a note, when a file is newer than its
+compiled form. The SHA-256 ledger is too slow interpreted, so run `make build`
+after pulling changes.
+
 ## Live MCP
 
 An interactive session starts a built-in HTTP MCP server in the same Guile process:

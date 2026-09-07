@@ -85,7 +85,59 @@
 
 (test-assert "edit can replace every exact occurrence explicitly"
   (and (tool-result-success? all-edit)
-       (string-contains (tool-result-output all-edit) "2 occurrences")))
+       (string-contains (tool-result-output all-edit) "2 occurrences")
+       (string-contains (tool-result-output all-edit) "(+2 −2)")))
+
+(define edit-change (car (tool-result-changes all-edit)))
+(test-equal "mutations report the project-relative path" "notes.txt" (assq-ref edit-change 'path))
+(test-assert "mutations carry before and after hashes"
+  (and (string? (assq-ref edit-change 'before)) (string? (assq-ref edit-change 'after))
+       (not (string=? (assq-ref edit-change 'before) (assq-ref edit-change 'after)))))
+(test-assert "mutations carry a unified diff"
+  (string-contains (assq-ref edit-change 'diff) "+alpha port 9443"))
+
+(define hashed-read
+  (execute-tool "read" (json-object (cons "path" "notes.txt")) tool-root 'deny (lambda _ #f)))
+(test-assert "read output starts with a hash header"
+  (string-prefix? "# notes.txt · " (tool-result-output hashed-read)))
+(test-equal "read observation hash matches the last mutation"
+  (assq-ref edit-change 'after)
+  (assq-ref (car (tool-result-changes hashed-read)) 'hash))
+
+(define prepared
+  (prepare-change "edit"
+                  (json-object (cons "path" "notes.txt")
+                               (cons "old_text" "9443") (cons "new_text" "1")
+                               (cons "replace_all" #t))
+                  tool-root))
+(test-assert "prepare does not touch the file"
+  (string-contains (tool-result-output
+                    (execute-tool "read" (json-object (cons "path" "notes.txt")) tool-root 'deny (lambda _ #f)))
+                   "9443"))
+(test-assert "prepared diff previews the replacement"
+  (and (string-contains (prepared-change-diff prepared) "--- a/notes.txt")
+       (string-contains (prepared-change-diff prepared) "+alpha port 1")))
+
+(execute-tool "write" (json-object (cons "path" "stale.txt") (cons "content" "one\n"))
+              tool-root 'deny (lambda _ #f))
+(define stale-prepared
+  (prepare-change "edit"
+                  (json-object (cons "path" "stale.txt") (cons "old_text" "one") (cons "new_text" "two"))
+                  tool-root))
+(call-with-output-file (string-append tool-root "/stale.txt")
+  (lambda (port) (display "changed elsewhere\n" port)))
+(test-error "commit refuses a file that changed after preparation" #t (commit-change! stale-prepared))
+(test-assert "a refused commit leaves the file alone"
+  (string-contains (tool-result-output
+                    (execute-tool "read" (json-object (cons "path" "stale.txt")) tool-root 'deny (lambda _ #f)))
+                   "changed elsewhere"))
+
+(define create-prepared
+  (prepare-change "write" (json-object (cons "path" "fresh.txt") (cons "content" "new\n")) tool-root))
+(test-assert "creates prepare against /dev/null"
+  (and (not (prepared-change-before-hash create-prepared))
+       (string-contains (prepared-change-diff create-prepared) "--- /dev/null")))
+(test-assert "creates commit" (tool-result-success? (commit-change! create-prepared)))
 
 (define rg-result
   (execute-tool

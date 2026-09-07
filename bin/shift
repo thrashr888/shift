@@ -22,6 +22,7 @@ exec guile \
   --no-auto-compile \
   -L "$project_root/src" \
   -L "$project_root/extensions" \
+  -C "$project_root/build" \
   -c '(use-modules (live-agent main)) (main (cdr (command-line)))' \
   --agent "$project_root/agent/default.scm" \
   --state-dir "$state_root" \

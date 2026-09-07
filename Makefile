@@ -1,4 +1,13 @@
-.PHONY: run dogfood sessions run-traced demo-context demo-context-scripted phoenix phoenix-check phoenix-down phoenix-logs test check
+.PHONY: run dogfood sessions run-traced demo-context demo-context-scripted phoenix phoenix-check phoenix-down phoenix-logs build test check
+
+# Compiled modules make the SHA-256 ledger and tool loop fast; bin/shift and the
+# tests load them from build/ and fall back to source when a .go is stale.
+LOAD_PATHS = -L src -L extensions
+GUILE_PATHS = $(LOAD_PATHS) -C build
+CORE_SOURCES = $(wildcard src/live-agent/*.scm)
+BUILTIN_SOURCES = $(wildcard extensions/shift/*.scm)
+COMPILED = $(patsubst src/live-agent/%.scm,build/live-agent/%.go,$(CORE_SOURCES)) \
+           $(patsubst extensions/shift/%.scm,build/shift/%.go,$(BUILTIN_SOURCES))
 
 run:
 	./bin/shift
@@ -30,9 +39,19 @@ phoenix-down:
 phoenix-logs:
 	docker compose logs -f phoenix
 
-test:
-	@set -e; for suite in default-agent json provider tools extensions runtime session trace prompt compaction recovery context daily; do \
-	  GUILE_AUTO_COMPILE=0 guile -L src -L extensions test/run.scm test/$$suite.scm; \
+build: $(COMPILED)
+
+build/live-agent/%.go: src/live-agent/%.scm
+	@mkdir -p $(dir $@)
+	@GUILE_AUTO_COMPILE=0 guild compile $(LOAD_PATHS) -o $@ $< >/dev/null
+
+build/shift/%.go: extensions/shift/%.scm
+	@mkdir -p $(dir $@)
+	@GUILE_AUTO_COMPILE=0 guild compile $(LOAD_PATHS) -o $@ $< >/dev/null
+
+test: build
+	@set -e; for suite in sha256 changes default-agent json provider tools extensions runtime session trace prompt compaction recovery context daily; do \
+	  GUILE_AUTO_COMPILE=0 guile $(GUILE_PATHS) test/run.scm test/$$suite.scm; \
 	done
 	python3 test/session_bridge_test.py
 	python3 test/regressions.py
@@ -40,6 +59,3 @@ test:
 	python3 test/claude_test.py
 
 check: test
-	@set -e; for module in src/live-agent/*.scm extensions/shift/*.scm; do \
-	  GUILE_AUTO_COMPILE=0 guild compile -L src -L extensions -o /tmp/shift-$$(basename "$$module" .scm).go "$$module"; \
-	done

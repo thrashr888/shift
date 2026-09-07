@@ -13,6 +13,8 @@
   #:use-module (live-agent policy)
   #:use-module (live-agent transcript)
   #:use-module (live-agent builtins)
+  #:use-module (live-agent changes)
+  #:use-module (live-agent diff)
   #:use-module (live-agent compaction)
   #:use-module (live-agent context)
   #:use-module (live-agent json)
@@ -843,7 +845,8 @@
                  (map tool-name (generation-ref generation 'agent-tools)))))
           (unless (member name enabled)
             (error "the interrupted tool is no longer enabled" name))
-          (unless (authorize-tool runtime generation name arguments)
+          (unless (or (member name '("write" "edit"))
+                      (authorize-tool runtime generation name arguments))
             (error "recovery tool denied by current mode or approval"))
           (when (member name '("live_eval" "extension"))
             (error
@@ -860,13 +863,17 @@
                      (recovery.retry . #t)
                      (input.value . ,(json-write arguments)))))
                  (outcome
-                  (if (string=? name "traces")
-                      (execute-traces tracer arguments)
-                      (execute-tool
-                       name arguments (getcwd)
-                       (generation-ref generation 'agent-shell-policy)
-                       (lambda _ #t))))
+                  (cond
+                   ((string=? name "traces") (execute-traces tracer arguments))
+                   ((member name '("write" "edit"))
+                    (execute-change! runtime generation tracer name arguments #f))
+                   (else
+                    (execute-tool
+                     name arguments (getcwd)
+                     (generation-ref generation 'agent-shell-policy)
+                     (lambda _ #t)))))
                  (output (tool-result-output outcome)))
+            (when (tool-result-success? outcome) (record-observations! outcome))
             (trace-end!
              span (if (tool-result-success? outcome) "OK" "ERROR")
              `((output.value . ,output)))
@@ -1072,6 +1079,7 @@
                        (unless (tool-result-success? result)
                          (error "selected context could not be read"
                                 path (tool-result-output result)))
+                       (record-observations! result)
                        (format #f "## ~a\n\n~a"
                                path (tool-result-output result))))
                    paths))
@@ -1090,13 +1098,18 @@
         (apply throw key arguments)))))
 
 (define interactive-approval? (make-parameter #t))
-(define (authorize-tool runtime generation name arguments)
+(define current-turn (make-parameter 0))
+;; The change ledger is process-owned state beside the recovery record.
+(define ledger #f)
+(define* (authorize-tool runtime generation name arguments #:optional (preview #f))
   (let* ((decision (tool-decision (setting-ref generation 'mode) name arguments))
          (allowed? (case decision
                      ((allow) #t)
                      ((ask) (and (interactive-approval?)
                        (begin
-                         (format #t "\nTool requests: ~a\n~a\n" name (json-write arguments))
+                         (if preview
+                             (format #t "\n~a" preview)
+                             (format #t "\nTool requests: ~a\n~a\n" name (json-write arguments)))
                          (let ((answer (read-approval-key "Approve tool? [y/N] ")))
                            (or (and (char? answer) (char-ci=? answer #\y))
                                (and (string? answer) (member (string-downcase (string-trim-both answer)) '("y" "yes"))))))))
@@ -1104,6 +1117,83 @@
     (runtime-record! runtime 'tool-approval
       `((tool . ,name) (mode . ,(setting-ref generation 'mode)) (decision . ,decision) (approved . ,(if allowed? #t #f))))
     allowed?))
+
+(define (unavailable-result name)
+  (make-tool-result
+   #f
+   (format #f
+           "tool unavailable in this turn: ~a. The active image, execution mode, or approval denied it. Continue without it."
+           name)))
+
+(define (change-preview name prepared)
+  (format #f "~a ~a ~a~%~a"
+          name (prepared-change-path prepared)
+          (format-diffstat (prepared-change-diffstat prepared))
+          (diff-preview (prepared-change-diff prepared) 120)))
+
+(define (record-observations! result)
+  (when ledger
+    (for-each
+     (lambda (change)
+       (when (eq? (assq-ref change 'kind) 'seen)
+         (ledger-observe! ledger (current-turn)
+                          (assq-ref change 'path) (assq-ref change 'hash))))
+     (tool-result-changes result))))
+
+(define (change-attributes result)
+  (let ((mutations (filter (lambda (change) (eq? (assq-ref change 'kind) 'mutation))
+                           (tool-result-changes result))))
+    (if (null? mutations)
+        '()
+        `((tool.changes
+           . ,(json-write
+               (apply json-array
+                      (map (lambda (change)
+                             (json-object
+                              (cons "path" (assq-ref change 'path))
+                              (cons "before" (or (assq-ref change 'before) json-null))
+                              (cons "after" (assq-ref change 'after))
+                              (cons "added" (assq-ref change 'added))
+                              (cons "removed" (assq-ref change 'removed))))
+                           mutations))))))))
+
+;; A mutation is prepared without touching the project, checked against the
+;; ledger's last-seen hash, shown as a diff for approval, journaled as a
+;; write-ahead ledger entry, and only then committed atomically.
+(define (execute-change! runtime generation tracer name arguments call-id)
+  (catch #t
+    (lambda ()
+      (let* ((prepared (prepare-change name arguments (getcwd)))
+             (path (prepared-change-path prepared)))
+        (when ledger
+          (ledger-check-stale! ledger path (prepared-change-before-hash prepared)))
+        (if (not (authorize-tool runtime generation name arguments
+                                 (change-preview name prepared)))
+            (unavailable-result name)
+            (let ((seq (and ledger
+                            (ledger-begin! ledger (current-turn) call-id name path
+                                           (prepared-change-before-text prepared)
+                                           (prepared-change-after-text prepared)))))
+              (recovery-write! (runtime-state-directory tracer) name arguments
+                               (generation-id generation))
+              (catch #t
+                (lambda ()
+                  (let ((result (commit-change! prepared)))
+                    (when seq (ledger-commit! ledger seq))
+                    result))
+                (lambda (key . detail)
+                  (if (cancelled? key)
+                      (apply throw key detail)
+                      (begin
+                        (when seq (ledger-abort! ledger seq))
+                        (make-tool-result
+                         #f (string-append "tool failed: "
+                                           (caught-error-detail key detail)))))))))))
+    (lambda (key . detail)
+      (if (cancelled? key)
+          (apply throw key detail)
+          (make-tool-result
+           #f (string-append "tool error: " (caught-error-detail key detail)))))))
 
 (define (execute-tool-calls runtime tracer parent generation provider calls
                             messages enabled-tools)
@@ -1126,14 +1216,16 @@
                      (input.value . ,(json-write (tool-call-arguments call))))
                    parent))
                  (outcome
-                  (if (or (not enabled?)
-                          (not (authorize-tool runtime generation name (tool-call-arguments call))))
-                      (make-tool-result
-                       #f
-                       (format #f
-                               "tool unavailable in this turn: ~a. The active image, execution mode, or approval denied it. Continue without it."
-                               name))
-                      (begin
+                  (catch 'turn-cancelled
+                    (lambda ()
+                      (cond
+                       ((not enabled?) (unavailable-result name))
+                       ((member name '("write" "edit"))
+                        (execute-change! runtime generation tracer name
+                                         (tool-call-arguments call) (tool-call-id call)))
+                       ((not (authorize-tool runtime generation name (tool-call-arguments call)))
+                        (unavailable-result name))
+                       (else
                         ;; This write-ahead record is deliberately retained if
                         ;; cancellation or process death interrupts execution.
                         (recovery-write!
@@ -1161,17 +1253,20 @@
                                (lambda _ #t)))))
                           (lambda (key . arguments)
                             (if (cancelled? key)
-                                (begin
-                                  (trace-end!
-                                   span "CANCELLED"
-                                   `((error.message . "tool interrupted; recovery record retained")))
-                                  (apply throw key arguments))
+                                (apply throw key arguments)
                                 (make-tool-result
                                  #f (format #f "tool failed (~a): ~s" key arguments))))))))
+                    (lambda (key . arguments)
+                      (trace-end!
+                       span "CANCELLED"
+                       `((error.message . "tool interrupted; recovery record retained")))
+                      (apply throw key arguments))))
                  (ok? (tool-result-success? outcome))
                  (output (tool-result-output outcome)))
+            (when ok? (record-observations! outcome))
             (trace-end! span (if ok? "OK" "ERROR")
-                        `((output.value . ,output)))
+                        `((output.value . ,output)
+                          ,@(change-attributes outcome)))
             (runtime-record!
              runtime 'tool-result
              `((generation . ,(generation-id generation))
@@ -1538,6 +1633,7 @@
         (lock (make-mutex)))
     (define (process! line)
       (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
+      (parameterize ((current-turn turn-count))
       (let ((action
              (cond
                ((string-null? (string-trim-both line)) 'continue)
@@ -1554,7 +1650,7 @@
            (let ((message (try-transition "tool recovery" (lambda () (retry-interrupted-tool! runtime tracer)))))
              (when message (set! history (append history (list message)))))))
         (checkpoint! history turn-count)
-        action))
+        action)))
     (define (dispatch method argument)
       (if (eq? method 'cancel)
           (begin
@@ -1680,6 +1776,7 @@
                     (and session (session-id session))
                     (and session (session-name session))))))
         (unless runtime (exit 1))
+        (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
         (load-dotenv! (string-append (getcwd) "/.env"))
         (input-init! state-directory)

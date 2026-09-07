@@ -4,18 +4,68 @@
   #:use-module (ice-9 textual-ports)
   #:use-module (srfi srfi-9)
   #:use-module (live-agent json)
+  #:use-module (live-agent sha256)
+  #:use-module (live-agent diff)
   #:export (make-tool-result
             tool-result?
             tool-result-success?
             tool-result-output
+            tool-result-changes
+            prepare-change
+            commit-change!
+            prepared-change?
+            prepared-change-tool
+            prepared-change-path
+            prepared-change-before-text
+            prepared-change-before-hash
+            prepared-change-after-text
+            prepared-change-after-hash
+            prepared-change-diff
+            prepared-change-diffstat
+            prepared-change-summary
             execute-tool
             tool-schema))
 
+;; `changes` lists what a tool observed or mutated on disk, as alists with a
+;; `kind` of seen or mutation, so the runtime ledger never parses prose.
 (define-record-type <tool-result>
-  (make-tool-result success? output)
+  (%make-tool-result success? output changes)
   tool-result?
   (success? tool-result-success?)
-  (output tool-result-output))
+  (output tool-result-output)
+  (changes tool-result-changes))
+
+(define* (make-tool-result success? output #:optional (changes '()))
+  (%make-tool-result success? output changes))
+
+;; A mutation is prepared without touching the project, shown for approval,
+;; then committed only if the target still matches the prepared pre-image.
+(define-record-type <prepared-change>
+  (make-prepared-change tool path absolute before-text before-hash
+                        after-text after-hash diff summary)
+  prepared-change?
+  (tool prepared-change-tool)
+  (path prepared-change-path)
+  (absolute prepared-change-absolute)
+  (before-text prepared-change-before-text)
+  (before-hash prepared-change-before-hash)
+  (after-text prepared-change-after-text)
+  (after-hash prepared-change-after-hash)
+  (diff prepared-change-diff)
+  (summary prepared-change-summary))
+
+(define (prepared-change-diffstat prepared)
+  (diffstat (prepared-change-diff prepared)))
+
+(define (relative-path root candidate)
+  (if (string=? root candidate)
+      "."
+      (substring candidate (+ 1 (string-length root)))))
+
+(define (current-file-hash path)
+  (and (file-exists? path)
+       (not (eq? 'directory (stat:type (stat path))))
+       (sha256-file path)))
 
 (define max-tool-output (* 64 1024))
 (define max-write-input (* 256 1024))
@@ -88,6 +138,7 @@
 (define (read-project-file arguments working-directory)
   (let* ((requested (require-string arguments "path"))
          (resolved (resolve-existing-path requested working-directory "read"))
+         (root (car resolved))
          (candidate (cadr resolved)))
     (let* ((size (stat:size (stat candidate)))
            (content
@@ -95,12 +146,19 @@
                 candidate
               (lambda (port)
                 (let ((value (get-string-n port max-tool-output)))
-                  (if (eof-object? value) "" value))))))
-      (if (> size max-tool-output)
-          (string-append
-           content
-           "\n…[file truncated; bytes=" (number->string size) "]")
-          content))))
+                  (if (eof-object? value) "" value)))))
+           (hash (sha256-file candidate))
+           (relative (relative-path root candidate)))
+      (make-tool-result
+       #t
+       (string-append
+        (format #f "# ~a · ~a bytes · sha256 ~a~%" relative size (substring hash 0 12))
+        (if (> size max-tool-output)
+            (string-append
+             content
+             "\n…[file truncated; bytes=" (number->string size) "]")
+            content))
+       (list `((kind . seen) (path . ,relative) (hash . ,hash)))))))
 
 (define (atomic-write-file path content)
   (let ((temporary
@@ -119,18 +177,33 @@
           (unless (port-closed? port) (close-port port))
           (when (file-exists? actual) (delete-file actual)))))))
 
-(define (write-project-file arguments working-directory)
+(define (finish-change tool root candidate before after summary)
+  (let ((relative (relative-path root candidate)))
+    (make-prepared-change
+     tool relative candidate
+     before (and before (sha256-string before))
+     after (sha256-string after)
+     (unified-diff before after
+                   (string-append "a/" relative) (string-append "b/" relative))
+     summary)))
+
+(define (prepare-write arguments working-directory)
   (let* ((requested (require-string arguments "path"))
          (content (require-string arguments "content"))
          (resolved (resolve-write-path requested working-directory))
+         (root (car resolved))
          (candidate (cadr resolved)))
     (when (> (string-length content) max-write-input)
       (error "write content exceeds the 256 KiB limit" (string-length content)))
     (when (and (file-exists? candidate)
                (eq? 'directory (stat:type (stat candidate))))
       (error "write path is a directory" requested))
-    (atomic-write-file candidate content)
-    (format #f "wrote ~a chars to ~a" (string-length content) requested)))
+    (finish-change
+     "write" root candidate
+     (and (file-exists? candidate)
+          (call-with-input-file candidate get-string-all))
+     content
+     (format #f "wrote ~a chars to ~a" (string-length content) requested))))
 
 (define (occurrence-count text fragment)
   (let loop ((start 0) (count 0))
@@ -151,12 +224,13 @@
             (display (substring text start) port))))
     (get-output-string port)))
 
-(define (edit-project-file arguments working-directory)
+(define (prepare-edit arguments working-directory)
   (let* ((requested (require-string arguments "path"))
          (old-text (require-string arguments "old_text"))
          (new-text (require-string arguments "new_text"))
          (replace-all? (json-object-ref arguments "replace_all" #f))
          (resolved (resolve-existing-path requested working-directory "edit"))
+         (root (car resolved))
          (candidate (cadr resolved))
          (size (stat:size (stat candidate))))
     (when (string-null? old-text)
@@ -173,9 +247,36 @@
         (when (> (string-length updated) max-write-input)
           (error "edited content exceeds the 256 KiB write limit"
                  (string-length updated)))
-        (atomic-write-file candidate updated)
-        (format #f "edited ~a occurrence~a in ~a"
-                count (if (= count 1) "" "s") requested)))))
+        (finish-change
+         "edit" root candidate content updated
+         (format #f "edited ~a occurrence~a in ~a"
+                 count (if (= count 1) "" "s") requested))))))
+
+(define (prepare-change name arguments working-directory)
+  (cond
+   ((string=? name "write") (prepare-write arguments working-directory))
+   ((string=? name "edit") (prepare-edit arguments working-directory))
+   (else (error "tool does not prepare file changes" name))))
+
+(define (commit-change! prepared)
+  (let ((absolute (prepared-change-absolute prepared)))
+    (unless (equal? (current-file-hash absolute)
+                    (prepared-change-before-hash prepared))
+      (error "file changed since the change was prepared; read it again and retry"
+             (prepared-change-path prepared)))
+    (atomic-write-file absolute (prepared-change-after-text prepared))
+    (let ((stat (prepared-change-diffstat prepared)))
+      (make-tool-result
+       #t
+       (string-append (prepared-change-summary prepared) " " (format-diffstat stat))
+       (list `((kind . mutation)
+               (tool . ,(prepared-change-tool prepared))
+               (path . ,(prepared-change-path prepared))
+               (before . ,(prepared-change-before-hash prepared))
+               (after . ,(prepared-change-after-hash prepared))
+               (added . ,(car stat))
+               (removed . ,(cdr stat))
+               (diff . ,(prepared-change-diff prepared))))))))
 
 (define (run-rg arguments working-directory)
   (let* ((query (require-string arguments "query"))
@@ -257,20 +358,18 @@
 (define (execute-tool name arguments working-directory shell-policy confirm)
   (catch #t
     (lambda ()
-      (make-tool-result
-       #t
-       (cond
-        ((string=? name "read")
-         (read-project-file arguments working-directory))
-        ((string=? name "rg")
-         (run-rg arguments working-directory))
-        ((string=? name "write")
-         (write-project-file arguments working-directory))
-        ((string=? name "edit")
-         (edit-project-file arguments working-directory))
-        ((string=? name "shell")
-         (run-shell arguments working-directory shell-policy confirm))
-        (else (error "tool is not implemented" name)))))
+      (let ((value
+             (cond
+              ((string=? name "read")
+               (read-project-file arguments working-directory))
+              ((string=? name "rg")
+               (run-rg arguments working-directory))
+              ((or (string=? name "write") (string=? name "edit"))
+               (commit-change! (prepare-change name arguments working-directory)))
+              ((string=? name "shell")
+               (run-shell arguments working-directory shell-policy confirm))
+              (else (error "tool is not implemented" name)))))
+        (if (tool-result? value) value (make-tool-result #t value))))
     (lambda (key . args)
       (make-tool-result #f (format #f "tool error (~a): ~s" key args)))))
 
