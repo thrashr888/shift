@@ -517,6 +517,36 @@
 
 (define last-usage (json-object))
 (define last-estimate 0)
+(define run-prompt-tokens 0)
+(define run-completion-tokens 0)
+(define run-usage-reported? #f)
+
+(define (reset-run-usage!)
+  (set! run-prompt-tokens 0)
+  (set! run-completion-tokens 0)
+  (set! run-usage-reported? #f))
+
+(define (record-run-usage! attributes)
+  (let ((prompt (assq-ref attributes 'llm.token_count.prompt))
+        (completion (assq-ref attributes 'llm.token_count.completion)))
+    (when (number? prompt)
+      (set! run-prompt-tokens (+ run-prompt-tokens prompt))
+      (set! run-usage-reported? #t))
+    (when (number? completion)
+      (set! run-completion-tokens (+ run-completion-tokens completion))
+      (set! run-usage-reported? #t))))
+
+(define (show-close-message session)
+  (if run-usage-reported?
+      (format #t "~%Session closed · ~a input + ~a output = ~a tokens~%"
+              run-prompt-tokens run-completion-tokens
+              (+ run-prompt-tokens run-completion-tokens))
+      (display "\nSession closed · token usage unavailable\n"))
+  (when session
+    (format #t "Resume ./bin/shift --resume ~a~%ID ~a~%"
+            (session-name session) (session-id session)))
+  (force-output))
+
 (define (show-context generation)
   (format #t "Context: ~a estimated input tokens; limit ~a; output reserve ~a.~%"
     last-estimate (or (model-context-limit generation) 'unknown)
@@ -1184,12 +1214,14 @@
                   (json-object-entries raw))))))
                 (if (json-object-ref raw "service_tier" #f)
                     (apply json-object (acons "service_tier" (json-object-ref raw "service_tier") (json-object-entries value))) value))))
-          (trace-end!
-           span "OK"
-           (append
-            `((output.value . ,(or (completion-content completion) ""))
-              (llm.thinking . ,(or (completion-thinking completion) "")))
-            (usage-attributes completion)))
+          (let ((attributes (usage-attributes completion)))
+            (record-run-usage! attributes)
+            (trace-end!
+             span "OK"
+             (append
+              `((output.value . ,(or (completion-content completion) ""))
+                (llm.thinking . ,(or (completion-thinking completion) "")))
+              attributes)))
           (cons completion content-started?)))
       (lambda (key . arguments)
         (when (or thinking-started? content-started?)
@@ -1347,6 +1379,7 @@
                (string-append
                 "shift-" (generation-fingerprint generation) "-compaction")
                (lambda _ #t) (lambda _ #t))))
+        (record-run-usage! (usage-attributes completion))
         (let ((summary (or (completion-content completion) "")))
           (when (string-null? (string-trim-both summary))
             (error "compaction model returned an empty summary"))
@@ -1556,6 +1589,7 @@
         (lambda () (stop-mcp!))))))
 
 (define (main args)
+  (reset-run-usage!)
   (call-with-values
       (lambda () (parse-arguments (transport-arguments args)))
     (lambda (agent-path state-directory watch? requested-session-name session-mode
@@ -1656,4 +1690,6 @@
             (lambda ()
               (stop-watcher!)
               (trace-close! tracer)
+              (unless (or mcp-stdio? control-port)
+                (show-close-message session))
               (when session (close-session! session))))))))))

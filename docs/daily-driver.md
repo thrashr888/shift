@@ -35,6 +35,8 @@ still use `/eval`, `/reload`, and `/rollback`; explicit preferences take precede
 Up/down cycles through prompts and commands; down restores your unfinished draft.
 The last 500 submitted inputs are kept in `.shift/input-history.jsonl`, separate
 from conversation history. File locking coordinates concurrent session writers.
+On close, a named session prints provider-reported token totals, its stable ID,
+and a copyable `./bin/shift --resume NAME` command.
 
 `.env` is read as data without shell evaluation. Existing process environment
 variables take precedence. Claude uses `CLAUDE_API_KEY`; OpenAI uses

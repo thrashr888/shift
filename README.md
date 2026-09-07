@@ -97,6 +97,10 @@ same named session concurrently; different names remain fully concurrent.
 `session-fork` copies a fixed checkpoint into a distinct child identity while
 preserving its generation fingerprint and durable authority ceiling.
 
+When the process closes, Shift reports provider-reported input and output token
+totals for that run, followed by the named session's resume command and stable
+ID. Providers that omit usage are shown as unavailable instead of estimated.
+
 Older history compacts automatically after 80 provider messages, retaining at
 least 24 recent messages and a boundary-safe summary. Both values are live
 Scheme settings (`agent-compaction-threshold` and

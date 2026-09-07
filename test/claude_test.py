@@ -200,6 +200,10 @@ class ClaudeTests(unittest.TestCase):
         )
         self.assertIn("CLAUDE_TOOL_OK", result.stdout)
         self.assertIn("OPENAI_OK", result.stdout)
+        self.assertIn(
+            "Session closed · 60 input + 24 output = 84 tokens", result.stdout
+        )
+        self.assertIn("Resume ./bin/shift --resume native", result.stdout)
         self.assertEqual(len(self.server.requests), 3)
         second = self.server.requests[1][1]
         self.assertIn("fixture-signature", json.dumps(second))

@@ -42,8 +42,10 @@ class DailyDriver(unittest.TestCase):
         return result.stdout
 
     def test_project_settings_resume_and_fork(self):
-        output = self.cli("/thinking on\n/settings save\n/quit\n", "--session", "one")
-        self.assertIn("Saved defaults:", output)
+        first_output = self.cli(
+            "/thinking on\n/settings save\n/quit\n", "--session", "one"
+        )
+        self.assertIn("Saved defaults:", first_output)
         self.assertTrue((self.project / ".shift/settings.json").exists())
         output = self.cli("/thinking off\n/quit\n", "--session", "one")
         self.assertIn("thinking on", output)
@@ -52,6 +54,9 @@ class DailyDriver(unittest.TestCase):
         checkpoint = json.loads(
             (self.project / ".shift/sessions/one/session.json").read_text()
         )
+        self.assertIn("Session closed · token usage unavailable", first_output)
+        self.assertIn("Resume ./bin/shift --resume one", first_output)
+        self.assertIn(f"ID {checkpoint['id']}", first_output)
         self.assertEqual(checkpoint["generation_id"], 1)
         self.assertEqual(checkpoint["patches"], [])
         self.cli("", "--fork-session", "one", "child")
