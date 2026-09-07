@@ -553,6 +553,17 @@ class HotReloadTest(unittest.TestCase):
 
             response = session.send("still there", 5)
             self.assertIn("[hot-reloaded] still there", response["output"])
+
+            cursor = response["cursor"]
+            launcher = project_root / "bin/shift"
+            launcher.write_text(launcher.read_text() + "\n# stable runtime drift\n")
+            agent_path.write_text(
+                updated.replace("[hot-reloaded] ", "[requires-restart] ")
+            )
+            restart_notice = self.wait_for_text(session, cursor, "restart Shift")
+            self.assertIn("generation 2 remains active", restart_notice)
+            response = session.send("old runtime stays live", 5)
+            self.assertIn("[hot-reloaded] old runtime stays live", response["output"])
         finally:
             if session is not None:
                 session.stop()

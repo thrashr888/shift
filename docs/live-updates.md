@@ -12,6 +12,10 @@ journals one rejection for that exact content, then waits for another distinct
 save instead of retrying noisily. This makes ordinary editor write patterns and
 temporarily incomplete files safe to iterate on.
 
+If stable runtime source changes while Shift is running, the watcher also keeps
+the working generation and asks for a restart before accepting another agent
+image. This prevents a newer image from crossing into an older process contract.
+
 ```sh
 ./bin/shift             # watcher enabled
 ./bin/shift --no-watch  # explicit/manual reload only

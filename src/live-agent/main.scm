@@ -1,6 +1,7 @@
 (define-module (live-agent main)
   #:use-module (ice-9 exceptions)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 ftw)
   #:use-module (ice-9 popen)
   #:use-module (ice-9 readline)
   #:use-module (ice-9 threads)
@@ -246,9 +247,30 @@
           (format #f "~a: ~s" key arguments)))
     (lambda _ (format #f "~a: ~s" key arguments))))
 
+(define (stable-runtime-snapshot)
+  (let ((root (getenv "SHIFT_INSTALL_ROOT")))
+    (and root
+         (let* ((directories
+                 (map (lambda (relative) (string-append root "/" relative))
+                      '("src/live-agent" "extensions/shift")))
+                (modules
+                 (append-map
+                  (lambda (directory)
+                    (if (file-exists? directory)
+                        (map (lambda (name) (string-append directory "/" name))
+                             (scandir directory
+                                      (lambda (name)
+                                        (string-suffix? ".scm" name))))
+                        '()))
+                  directories))
+                (paths (sort (cons (string-append root "/bin/shift") modules)
+                             string<?)))
+           (map (lambda (path) (cons path (read-source-file path))) paths)))))
+
 (define* (start-agent-watcher! runtime #:optional (on-reloaded (lambda () #t)))
   (let ((stopped? #f)
-        (last-attempt #f))
+        (last-attempt #f)
+        (runtime-snapshot (stable-runtime-snapshot)))
     (define (notice-reloaded generation)
       (format #t "~%\u21bb agent image reloaded · generation ~a · ~a~%"
               (generation-id generation)
@@ -274,6 +296,12 @@
              ((string=? source-text (generation-source-text current))
               (set! last-attempt #f))
              ((and last-attempt (string=? source-text last-attempt)) #f)
+             ((and runtime-snapshot
+                   (not (equal? runtime-snapshot
+                                (stable-runtime-snapshot))))
+              (set! last-attempt source-text)
+              (notice-rejected
+               "stable runtime source changed; restart Shift before loading the new agent image"))
              (else
               ;; Remember rejected content too, so an editor's incomplete save
               ;; does not cause a retry storm. A later distinct save retries.
