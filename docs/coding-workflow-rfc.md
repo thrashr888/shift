@@ -1,10 +1,11 @@
 # RFC: diff, patch, and test workflow
 
-Status: accepted with the draft defaults on September 6, 2026. Steps one and
-two of the implementation order are implemented: SHA-256, the change ledger,
-the prepare/commit split with diff previews for `write` and `edit`, and the
-`(shift coding)` built-in with `status` and `diff`. `apply_patch`, `run`,
-`/undo`, receipts, `/recover restore`, and the workflow suite are not yet.
+Status: accepted with the draft defaults on September 6, 2026. Steps one
+through three of the implementation order are implemented: SHA-256, the change
+ledger, the prepare/commit split with diff previews for `write` and `edit`, the
+`(shift coding)` built-in with `status` and `diff`, and `apply_patch` with an
+all-or-nothing multi-file commit. `run`, `/undo`, receipts, `/recover restore`,
+and the workflow suite are not yet.
 
 ## Summary
 

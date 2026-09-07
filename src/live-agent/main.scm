@@ -846,7 +846,7 @@
                  (map tool-name (generation-ref generation 'agent-tools)))))
           (unless (member name enabled)
             (error "the interrupted tool is no longer enabled" name))
-          (unless (or (member name '("write" "edit"))
+          (unless (or (member name mutation-tool-names)
                       (authorize-tool runtime generation name arguments))
             (error "recovery tool denied by current mode or approval"))
           (when (member name '("live_eval" "extension"))
@@ -866,7 +866,7 @@
                  (outcome
                   (cond
                    ((string=? name "traces") (execute-traces tracer arguments))
-                   ((member name '("write" "edit"))
+                   ((member name mutation-tool-names)
                     (execute-change! runtime generation tracer name arguments #f))
                    ((member name coding-tool-names)
                     ((builtin-ref 'coding 'coding-execute)
@@ -1129,11 +1129,23 @@
            "tool unavailable in this turn: ~a. The active image, execution mode, or approval denied it. Continue without it."
            name)))
 
-(define (change-preview name prepared)
-  (format #f "~a ~a ~a~%~a"
-          name (prepared-change-path prepared)
-          (format-diffstat (prepared-change-diffstat prepared))
-          (diff-preview (prepared-change-diff prepared) 120)))
+(define (changes-preview name changes)
+  (let ((total (fold (lambda (prepared sum)
+                       (let ((stat (prepared-change-diffstat prepared)))
+                         (cons (+ (car sum) (car stat)) (+ (cdr sum) (cdr stat)))))
+                     '(0 . 0) changes)))
+    (string-append
+     (if (= 1 (length changes))
+         (format #f "~a ~a ~a~%" name (prepared-change-path (car changes)) (format-diffstat total))
+         (format #f "~a ~a files ~a~%" name (length changes) (format-diffstat total)))
+     (diff-preview (string-join (map prepared-change-diff changes) "") 120))))
+
+(define mutation-tool-names '("write" "edit" "apply_patch"))
+
+(define (prepare-changes name arguments)
+  (if (string=? name "apply_patch")
+      ((builtin-ref 'coding 'coding-prepare) arguments (getcwd))
+      (list (prepare-change name arguments (getcwd)))))
 
 (define (record-observations! result)
   (when ledger
@@ -1167,29 +1179,34 @@
 (define (execute-change! runtime generation tracer name arguments call-id)
   (catch #t
     (lambda ()
-      (let* ((prepared (prepare-change name arguments (getcwd)))
-             (path (prepared-change-path prepared)))
+      (let ((changes (prepare-changes name arguments)))
         (when ledger
-          (ledger-check-stale! ledger path (prepared-change-before-hash prepared)))
+          (for-each (lambda (prepared)
+                      (ledger-check-stale! ledger (prepared-change-path prepared)
+                                           (prepared-change-before-hash prepared)))
+                    changes))
         (if (not (authorize-tool runtime generation name arguments
-                                 (change-preview name prepared)))
+                                 (changes-preview name changes)))
             (unavailable-result name)
-            (let ((seq (and ledger
-                            (ledger-begin! ledger (current-turn) call-id name path
-                                           (prepared-change-before-text prepared)
-                                           (prepared-change-after-text prepared)))))
+            (let ((seqs (map (lambda (prepared)
+                               (and ledger
+                                    (ledger-begin! ledger (current-turn) call-id name
+                                                   (prepared-change-path prepared)
+                                                   (prepared-change-before-text prepared)
+                                                   (prepared-change-after-text prepared))))
+                             changes)))
               (recovery-write! (runtime-state-directory tracer) name arguments
                                (generation-id generation))
               (catch #t
                 (lambda ()
-                  (let ((result (commit-change! prepared)))
-                    (when seq (ledger-commit! ledger seq))
+                  (let ((result (commit-changes! changes)))
+                    (for-each (lambda (seq) (when seq (ledger-commit! ledger seq))) seqs)
                     result))
                 (lambda (key . detail)
                   (if (cancelled? key)
                       (apply throw key detail)
                       (begin
-                        (when seq (ledger-abort! ledger seq))
+                        (for-each (lambda (seq) (when seq (ledger-abort! ledger seq))) seqs)
                         (make-tool-result
                          #f (string-append "tool failed: "
                                            (caught-error-detail key detail)))))))))))
@@ -1224,7 +1241,7 @@
                     (lambda ()
                       (cond
                        ((not enabled?) (unavailable-result name))
-                       ((member name '("write" "edit"))
+                       ((member name mutation-tool-names)
                         (execute-change! runtime generation tracer name
                                          (tool-call-arguments call) (tool-call-id call)))
                        ((not (authorize-tool runtime generation name (tool-call-arguments call)))

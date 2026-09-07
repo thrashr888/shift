@@ -28,8 +28,8 @@
    "Prefer read for known files and rg for project search. Use traces to search your "
    "complete durable session history after compaction, verify tool outcomes, errors, "
    "generation changes, and context choices, then fetch an exact span when details matter. "
-   "Use edit for exact changes "
-   "and write for complete new file content. Only use write or edit when the user explicitly "
+   "Use edit for one exact replacement, apply_patch with a unified diff for multi-hunk or "
+   "multi-file changes, and write for complete new file content. Only use write or edit when the user explicitly "
    "asked to change project files; answer ordinary content requests in the conversation. "
    "Use status to see what you changed and whether the repository is a dirty git checkout, "
    "and diff (scope turn, session, or git) to review exact changes before reporting them done. "
@@ -50,7 +50,7 @@
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.
-(define agent-tools '(read rg write edit status diff shell traces live_eval extension))
+(define agent-tools '(read rg write edit apply_patch status diff shell traces live_eval extension))
 
 ;; The prototype deliberately supports only deny and ask. A live image cannot
 ;; silently broaden the stable runtime's authority.

@@ -92,5 +92,44 @@
   (let ((text (output (coding-execute "diff" (args (cons "scope" "session")) repo repo-ledger 2))))
     (and (string-contains text "+v2") (not (string-contains text "user edit")))))
 
+;; apply_patch preparation
+(write-file! plain "p1.txt" "one\ntwo\n")
+(write-file! plain "p2.txt" "alpha\n")
+(define (prepare-patch text) (coding-prepare (args (cons "patch" text)) plain))
+(define good
+  (string-append "--- a/p1.txt\n+++ b/p1.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"
+                 "--- a/p2.txt\n+++ b/p2.txt\n@@ -1 +1,2 @@\n alpha\n+beta\n"))
+(define prepared (prepare-patch good))
+(test-equal "a two-file patch prepares two changes" '("p1.txt" "p2.txt")
+  (map prepared-change-path prepared))
+(test-assert "prepared patch changes carry diffs and hashes"
+  (and (string-contains (prepared-change-diff (car prepared)) "+TWO")
+       (string? (prepared-change-before-hash (car prepared)))
+       (equal? "alpha\nbeta\n" (prepared-change-after-text (cadr prepared)))))
+(test-equal "preparation writes nothing" "one\ntwo\n"
+  (call-with-input-file (string-append plain "/p1.txt") get-string-all))
+(test-error "a mismatch in the second file rejects the whole patch" #t
+  (prepare-patch (string-append "--- a/p1.txt\n+++ b/p1.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"
+                                "--- a/p2.txt\n+++ b/p2.txt\n@@ -1 +1 @@\n-omega\n+beta\n")))
+(test-error "creating an existing file is rejected" #t
+  (prepare-patch "--- /dev/null\n+++ b/p1.txt\n@@ -0,0 +1 @@\n+x\n"))
+(test-error "patch paths cannot escape the project" #t
+  (prepare-patch "--- /dev/null\n+++ b/../escape.txt\n@@ -0,0 +1 @@\n+x\n"))
+(test-error "touching a path twice is rejected" #t
+  (prepare-patch (string-append "--- a/p2.txt\n+++ b/p2.txt\n@@ -1 +1 @@\n-alpha\n+a\n"
+                                "--- a/p2.txt\n+++ b/p2.txt\n@@ -1 +1 @@\n-alpha\n+b\n")))
+(test-error "a delete must remove every line" #t
+  (prepare-patch "--- a/p1.txt\n+++ /dev/null\n@@ -1,2 +1,1 @@\n one\n-two\n"))
+(define deletion (prepare-patch "--- a/p2.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-alpha\n"))
+(test-assert "a delete prepares a change with no post-image"
+  (and (= 1 (length deletion)) (not (prepared-change-after-hash (car deletion)))))
+(define rename (prepare-patch "--- a/p2.txt\n+++ b/p3.txt\n@@ -1 +1 @@\n-alpha\n+ALPHA\n"))
+(test-equal "a rename becomes a delete plus a create" '("p2.txt" "p3.txt")
+  (map prepared-change-path rename))
+(test-assert "the rename's create carries the patched text"
+  (equal? "ALPHA\n" (prepared-change-after-text (cadr rename))))
+(test-error "non-string patches are rejected" #t (coding-prepare (args (cons "patch" 5)) plain))
+(test-assert "apply_patch has a provider schema" (json-object? (coding-tool-schema "apply_patch")))
+
 (system* "rm" "-rf" plain repo)
 (test-end "coding")

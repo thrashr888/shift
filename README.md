@@ -33,7 +33,7 @@ shift λ
   default · generation 1 · 0123456789ab
   qwen3.8:27b-mlx via ollama
   stream on · thinking off · watch on
-  10 tools · shell ask · /help for commands
+  11 tools · shell ask · /help for commands
 ```
 
 At the prompt:
@@ -145,7 +145,7 @@ approval modes, context budgets, and the live localhost MCP endpoint.
 ## Built-in extensions
 
 Ollama, OpenAI-compatible transport, Claude, tracing, the MCP server, and the coding
-tools (`status`, `diff`) are shipped as trusted built-ins under `extensions/shift/`. They are enabled automatically;
+tools (`status`, `diff`, `apply_patch`) are shipped as trusted built-ins under `extensions/shift/`. They are enabled automatically;
 there is no per-session load command. Provider modules load only when selected,
 and interactive sessions start MCP at `http://127.0.0.1:7331/mcp` in the same process.
 
@@ -157,8 +157,8 @@ SHIFT_BUILTINS=ollama ./bin/shift                  # no trace files/exporter
 SHIFT_BUILTINS= ./bin/shift --agent test/session-agent.scm "hello"
 ```
 
-An unset variable enables `ollama,openai,claude,tracing,mcp`; an empty value disables
-all five. A disabled selected provider fails explicitly. This configuration is
+An unset variable enables `ollama,openai,claude,tracing,mcp,coding`; an empty value
+disables all six. A disabled selected provider fails explicitly. This configuration is
 process-owned and inherited by child sessions, so live Scheme cannot re-enable
 a disabled built-in. Use a shell environment setting to retain your preference.
 The default works without any configuration.

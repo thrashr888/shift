@@ -8,9 +8,11 @@
   #:use-module (live-agent tools)
   #:use-module (live-agent changes)
   #:use-module (live-agent diff)
-  #:export (coding-tool-schema coding-execute run-argv))
+  #:use-module (live-agent patch)
+  #:export (coding-tool-schema coding-execute coding-prepare run-argv))
 
 (define max-output (* 64 1024))
+(define max-patch-input (* 512 1024))
 
 (define (bounded text)
   (if (> (string-length text) max-output)
@@ -195,6 +197,58 @@
                          (format-diffstat (total-diffstat diffs)))
                  (string-join (map cadr diffs) "")))))))))
 
+;; One file section becomes one prepared change, or two for a rename, which
+;; is expressed as a delete plus a create so undo needs no special case.
+(define (prepare-section file root)
+  (let ((old (file-patch-old-path file))
+        (new (file-patch-new-path file)))
+    (if (not old)
+        (let* ((resolved (resolve-write-path new root))
+               (absolute (cadr resolved)))
+          (when (file-exists? absolute)
+            (error "patch creates a file that already exists" new))
+          (list (prepare-file-change "apply_patch" (car resolved) absolute
+                                     #f (apply-file-patch #f file)
+                                     (string-append "created " new))))
+        (let* ((resolved (resolve-existing-path old root "apply_patch"))
+               (absolute (cadr resolved)))
+          (when (> (stat:size (stat absolute)) max-patch-input)
+            (error "patched file exceeds the 512 KiB limit" old))
+          (let* ((before (call-with-input-file absolute get-string-all))
+                 (after (apply-file-patch before file)))
+            (cond
+             ((not new)
+              (unless (string-null? after)
+                (error "a patch that deletes a file must remove every line" old))
+              (list (prepare-file-change "apply_patch" (car resolved) absolute
+                                         before #f (string-append "deleted " old))))
+             ((string=? old new)
+              (list (prepare-file-change "apply_patch" (car resolved) absolute
+                                         before after (string-append "patched " old))))
+             (else
+              (let* ((target (resolve-write-path new root))
+                     (target-absolute (cadr target)))
+                (when (file-exists? target-absolute)
+                  (error "patch renames onto a file that already exists" new))
+                (list (prepare-file-change "apply_patch" (car resolved) absolute
+                                           before #f (string-append "deleted " old))
+                      (prepare-file-change "apply_patch" (car target) target-absolute
+                                           #f after (string-append "created " new)))))))))))
+
+;; Parses and applies the whole patch in memory; nothing is written here.
+(define (coding-prepare arguments root)
+  (let ((text (json-object-ref arguments "patch" #f)))
+    (unless (and (string? text) (not (string-null? (string-trim-both text))))
+      (error "patch must be a non-empty unified diff"))
+    (when (> (string-length text) max-patch-input)
+      (error "patch exceeds the 512 KiB limit"))
+    (let* ((changes (append-map (lambda (file) (prepare-section file root))
+                                (parse-patch text)))
+           (paths (map prepared-change-path changes)))
+      (unless (= (length paths) (length (delete-duplicates paths)))
+        (error "patch touches the same path more than once"))
+      changes)))
+
 (define (error-detail key arguments)
   (catch #t
     (lambda ()
@@ -209,6 +263,8 @@
       (cond
        ((string=? name "status") (execute-status root ledger turn))
        ((string=? name "diff") (execute-diff arguments root ledger turn))
+       ((string=? name "apply_patch")
+        (error "apply_patch is a mutation and runs through the prepare/approve/commit path"))
        (else (error "coding tool is not implemented yet" name))))
     (lambda (key . detail)
       (if (eq? key 'turn-cancelled)
@@ -243,4 +299,15 @@
                          (cons "items" (json-object (cons "type" "string")))
                          (cons "description" "Optional project-relative paths to include"))))
      '()))
+   ((string=? name "apply_patch")
+    (function-tool
+     "apply_patch"
+     (string-append
+      "Apply one unified diff to project files, possibly several. Use the exact "
+      "--- a/PATH, +++ b/PATH, @@ hunk format that git diff and diff -u produce, "
+      "with /dev/null for creates and deletes. Every hunk must match its context "
+      "exactly and the whole patch is applied or nothing is. Prefer edit for one "
+      "exact replacement and apply_patch for multi-hunk or multi-file changes.")
+     (json-object (cons "patch" (string-parameter "Unified diff text")))
+     '("patch")))
    (else (error "unknown coding tool" name))))

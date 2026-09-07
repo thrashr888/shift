@@ -139,6 +139,31 @@
        (string-contains (prepared-change-diff create-prepared) "--- /dev/null")))
 (test-assert "creates commit" (tool-result-success? (commit-change! create-prepared)))
 
+(define pair-a (prepare-change "write" (json-object (cons "path" "pair-a.txt") (cons "content" "a\n")) tool-root))
+(define pair-b (prepare-change "write" (json-object (cons "path" "pair-b.txt") (cons "content" "b\n")) tool-root))
+(define pair-result (commit-changes! (list pair-a pair-b)))
+(test-assert "multi-file commits report every file"
+  (and (tool-result-success? pair-result)
+       (string-contains (tool-result-output pair-result) "applied 2 files (+2 −0)")
+       (= 2 (length (tool-result-changes pair-result)))
+       (file-exists? (string-append tool-root "/pair-b.txt"))))
+
+(define deletion
+  (prepare-file-change "apply_patch" tool-root (string-append tool-root "/pair-b.txt") "b\n" #f "deleted pair-b.txt"))
+(test-assert "a change with no post-image deletes the file"
+  (and (tool-result-success? (commit-change! deletion))
+       (not (file-exists? (string-append tool-root "/pair-b.txt")))
+       (not (assq-ref (car (tool-result-changes (commit-change! (prepare-change "write" (json-object (cons "path" "pair-b.txt") (cons "content" "again\n")) tool-root)))) 'before))))
+
+(system* "mkdir" "-p" (string-append tool-root "/locked"))
+(define roll-a (prepare-change "write" (json-object (cons "path" "roll-a.txt") (cons "content" "first\n")) tool-root))
+(define roll-b (prepare-change "write" (json-object (cons "path" "locked/roll-b.txt") (cons "content" "second\n")) tool-root))
+(chmod (string-append tool-root "/locked") #o500)
+(test-error "a failing write aborts the batch" #t (commit-changes! (list roll-a roll-b)))
+(chmod (string-append tool-root "/locked") #o700)
+(test-assert "files written before the failure are restored"
+  (not (file-exists? (string-append tool-root "/roll-a.txt"))))
+
 (define rg-result
   (execute-tool
    "rg"

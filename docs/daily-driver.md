@@ -109,7 +109,12 @@ matches the prepared pre-image. `/undo`, receipts, and `/recover restore` build 
 this ledger and arrive with later steps of
 [the coding workflow RFC](coding-workflow-rfc.md).
 
-The `coding` built-in provides `status` and `diff`. `status` reports the git branch
+The `coding` built-in provides `status`, `diff`, and `apply_patch`. `apply_patch`
+takes one unified diff in the exact `--- a/PATH`, `+++ b/PATH`, `@@` form that
+`git diff` and `diff -u` emit, with `/dev/null` for creates and deletes. Hunks must
+match their context exactly, with no fuzz; a rename is applied as a delete plus a
+create; and the whole patch is prepared in memory, previewed, and committed as one
+unit, so a failure in any file leaves every file untouched. `status` reports the git branch
 and dirty count, files shift changed this turn and this session with diffstats, and
 dirty files shift did not touch. `diff` takes `scope` `turn` (default), `session`, or
 `git` (working tree against HEAD) and optional `paths`. Both are read-only, work

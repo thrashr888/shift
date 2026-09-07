@@ -16,7 +16,11 @@
             tool-result-output
             tool-result-changes
             prepare-change
+            prepare-file-change
             commit-change!
+            commit-changes!
+            resolve-existing-path
+            resolve-write-path
             prepared-change?
             prepared-change-tool
             prepared-change-path
@@ -185,15 +189,20 @@
           (unless (port-closed? port) (close-port port))
           (when (file-exists? actual) (delete-file actual)))))))
 
-(define (finish-change tool root candidate before after summary)
+;; before #f means the file is created; after #f means it is deleted.
+(define (prepare-file-change tool root candidate before after summary)
   (let ((relative (relative-path root candidate)))
+    (when (and after (> (string-length after) max-write-input))
+      (error "resulting content exceeds the 256 KiB write limit" relative))
     (make-prepared-change
      tool relative candidate
      before (and before (sha256-string before))
-     after (sha256-string after)
+     after (and after (sha256-string after))
      (unified-diff before after
                    (string-append "a/" relative) (string-append "b/" relative))
      summary)))
+
+(define finish-change prepare-file-change)
 
 (define (prepare-write arguments working-directory)
   (let* ((requested (require-string arguments "path"))
@@ -266,25 +275,65 @@
    ((string=? name "edit") (prepare-edit arguments working-directory))
    (else (error "tool does not prepare file changes" name))))
 
+(define (put-content! absolute text)
+  (if text
+      (atomic-write-file absolute text)
+      (when (file-exists? absolute) (delete-file absolute))))
+
+(define (check-unchanged! prepared)
+  (unless (equal? (current-file-hash (prepared-change-absolute prepared))
+                  (prepared-change-before-hash prepared))
+    (error "file changed since the change was prepared; read it again and retry"
+           (prepared-change-path prepared))))
+
+(define (change-record prepared)
+  (let ((stat (prepared-change-diffstat prepared)))
+    `((kind . mutation)
+      (tool . ,(prepared-change-tool prepared))
+      (path . ,(prepared-change-path prepared))
+      (before . ,(prepared-change-before-hash prepared))
+      (after . ,(prepared-change-after-hash prepared))
+      (added . ,(car stat))
+      (removed . ,(cdr stat))
+      (diff . ,(prepared-change-diff prepared)))))
+
+(define (change-line prepared)
+  (string-append (prepared-change-summary prepared) " "
+                 (format-diffstat (prepared-change-diffstat prepared))))
+
+;; Every target is re-hashed before any write. A failure part-way restores
+;; the files already written, so a multi-file patch is all or nothing.
+(define (commit-changes! changes)
+  (for-each check-unchanged! changes)
+  (let loop ((remaining changes) (done '()))
+    (if (null? remaining)
+        (let ((records (map change-record changes)))
+          (make-tool-result
+           #t
+           (if (= 1 (length changes))
+               (change-line (car changes))
+               (string-append
+                (format #f "applied ~a files ~a~%" (length changes)
+                        (format-diffstat
+                         (cons (apply + (map (lambda (r) (assq-ref r 'added)) records))
+                               (apply + (map (lambda (r) (assq-ref r 'removed)) records)))))
+                (string-join (map (lambda (p) (string-append "  " (change-line p))) changes) "\n")))
+           records))
+        (let ((prepared (car remaining)))
+          (catch #t
+            (lambda ()
+              (put-content! (prepared-change-absolute prepared)
+                            (prepared-change-after-text prepared)))
+            (lambda (key . arguments)
+              (for-each (lambda (applied)
+                          (put-content! (prepared-change-absolute applied)
+                                        (prepared-change-before-text applied)))
+                        done)
+              (apply throw key arguments)))
+          (loop (cdr remaining) (cons prepared done))))))
+
 (define (commit-change! prepared)
-  (let ((absolute (prepared-change-absolute prepared)))
-    (unless (equal? (current-file-hash absolute)
-                    (prepared-change-before-hash prepared))
-      (error "file changed since the change was prepared; read it again and retry"
-             (prepared-change-path prepared)))
-    (atomic-write-file absolute (prepared-change-after-text prepared))
-    (let ((stat (prepared-change-diffstat prepared)))
-      (make-tool-result
-       #t
-       (string-append (prepared-change-summary prepared) " " (format-diffstat stat))
-       (list `((kind . mutation)
-               (tool . ,(prepared-change-tool prepared))
-               (path . ,(prepared-change-path prepared))
-               (before . ,(prepared-change-before-hash prepared))
-               (after . ,(prepared-change-after-hash prepared))
-               (added . ,(car stat))
-               (removed . ,(cdr stat))
-               (diff . ,(prepared-change-diff prepared))))))))
+  (commit-changes! (list prepared)))
 
 (define (run-rg arguments working-directory)
   (let* ((query (require-string arguments "query"))
