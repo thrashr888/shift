@@ -50,7 +50,7 @@ build/shift/%.go: extensions/shift/%.scm
 	@GUILE_AUTO_COMPILE=0 guild compile $(LOAD_PATHS) -o $@ $< >/dev/null
 
 test: build
-	@set -e; for suite in sha256 changes default-agent json provider tools extensions runtime session trace prompt compaction recovery context daily; do \
+	@set -e; for suite in sha256 changes coding default-agent json provider tools extensions runtime session trace prompt compaction recovery context daily; do \
 	  GUILE_AUTO_COMPILE=0 guile $(GUILE_PATHS) test/run.scm test/$$suite.scm; \
 	done
 	python3 test/session_bridge_test.py

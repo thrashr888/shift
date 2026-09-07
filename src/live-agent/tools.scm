@@ -6,7 +6,11 @@
   #:use-module (live-agent json)
   #:use-module (live-agent sha256)
   #:use-module (live-agent diff)
+  #:use-module (live-agent builtins)
   #:export (make-tool-result
+            coding-tool-names
+            function-tool
+            string-parameter
             tool-result?
             tool-result-success?
             tool-result-output
@@ -66,6 +70,10 @@
   (and (file-exists? path)
        (not (eq? 'directory (stat:type (stat path))))
        (sha256-file path)))
+
+;; Implemented by the trusted (shift coding) built-in; the names are stable
+;; runtime data so ceilings and policy can refer to them even when disabled.
+(define coding-tool-names '("status" "diff" "apply_patch" "run"))
 
 (define max-tool-output (* 64 1024))
 (define max-write-input (* 256 1024))
@@ -539,4 +547,6 @@
       (cons "description"
             (string-parameter "Short purpose recorded in the artifact header")))
      '("action")))
+   ((and (member name coding-tool-names) (builtin-enabled? 'coding))
+    ((builtin-ref 'coding 'coding-tool-schema) name))
    (else (error "unknown live tool" name))))

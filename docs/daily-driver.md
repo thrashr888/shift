@@ -87,8 +87,8 @@ local traces, with Claude token counts exported to Phoenix.
 | Mode | Tool behavior |
 | --- | --- |
 | `/mode manual` (default) | Ask before each model tool execution. |
-| `/mode plan` | Allow reads/search/traces and extension listing; deny mutations. |
-| `/mode accept` | Also allow constrained project writes/edits; ask for shell and live changes. |
+| `/mode plan` | Allow reads/search/traces, `status`, `diff`, and extension listing; deny mutations. |
+| `/mode accept` | Also allow constrained project writes/edits/patches; ask for shell, `run`, and live changes. |
 | `/mode auto` | Conservative prototype: allow reads, ask for everything else. |
 
 The same policy gates model tools, selected context reads, and recovery retries.
@@ -106,8 +106,15 @@ file again to continue. Mutations are prepared without touching the project, sho
 as a unified diff with a diffstat at the approval prompt, journaled with their pre-
 and post-images under `blobs/`, and committed atomically only if the file still
 matches the prepared pre-image. `/undo`, receipts, and `/recover restore` build on
-this ledger and arrive with the coding built-in described in
+this ledger and arrive with later steps of
 [the coding workflow RFC](coding-workflow-rfc.md).
+
+The `coding` built-in provides `status` and `diff`. `status` reports the git branch
+and dirty count, files shift changed this turn and this session with diffstats, and
+dirty files shift did not touch. `diff` takes `scope` `turn` (default), `session`, or
+`git` (working tree against HEAD) and optional `paths`. Both are read-only, work
+without git, spawn `git` and `diff` without a shell, and are bounded at 64 KiB.
+Omit `coding` from `SHIFT_BUILTINS` to remove the tools.
 
 `make build` compiles the runtime into `build/`; `bin/shift` and `make test` load
 those modules and fall back to source, with a note, when a file is newer than its

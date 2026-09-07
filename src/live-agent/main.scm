@@ -55,7 +55,8 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  '("read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension"))
+  (append '("read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension")
+          coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
 ;; redefine agent-tools, but it cannot grant itself authority omitted here.
@@ -867,6 +868,9 @@
                    ((string=? name "traces") (execute-traces tracer arguments))
                    ((member name '("write" "edit"))
                     (execute-change! runtime generation tracer name arguments #f))
+                   ((member name coding-tool-names)
+                    ((builtin-ref 'coding 'coding-execute)
+                     name arguments (getcwd) ledger (current-turn)))
                    (else
                     (execute-tool
                      name arguments (getcwd)
@@ -1244,6 +1248,9 @@
                                runtime generation (tool-call-arguments call)))
                              ((string=? name "traces")
                               (execute-traces tracer (tool-call-arguments call)))
+                             ((member name coding-tool-names)
+                              ((builtin-ref 'coding 'coding-execute)
+                               name (tool-call-arguments call) (getcwd) ledger (current-turn)))
                              (else
                               (execute-tool
                                name
@@ -1367,7 +1374,8 @@
          (enabled-tools
           (filter (lambda (name)
                     (and (within-process-tool-ceiling? name)
-                         (or (not (string=? name "traces")) (builtin-enabled? 'tracing))))
+                         (or (not (string=? name "traces")) (builtin-enabled? 'tracing))
+                         (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
                   configured-tools))
          (max-rounds
           (generation-ref generation 'agent-max-tool-rounds))

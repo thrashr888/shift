@@ -11,8 +11,8 @@
                     (map string->symbol
                          (filter (lambda (s) (not (string-null? s)))
                                  (map string-trim-both (string-split raw #\,))))
-                    '(ollama openai claude tracing mcp))))
-    (unless (every (lambda (name) (memq name '(ollama openai claude tracing mcp))) names)
+                    '(ollama openai claude tracing mcp coding))))
+    (unless (every (lambda (name) (memq name '(ollama openai claude tracing mcp coding))) names)
       (error "unknown built-in in SHIFT_BUILTINS" raw))
     (delete-duplicates names)))
 

@@ -33,7 +33,7 @@ shift λ
   default · generation 1 · 0123456789ab
   qwen3.8:27b-mlx via ollama
   stream on · thinking off · watch on
-  8 tools · shell ask · /help for commands
+  10 tools · shell ask · /help for commands
 ```
 
 At the prompt:
@@ -144,8 +144,8 @@ approval modes, context budgets, and the live localhost MCP endpoint.
 
 ## Built-in extensions
 
-Ollama, OpenAI-compatible transport, Claude, tracing, and the MCP server are shipped as
-trusted built-ins under `extensions/shift/`. They are enabled automatically;
+Ollama, OpenAI-compatible transport, Claude, tracing, the MCP server, and the coding
+tools (`status`, `diff`) are shipped as trusted built-ins under `extensions/shift/`. They are enabled automatically;
 there is no per-session load command. Provider modules load only when selected,
 and interactive sessions start MCP at `http://127.0.0.1:7331/mcp` in the same process.
 

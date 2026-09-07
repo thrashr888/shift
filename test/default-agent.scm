@@ -37,7 +37,7 @@
   (memq 'live_eval (generation-ref generation 'agent-tools)))
 
 (test-equal "enables the complete constrained coding tool set"
-  '(read rg write edit shell traces live_eval extension)
+  '(read rg write edit status diff shell traces live_eval extension)
   (generation-ref generation 'agent-tools))
 
 (test-equal "compacts after a bounded number of messages"

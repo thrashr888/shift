@@ -31,6 +31,9 @@
    "Use edit for exact changes "
    "and write for complete new file content. Only use write or edit when the user explicitly "
    "asked to change project files; answer ordinary content requests in the conversation. "
+   "Use status to see what you changed and whether the repository is a dirty git checkout, "
+   "and diff (scope turn, session, or git) to review exact changes before reporting them done. "
+   "If a tool says a file changed on disk, read it again before editing. "
    "Use one most-likely path at a time instead "
    "of guessing several paths in parallel. Use shell only when the narrower tools "
    "cannot perform the task. Inspect project files to identify the language and test commands. "
@@ -47,7 +50,7 @@
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.
-(define agent-tools '(read rg write edit shell traces live_eval extension))
+(define agent-tools '(read rg write edit status diff shell traces live_eval extension))
 
 ;; The prototype deliberately supports only deny and ask. A live image cannot
 ;; silently broaden the stable runtime's authority.

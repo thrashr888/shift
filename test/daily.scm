@@ -14,6 +14,12 @@
  (tool-decision 'plan "extension" (json-object (cons "action" "list"))))
 (test-eq "accept asks before behavior changes" 'ask (tool-decision 'accept "live_eval" (json-object)))
 (test-eq "accept permits scoped edits" 'allow (tool-decision 'accept "edit" (json-object)))
+(test-eq "plan permits status" 'allow (tool-decision 'plan "status" (json-object)))
+(test-eq "plan permits diff" 'allow (tool-decision 'plan "diff" (json-object)))
+(test-eq "plan denies patches" 'deny (tool-decision 'plan "apply_patch" (json-object)))
+(test-eq "accept permits patches" 'allow (tool-decision 'accept "apply_patch" (json-object)))
+(test-eq "accept asks before run" 'ask (tool-decision 'accept "run" (json-object)))
+(test-eq "auto asks before run" 'ask (tool-decision 'auto "run" (json-object)))
 (test-eq "auto cannot guess a shell approval" 'ask (tool-decision 'auto "shell" (json-object)))
 (define legacy
  (list (make-message "user" "read")
