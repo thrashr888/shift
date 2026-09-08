@@ -105,9 +105,18 @@ on disk since then fails before approval and names the turn that saw it; read th
 file again to continue. Mutations are prepared without touching the project, shown
 as a unified diff with a diffstat at the approval prompt, journaled with their pre-
 and post-images under `blobs/`, and committed atomically only if the file still
-matches the prepared pre-image. `/undo`, receipts, and `/recover restore` build on
-this ledger and arrive with later steps of
-[the coding workflow RFC](coding-workflow-rfc.md).
+matches the prepared pre-image.
+
+`/undo` reverts the most recent turn that still has changes: every file that turn
+touched must still match its recorded post-image, otherwise the command refuses and
+names the diverged files, and there is no force flag. Files the turn created are
+removed and files it deleted come back. Repeating `/undo` walks back one turn at a
+time, and a system message tells the model what was reverted. `/undo` never touches
+git. After a crash or cancellation mid-mutation, `/recover` lists the in-flight
+files with their recorded and current hashes, and `/recover restore` puts back any
+file that carries the interrupted post-image, leaves untouched files alone, and
+keeps the record when a file matches neither. Receipts are described in
+[the coding workflow RFC](coding-workflow-rfc.md) and are not implemented yet.
 
 `run` executes one program from an `argv` list with no shell, an optional
 project-relative `cwd`, and a `timeout_seconds` up to 600 (default 120). stdout and

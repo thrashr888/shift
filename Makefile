@@ -57,5 +57,6 @@ test: build
 	python3 test/regressions.py
 	python3 test/daily_driver_test.py
 	python3 test/claude_test.py
+	python3 test/coding_workflow_test.py
 
 check: test

@@ -114,8 +114,10 @@ the prompt without adding the interrupted turn to conversation history. Before
 each enabled tool executes, `shift` atomically records its name, arguments, and
 generation. If the process dies or a tool is cancelled, the next boot reports
 the ambiguous call. `/recover` inspects it, `/recover retry` repeats it only
-after an explicit user action, and `/recover discard` clears it without running
-anything. `live_eval` and extension mutations are never replayed because their
+after an explicit user action, `/recover restore` puts interrupted file mutations
+back to their recorded pre-images, and `/recover discard` clears it without
+running anything. `/undo` reverts the last turn's file changes while every file
+still matches what that turn wrote. `live_eval` and extension mutations are never replayed because their
 post-crash state must be inspected instead.
 
 The agent has the same constrained mechanism as the user. For example, ask:

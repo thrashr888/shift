@@ -1,6 +1,7 @@
 # Gaps between this spike and Pi
 
-Snapshot: 2026-09-04. “Pi” means the current Pi coding agent maintained at
+Snapshot: 2026-09-04, rows refreshed 2026-09-08 after the daily-driver and
+coding-workflow slices. “Pi” means the current Pi coding agent maintained at
 [`earendil-works/pi`](https://github.com/earendil-works/pi) (the former
 `badlogic/pi-mono` URL redirects there).
 
@@ -12,15 +13,15 @@ observability. The useful comparison is therefore asymmetric.
 
 | Gap | Why it matters |
 | --- | --- |
-| Coding workflow depth | `read`, `rg`, atomic `write`, exact `edit`, and turn cancellation cover the basic loop, but there is no structured process tool, patch hunks, diagnostics integration, background jobs, or rich diff review. |
-| Session lifecycle depth | Named conversations now resume, compact, cancel, fork fixed checkpoints, and expose explicit interrupted-tool recovery, but there is no share/export workflow or exact mid-process continuation. |
-| Provider breadth | Native Ollama plus streaming OpenAI Chat Completions is still far behind Pi’s provider catalog, authentication, model switching, retries, and multimodal handling. |
+| Coding workflow depth | `read`, `rg`, `write`, `edit`, `apply_patch`, `status`, `diff`, and an argv-only `run` with timeouts now cover the loop, with diff previews at approval, a hash-gated `/undo`, and `/recover restore`. Still missing: an end-of-turn receipt, diagnostics integration, and background jobs. |
+| Session lifecycle depth | Named conversations now resume, compact, cancel, fork fixed checkpoints, and expose explicit interrupted-tool and interrupted-mutation recovery, but there is no share/export workflow or exact mid-process continuation. |
+| Provider breadth | Native Ollama, streaming OpenAI Chat Completions, and a native Claude adapter with `/model`, `/effort`, `/fast`, and `/thinking` are still behind Pi’s provider catalog, authentication, retries, and multimodal handling. |
 | Terminal product | There is no rich TUI, multiline editor, tool-call renderer, queueing, keybindings, themes, settings UI, or model picker. |
 | Extension ecosystem | Named Scheme artifacts can now be created, listed, loaded, disabled, and exported, but there are no skills, prompt templates, dependencies, package registry, lifecycle/event API, custom UI, signatures, or compatibility metadata. |
 | Embedding modes | There is no print/JSON mode, RPC protocol, SDK, web UI, or supported library boundary. |
-| Long-session behavior | Boundary-safe model compaction, cancellation, and interrupted-tool records now exist, but there is no token accounting policy, provider retry/backoff, deterministic replay, or quality evaluator for summaries. |
+| Long-session behavior | Boundary-safe model compaction, a token-budget preflight with `/context`, provider-reported usage on exit, cancellation, and interrupted-tool records now exist, but there is no provider retry/backoff, deterministic replay, or quality evaluator for summaries. |
 | Production hardening | The Scheme evaluator’s authority surface needs a deeper audit, fuzzing, resource limits, symlink/race analysis, secret redaction, trace retention controls, and cross-platform testing. |
-| Mutation lifecycle | Live state can now be exported as a named artifact and an exact loaded artifact can be disabled, but there is no reviewed diff, patch composition UI, promotion into base source, migration, signature, or replay guarantee. |
+| Mutation lifecycle | Project-file mutations are now previewed as diffs, journaled with pre-images, and undoable. Live-image state can be exported as a named artifact and disabled, but there is still no reviewed diff for live patches, promotion into base source, migration, signature, or replay guarantee. |
 | Performance evidence | There are no benchmarks showing that live Scheme changes are faster or more reliable than editing and reloading an extension. |
 
 Pi already covers most of that surface: four run modes, broad providers,

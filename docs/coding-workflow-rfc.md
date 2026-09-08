@@ -5,8 +5,9 @@ through four of the implementation order are implemented: SHA-256, the change
 ledger, the prepare/commit split with diff previews for `write` and `edit`, the
 `(shift coding)` built-in with `status` and `diff`, `apply_patch` with an
 all-or-nothing multi-file commit, and `run` with timeouts, logs, the
-allowlist, `TRACEPARENT`, and the agentkernel backend seam. `/undo`, receipts,
-`/recover restore`, and the workflow suite are not yet.
+allowlist, `TRACEPARENT`, and the agentkernel backend seam. From steps five
+and six, `/undo`, `/recover restore`, the Python workflow suite, and the
+documentation refresh are implemented. The end-of-turn receipt is not.
 
 ## Summary
 

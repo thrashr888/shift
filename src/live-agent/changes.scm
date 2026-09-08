@@ -22,6 +22,11 @@
             ledger-entries
             ledger-turn-entries
             ledger-open-entry
+            ledger-open-entries
+            ledger-resolve-open!
+            ledger-undoable-turns
+            ledger-turn-groups
+            ledger-undo!
             ledger-seen-paths
             ledger-record-run!
             ledger-runs
@@ -30,7 +35,7 @@
             ledger-blob-path))
 
 (define-record-type <ledger>
-  (%make-ledger directory path blobs entries seen next-seq lock runs)
+  (%make-ledger directory path blobs entries seen next-seq lock runs undone)
   ledger?
   (directory ledger-directory)
   (path ledger-path)
@@ -39,7 +44,8 @@
   (seen ledger-seen-table)
   (next-seq ledger-next-seq set-ledger-next-seq!)
   (lock ledger-lock)
-  (runs ledger-run-list set-ledger-run-list!))
+  (runs ledger-run-list set-ledger-run-list!)
+  (undone ledger-undone set-ledger-undone!))
 
 (define (timestamp)
   (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
@@ -101,6 +107,9 @@
                                      (json-object-ref object "turn"))))
                    ((string=? kind "run")
                     (set-ledger-run-list! ledger (cons object (ledger-run-list ledger))))
+                   ((string=? kind "undo")
+                    (set-ledger-undone! ledger (cons (json-object-ref object "turn")
+                                                     (ledger-undone ledger))))
                    ((string=? kind "change")
                     (let ((entry (entry-from-json object)))
                       (hash-set! (ledger-entry-table ledger) (assq-ref entry 'seq) entry)
@@ -123,9 +132,119 @@
                               (make-hash-table)
                               1
                               (make-mutex)
+                              '()
                               '())))
     (replay! ledger)
     ledger))
+
+(define (atomic-write-text! path text)
+  (let* ((port (mkstemp (string-append (dirname path) "/.shift-restore-XXXXXX")))
+         (temporary (port-filename port)))
+    (dynamic-wind
+      (lambda () #t)
+      (lambda ()
+        (display text port)
+        (force-output port)
+        (close-port port)
+        (rename-file temporary path))
+      (lambda ()
+        (unless (port-closed? port) (close-port port))
+        (when (file-exists? temporary) (delete-file temporary))))))
+
+;; Put a path back to a recorded image: #f removes the file.
+(define (restore-path! ledger root path hash)
+  (let ((absolute (string-append root "/" path)))
+    (if hash
+        (let ((text (ledger-read-blob ledger hash)))
+          (unless text (error "pre-image is missing from the blob store" path hash))
+          (atomic-write-text! absolute text))
+        (when (file-exists? absolute) (delete-file absolute)))
+    (unless (equal? (file-hash absolute) hash)
+      (error "restore verification failed" path))))
+
+;; Committed entries of one turn, one group per path:
+;; (path earliest-before latest-after).
+(define (ledger-turn-groups ledger turn)
+  (let loop ((entries (ledger-turn-entries ledger turn)) (groups '()))
+    (if (null? entries)
+        (reverse groups)
+        (let* ((entry (car entries))
+               (path (assq-ref entry 'path))
+               (existing (assoc path groups)))
+          (loop (cdr entries)
+                (if existing
+                    (map (lambda (group)
+                           (if (eq? group existing)
+                               (list path (cadr group) (assq-ref entry 'after))
+                               group))
+                         groups)
+                    (cons (list path (assq-ref entry 'before) (assq-ref entry 'after)) groups)))))))
+
+;; Newest first, skipping turns already undone.
+(define (ledger-undoable-turns ledger)
+  (let ((turns (delete-duplicates
+                (map (lambda (entry) (assq-ref entry 'turn))
+                     (filter (lambda (entry) (eq? (assq-ref entry 'state) 'committed))
+                             (ledger-entries ledger))))))
+    (sort (filter (lambda (turn) (not (memv turn (ledger-undone ledger)))) turns) >)))
+
+(define (short hash) (if (string? hash) (substring hash 0 12) "absent"))
+
+;; Restores every file the turn changed, only if all of them still match the
+;; recorded post-images. There is no force: a diverged file is the user's call.
+(define (ledger-undo! ledger root turn)
+  (let ((groups (ledger-turn-groups ledger turn)))
+    (when (null? groups) (error "turn has no committed changes to undo" turn))
+    (when (memv turn (ledger-undone ledger)) (error "turn is already undone" turn))
+    (let ((diverged
+           (filter (lambda (group)
+                     (not (equal? (file-hash (string-append root "/" (car group))) (caddr group))))
+                   groups)))
+      (unless (null? diverged)
+        (error (format #f "cannot undo turn ~a: ~a changed since then; resolve by hand or undo nothing"
+                       turn
+                       (string-join
+                        (map (lambda (group)
+                               (format #f "~a (expected ~a…, now ~a…)" (car group) (short (caddr group))
+                                       (short (file-hash (string-append root "/" (car group))))))
+                             diverged)
+                        ", ")))))
+    (for-each (lambda (group) (restore-path! ledger root (car group) (cadr group))) groups)
+    (with-mutex (ledger-lock ledger)
+      (for-each (lambda (group)
+                  (hash-set! (ledger-seen-table ledger) (car group) (cons (cadr group) turn)))
+                groups)
+      (set-ledger-undone! ledger (cons turn (ledger-undone ledger)))
+      (append-line! ledger
+                    (json-object (cons "kind" "undo")
+                                 (cons "turn" turn)
+                                 (cons "paths" (apply json-array (map car groups)))
+                                 (cons "at" (timestamp)))))
+    groups))
+
+(define (ledger-open-entries ledger)
+  (filter (lambda (entry) (eq? (assq-ref entry 'state) 'started))
+          (ledger-entries ledger)))
+
+;; After a crash or cancellation, settle each in-flight mutation from its
+;; hashes: untouched files close the entry, completed writes are put back to
+;; the pre-image, and anything else is left for the user. Returns
+;; (path . unchanged|restored|diverged) pairs.
+(define (ledger-resolve-open! ledger root)
+  (map (lambda (entry)
+         (let* ((path (assq-ref entry 'path))
+                (seq (assq-ref entry 'seq))
+                (current (file-hash (string-append root "/" path))))
+           (cond
+            ((equal? current (assq-ref entry 'before))
+             (transition! ledger seq 'aborted)
+             (cons path 'unchanged))
+            ((equal? current (assq-ref entry 'after))
+             (restore-path! ledger root path (assq-ref entry 'before))
+             (transition! ledger seq 'aborted)
+             (cons path 'restored))
+            (else (cons path 'diverged)))))
+       (ledger-open-entries ledger)))
 
 ;; Command runs share the journal so receipts and status see one timeline.
 ;; `record` is a JSON object without kind, turn, or at.

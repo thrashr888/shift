@@ -180,7 +180,9 @@
     "  /compact          summarize older history and retain recent turns\n"
     "  /recover          inspect an interrupted tool record\n"
     "  /recover retry    explicitly retry the recorded tool call\n"
+    "  /recover restore  put interrupted file mutations back to their pre-images\n"
     "  /recover discard  discard the recorded tool call\n"
+    "  /undo             revert the last turn's file changes if they still match\n"
     "  /session          show the durable session identity and checkpoint\n"
     "  /reset            clear conversation state\n"
     "  /help             show this help\n"
@@ -456,16 +458,91 @@
 (define (runtime-state-directory tracer)
   (dirname (tracer-path tracer)))
 
+(define (short-hash hash)
+  (if (string? hash) (string-append (substring hash 0 12) "…") "absent"))
+
+(define (show-open-mutations)
+  (when ledger
+    (let ((open (ledger-open-entries ledger)))
+      (unless (null? open)
+        (display "In-flight file mutations recorded in the ledger:\n")
+        (for-each
+         (lambda (entry)
+           (let* ((path (assq-ref entry 'path))
+                  (before (assq-ref entry 'before))
+                  (after (assq-ref entry 'after))
+                  (current (file-hash (string-append (getcwd) "/" path))))
+             (format #t "  ~a (turn ~a, ~a): before ~a · after ~a · now ~a~%    ~a~%"
+                     path (assq-ref entry 'turn) (assq-ref entry 'tool)
+                     (short-hash before) (short-hash after) (short-hash current)
+                     (cond
+                      ((equal? current after) "matches after; /recover restore puts the pre-image back")
+                      ((equal? current before) "matches before; nothing was written")
+                      (else "matches neither; something else changed it, inspect by hand")))))
+         open)))))
+
 (define (show-recovery tracer)
   (let ((pending (recovery-read (runtime-state-directory tracer))))
     (if pending
         (format #t
-                "Interrupted tool may have partially executed.\n  tool ~a\n  generation ~a\n  started ~a\n  arguments ~a\nUse /recover retry only if repeating it is safe, or /recover discard.\n"
+                "Interrupted tool may have partially executed.\n  tool ~a\n  generation ~a\n  started ~a\n  arguments ~a\nUse /recover retry only if repeating it is safe, /recover restore to put files back, or /recover discard.\n"
                 (json-object-ref pending "tool")
                 (json-object-ref pending "generation_id")
                 (json-object-ref pending "created_at")
                 (json-write (json-object-ref pending "arguments")))
-        (display "No interrupted tool call is pending.\n"))))
+        (display "No interrupted tool call is pending.\n"))
+    (show-open-mutations)))
+
+;; Settle in-flight mutations from their recorded hashes; the recovery record
+;; is cleared only when every file is accounted for.
+(define (restore-interrupted-mutation! runtime tracer)
+  (let ((outcomes (if ledger (ledger-resolve-open! ledger (getcwd)) '())))
+    (if (null? outcomes)
+        (display "No interrupted file mutation is recorded in the ledger.\n")
+        (begin
+          (for-each
+           (lambda (outcome)
+             (format #t "  ~a: ~a~%" (car outcome)
+                     (case (cdr outcome)
+                       ((unchanged) "already matched the pre-image; nothing to restore")
+                       ((restored) "restored from the pre-image")
+                       (else "changed by something else; left as it is"))))
+           outcomes)
+          (runtime-record!
+           runtime 'mutation-restored
+           `((outcomes . ,(string-join (map (lambda (o) (format #f "~a=~a" (car o) (cdr o))) outcomes) ","))))
+          (if (every (lambda (outcome) (not (eq? (cdr outcome) 'diverged))) outcomes)
+              (begin
+                (recovery-clear! (runtime-state-directory tracer))
+                (display "Interrupted mutation resolved; recovery record cleared.\n"))
+              (display "Some files diverged; the recovery record is retained for inspection.\n"))))
+    #t))
+
+(define (undo-last-turn! runtime)
+  (let ((turns (if ledger (ledger-undoable-turns ledger) '())))
+    (if (null? turns)
+        (begin (display "Nothing to undo.\n") #f)
+        (let* ((turn (car turns))
+               (groups (ledger-undo! ledger (getcwd) turn))
+               (paths (map car groups)))
+          (runtime-record! runtime 'turn-undone
+                           `((turn . ,turn) (paths . ,(string-join paths ","))))
+          (format #t "Undid turn ~a: ~a~%" turn
+                  (string-join
+                   (map (lambda (group)
+                          (string-append (car group)
+                                         (cond ((not (cadr group)) " (removed)")
+                                               ((not (caddr group)) " (recreated)")
+                                               (else ""))))
+                        groups)
+                   ", "))
+          (let ((remaining (ledger-undoable-turns ledger)))
+            (unless (null? remaining)
+              (format #t "/undo again reverts turn ~a.~%" (car remaining))))
+          (make-message
+           "system"
+           (format #f "The user ran /undo. Turn ~a's file changes were reverted: ~a now match their state before that turn. Read them again before relying on their contents."
+                   turn (string-join paths ", ")))))))
 
 (define (try-transition label thunk)
   (with-exception-handler
@@ -692,6 +769,8 @@
    ((string=? line "/compact") 'compact)
    ((string=? line "/recover") (show-recovery tracer) 'continue)
    ((string=? line "/recover retry") 'recover-retry)
+   ((string=? line "/recover restore") 'recover-restore)
+   ((string=? line "/undo") 'undo)
    ((string=? line "/recover discard")
     (recovery-clear! (runtime-state-directory tracer))
     (display "Interrupted tool record discarded; no tool was executed.\n")
@@ -1740,6 +1819,11 @@
           ((compact) (set! history (compact-history! runtime tracer history #t)))
           ((recover-retry)
            (let ((message (try-transition "tool recovery" (lambda () (retry-interrupted-tool! runtime tracer)))))
+             (when message (set! history (append history (list message))))))
+          ((recover-restore)
+           (try-transition "mutation restore" (lambda () (restore-interrupted-mutation! runtime tracer))))
+          ((undo)
+           (let ((message (try-transition "undo" (lambda () (undo-last-turn! runtime)))))
              (when message (set! history (append history (list message)))))))
         (checkpoint! history turn-count)
         action)))

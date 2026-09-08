@@ -35,15 +35,18 @@ granting the inner model authority to accept its own runtime changes.
 
 ## What still blocks primary-agent use
 
-- There is no first-class diff, patch-hunk, git-status, diagnostics, or test tool;
-  those actions currently fall back to approval-gated shell.
+- `status`, `diff`, `apply_patch`, and `run` now replace the shell for the
+  inspect-change-test loop, with diff previews at approval, `/undo`, and
+  `/recover restore`. There is still no end-of-turn receipt or diagnostics
+  integration, so the supervisor reconstructs outcomes from tool output and traces.
 - Long sessions now compact into a traced summary and can search pre-compaction
   trace evidence, and checkpoints can fork into generation-pinned children, but
   there is no token-budget policy, summary-quality evaluator, lossless
   event-sourced trajectory, or isolated workspace branch.
 - Interrupted tools leave an explicit write-ahead record with manual
-  retry/discard. There is no exact mid-process continuation or deterministic
-  replay, so a mutating retry may still be ambiguous.
+  retry/discard, and interrupted file mutations can be put back from their
+  recorded pre-images. There is no exact mid-process continuation or
+  deterministic replay, so a mutating retry may still be ambiguous.
 - A supervisor can wait for or cancel one child, but there is no general
   background job model, provider retry, model fallback, parallel fan-out, or
   concurrent tool execution.
