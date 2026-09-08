@@ -34,6 +34,8 @@
        (string-contains (output plain-status) "  b.txt (+1 −0)")
        (string-contains (output plain-status) "changed this session: 2 files in turns 3, 4")
        (string-contains (output plain-status) "  a.txt (+1 −0) turn 3")))
+(test-assert "status reports undoable turns newest first"
+  (string-contains (output plain-status) "undoable turns: 4, 3"))
 (test-assert "turn diff covers only the current turn"
   (let ((text (output (coding-execute "diff" (args) plain plain-ledger 4))))
     (and (string-contains text "1 file changed (+1 −0)")

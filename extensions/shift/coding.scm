@@ -166,6 +166,9 @@
                   (format port "  ~a ~a turn~a ~a~%" (car entry) (format-diffstat (caddr entry))
                           (if (= 1 (length (cadddr entry))) "" "s") (format-turns (cadddr entry)))))
               session)
+    (let ((undoable (ledger-undoable-turns ledger)))
+      (format port "undoable turns: ~a~%"
+              (if (null? undoable) "none" (string-join (map number->string undoable) ", "))))
     (unless (null? untouched)
       (format port "dirty in git but not touched by shift: ~a~%" (length untouched))
       (for-each (lambda (path) (format port "  ~a~%" path)) untouched))
