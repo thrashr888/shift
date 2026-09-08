@@ -22,12 +22,15 @@
             ledger-entries
             ledger-turn-entries
             ledger-open-entry
+            ledger-seen-paths
+            ledger-record-run!
+            ledger-runs
             ledger-store-blob!
             ledger-read-blob
             ledger-blob-path))
 
 (define-record-type <ledger>
-  (%make-ledger directory path blobs entries seen next-seq lock)
+  (%make-ledger directory path blobs entries seen next-seq lock runs)
   ledger?
   (directory ledger-directory)
   (path ledger-path)
@@ -35,7 +38,8 @@
   (entries ledger-entry-table)
   (seen ledger-seen-table)
   (next-seq ledger-next-seq set-ledger-next-seq!)
-  (lock ledger-lock))
+  (lock ledger-lock)
+  (runs ledger-run-list set-ledger-run-list!))
 
 (define (timestamp)
   (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
@@ -95,6 +99,8 @@
                                (json-object-ref object "path")
                                (cons (json-object-ref object "hash")
                                      (json-object-ref object "turn"))))
+                   ((string=? kind "run")
+                    (set-ledger-run-list! ledger (cons object (ledger-run-list ledger))))
                    ((string=? kind "change")
                     (let ((entry (entry-from-json object)))
                       (hash-set! (ledger-entry-table ledger) (assq-ref entry 'seq) entry)
@@ -116,9 +122,30 @@
                               (make-hash-table)
                               (make-hash-table)
                               1
-                              (make-mutex))))
+                              (make-mutex)
+                              '())))
     (replay! ledger)
     ledger))
+
+;; Command runs share the journal so receipts and status see one timeline.
+;; `record` is a JSON object without kind, turn, or at.
+(define (ledger-record-run! ledger turn record)
+  (with-mutex (ledger-lock ledger)
+    (let ((object (apply json-object
+                         (cons "kind" "run")
+                         (cons "turn" turn)
+                         (cons "at" (timestamp))
+                         (json-object-entries record))))
+      (set-ledger-run-list! ledger (cons object (ledger-run-list ledger)))
+      (append-line! ledger object)
+      object)))
+
+;; Oldest first.
+(define (ledger-runs ledger)
+  (reverse (ledger-run-list ledger)))
+
+(define (ledger-seen-paths ledger)
+  (sort (hash-map->list (lambda (path entry) path) (ledger-seen-table ledger)) string<?))
 
 (define (append-line! ledger value)
   (let ((port (open-file (ledger-path ledger) "a")))

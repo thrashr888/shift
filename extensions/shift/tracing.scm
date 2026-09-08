@@ -17,7 +17,7 @@
             trace-span-id
             trace-search
             trace-close!
-            session-id-of span-id-of usage-attributes))
+            session-id-of span-id-of trace-id-of usage-attributes))
 
 (define-record-type <tracer>
   (%make-tracer path session-id session-name bridge)
@@ -298,6 +298,7 @@
 
 (define (session-id-of tracer) (tracer-session-id tracer))
 (define (span-id-of span) (trace-span-id span))
+(define (trace-id-of span) (trace-span-trace-id span))
 
 (define (usage-attributes completion)
   (let* ((root (completion-usage completion))

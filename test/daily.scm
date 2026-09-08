@@ -20,6 +20,18 @@
 (test-eq "accept permits patches" 'allow (tool-decision 'accept "apply_patch" (json-object)))
 (test-eq "accept asks before run" 'ask (tool-decision 'accept "run" (json-object)))
 (test-eq "auto asks before run" 'ask (tool-decision 'auto "run" (json-object)))
+(define cargo-test (json-object (cons "argv" (json-array "cargo" "test" "--" "session"))))
+(define allow '(("cargo" "test") ("make" "check")))
+(test-eq "accept allows an allowlisted run prefix" 'allow (tool-decision 'accept "run" cargo-test allow))
+(test-eq "auto allows an allowlisted run prefix" 'allow (tool-decision 'auto "run" cargo-test allow))
+(test-eq "manual still asks for allowlisted runs" 'ask (tool-decision 'manual "run" cargo-test allow))
+(test-eq "plan still denies allowlisted runs" 'deny (tool-decision 'plan "run" cargo-test allow))
+(test-eq "a different argv is not covered by the prefix" 'ask
+ (tool-decision 'accept "run" (json-object (cons "argv" (json-array "cargo" "publish"))) allow))
+(test-eq "a prefix longer than argv does not match" 'ask
+ (tool-decision 'accept "run" (json-object (cons "argv" (json-array "cargo"))) allow))
+(test-assert "run-allowed? is exact on leading elements"
+ (and (run-allowed? '("make" "check" "-j4") allow) (not (run-allowed? '("make" "test") allow))))
 (test-eq "auto cannot guess a shell approval" 'ask (tool-decision 'auto "shell" (json-object)))
 (define legacy
  (list (make-message "user" "read")

@@ -109,7 +109,26 @@ matches the prepared pre-image. `/undo`, receipts, and `/recover restore` build 
 this ledger and arrive with later steps of
 [the coding workflow RFC](coding-workflow-rfc.md).
 
-The `coding` built-in provides `status`, `diff`, and `apply_patch`. `apply_patch`
+`run` executes one program from an `argv` list with no shell, an optional
+project-relative `cwd`, and a `timeout_seconds` up to 600 (default 120). stdout and
+stderr are captured together; the full log is saved under the session's `runs/`
+directory and the result carries the first 16 KiB and last 48 KiB, the exit code or
+signal, the duration, and any previously read files the command rewrote. A timeout
+or Ctrl-C sends SIGTERM, then SIGKILL after two seconds, and always reaps the child;
+only the direct child is signalled, while Ctrl-C in a terminal also reaches its
+descendants through the process group. The child receives `TRACEPARENT` for the
+tool span. Every run is journaled with agentkernel-shaped `invocation` and `outcome`
+records. Settings `run-backend` (`local` or `agentkernel`) and `run-sandbox` route
+argv through `agentkernel exec SANDBOX --workdir /workspace/CWD -- ARGV` instead.
+
+Every mode except plan asks before a run. The answer `a` approves it and adds the
+exact argv to this session's allowlist; `/run allow cargo test` adds a prefix,
+`/run deny cargo test` removes it, and `/run list` shows them. Allowlisted prefixes
+run without asking in accept and auto, never in manual, and match exact leading
+elements only. `/settings save` promotes the list like any other preference. MCP
+callers cannot approve or extend it.
+
+The `coding` built-in provides `status`, `diff`, `apply_patch`, and `run`. `apply_patch`
 takes one unified diff in the exact `--- a/PATH`, `+++ b/PATH`, `@@` form that
 `git diff` and `diff -u` emit, with `/dev/null` for creates and deletes. Hunks must
 match their context exactly, with no fuzz; a rename is applied as a delete plus a

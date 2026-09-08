@@ -3,7 +3,8 @@
   #:use-module (live-agent builtins)
   #:use-module (srfi srfi-9)
   #:export (make-tracer tracer? tracer-path tracer-session-id tracer-session-name
-            usage-attributes trace-start! trace-end! trace-span-id trace-search trace-close!))
+            usage-attributes trace-start! trace-end! trace-span-id trace-trace-id
+            trace-search trace-close!))
 
 (define-record-type <trace-context>
   (context path id name backend)
@@ -31,6 +32,8 @@
   (when span (apply (builtin-ref 'tracing 'trace-end!) span args)))
 (define (trace-span-id span)
   (and span ((builtin-ref 'tracing 'span-id-of) span)))
+(define (trace-trace-id span)
+  (and span ((builtin-ref 'tracing 'trace-id-of) span)))
 (define (trace-search tracer . args)
   (if (tracer-backend tracer)
       (apply (builtin-ref 'tracing 'trace-search) (tracer-backend tracer) args)

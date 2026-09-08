@@ -35,8 +35,9 @@
    "and diff (scope turn, session, or git) to review exact changes before reporting them done. "
    "If a tool says a file changed on disk, read it again before editing. "
    "Use one most-likely path at a time instead "
-   "of guessing several paths in parallel. Use shell only when the narrower tools "
-   "cannot perform the task. Inspect project files to identify the language and test commands. "
+   "of guessing several paths in parallel. Run tests, builds, and formatters with run and an "
+   "argv list; use shell only for a pipeline the narrower tools cannot express. "
+   "Inspect project files to identify the language and test commands. "
    "When editing Shift itself, Scheme imports use #:use-module or (use-modules. "
    "Named Scheme artifacts can be created, listed, loaded, "
    "disabled, or exported with the extension tool; use them when a successful live "
@@ -50,7 +51,7 @@
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.
-(define agent-tools '(read rg write edit apply_patch status diff shell traces live_eval extension))
+(define agent-tools '(read rg write edit apply_patch status diff run shell traces live_eval extension))
 
 ;; The prototype deliberately supports only deny and ask. A live image cannot
 ;; silently broaden the stable runtime's authority.

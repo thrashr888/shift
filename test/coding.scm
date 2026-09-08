@@ -1,5 +1,5 @@
 (use-modules (srfi srfi-64) (ice-9 textual-ports)
-             (live-agent json) (live-agent tools) (live-agent changes) (shift coding))
+             (live-agent json) (live-agent tools) (live-agent changes) (live-agent sha256) (shift coding))
 
 (test-begin "coding")
 
@@ -130,6 +130,89 @@
   (equal? "ALPHA\n" (prepared-change-after-text (cadr rename))))
 (test-error "non-string patches are rejected" #t (coding-prepare (args (cons "patch" 5)) plain))
 (test-assert "apply_patch has a provider schema" (json-object? (coding-tool-schema "apply_patch")))
+
+;; run
+(define (run-tool arguments) (coding-execute "run" arguments plain plain-ledger 7))
+(define echo-run (run-tool (args (cons "argv" (json-array "sh" "-c" "echo out; echo err 1>&2; exit 0")))))
+(test-assert "run captures combined output and exit 0"
+  (and (tool-result-success? echo-run)
+       (string-contains (output echo-run) "run sh -c echo out; echo err 1>&2; exit 0 · exit 0 ·")
+       (string-contains (output echo-run) "2 lines · log runs/run-7-1.log")
+       (string-contains (output echo-run) "out\nerr\n")))
+(test-assert "the full log is on disk"
+  (equal? "out\nerr\n" (call-with-input-file (string-append plain "/state/runs/run-7-1.log") get-string-all)))
+(define failing (run-tool (args (cons "argv" (json-array "sh" "-c" "echo boom; exit 3")))))
+(test-assert "non-zero exit is a failed result that still carries output"
+  (and (not (tool-result-success? failing))
+       (string-contains (output failing) "· exit 3 ·")
+       (string-contains (output failing) "boom")))
+(define timed-out (run-tool (args (cons "argv" (json-array "sh" "-c" "echo start; sleep 30; echo never"))
+                                  (cons "timeout_seconds" 1))))
+(test-assert "timeouts kill the child and report distinctly"
+  (and (not (tool-result-success? timed-out))
+       (string-contains (output timed-out) "timeout after 1s (killed)")
+       (string-contains (output timed-out) "\nstart\n")
+       (not (string-contains (output timed-out) "\nnever"))))
+(test-assert "a child that exits while a grandchild holds the pipe does not stall"
+  (let ((started (get-internal-real-time))
+        (result (run-tool (args (cons "argv" (json-array "sh" "-c" "sleep 20 & echo parent-done"))
+                                (cons "timeout_seconds" 10)))))
+    (and (tool-result-success? result)
+         (string-contains (output result) "parent-done")
+         (< (- (get-internal-real-time) started) (* 5 internal-time-units-per-second)))))
+(system* "mkdir" "-p" (string-append plain "/sub"))
+(define in-sub (run-tool (args (cons "argv" (json-array "pwd")) (cons "cwd" "sub"))))
+(test-assert "cwd runs inside the requested project directory"
+  (and (tool-result-success? in-sub) (string-contains (output in-sub) "/sub\n")))
+(test-assert "cwd cannot escape the project"
+  (not (tool-result-success? (run-tool (args (cons "argv" (json-array "pwd")) (cons "cwd" "../"))))))
+(test-assert "argv must be a non-empty string array"
+  (and (not (tool-result-success? (run-tool (args (cons "argv" (json-array))))))
+       (not (tool-result-success? (run-tool (args (cons "argv" "ls")))))))
+(test-assert "timeouts are bounded"
+  (not (tool-result-success? (run-tool (args (cons "argv" (json-array "true")) (cons "timeout_seconds" 9999))))))
+(define big (run-tool (args (cons "argv" (json-array "sh" "-c" "i=0; while [ $i -lt 9000 ]; do echo line-$i-0123456789; i=$((i+1)); done")))))
+(test-assert "large output keeps the head and tail and points at the log"
+  (and (tool-result-success? big)
+       (string-contains (output big) "line-0-")
+       (string-contains (output big) "line-8999-")
+       (string-contains (output big) "bytes omitted; full output in runs/")
+       (< (string-length (output big)) (* 70 1024))))
+(test-assert "invalid UTF-8 output is substituted, not fatal"
+  (tool-result-success? (run-tool (args (cons "argv" (json-array "sh" "-c" "printf 'ok\\377\\n'"))))))
+(test-assert "the traceparent reaches the child environment"
+  (string-contains
+   (output (coding-execute "run" (args (cons "argv" (json-array "sh" "-c" "echo $TRACEPARENT")))
+                           plain plain-ledger 7 '((traceparent . "00-abc-def-01") (backend . local))))
+   "00-abc-def-01"))
+(ledger-observe! plain-ledger 7 "watched.txt" (sha256-string "before\n"))
+(write-file! plain "watched.txt" "before\n")
+(define rewriting (run-tool (args (cons "argv" (json-array "sh" "-c" "echo after > watched.txt")))))
+(test-assert "files seen earlier that a command rewrote are reported"
+  (let ((text (output rewriting)))
+    (and (string-contains text "files changed since you last read them:")
+         (string-contains text "watched.txt"))))
+(test-assert "runs are journaled with agentkernel-shaped outcomes"
+  (let* ((runs (ledger-runs plain-ledger))
+         (first-run (car runs))
+         (outcome (json-object-ref first-run "outcome")))
+    (and (>= (length runs) 8)
+         (equal? 0 (json-object-ref outcome "exit_code"))
+         (eq? #t (json-object-ref outcome "success"))
+         (equal? (sha256-string "out\nerr\n") (json-object-ref outcome "output_sha256"))
+         (equal? 8 (json-object-ref outcome "output_bytes"))
+         (equal? "local" (json-object-ref (json-object-ref first-run "invocation") "mode")))))
+(test-assert "status reports the last run"
+  (string-contains (output (coding-execute "status" (args) plain plain-ledger 7)) "last run (turn 7): sh -c echo after > watched.txt · exit 0"))
+(test-assert "runs survive ledger replay"
+  (= (length (ledger-runs plain-ledger)) (length (ledger-runs (open-ledger (string-append plain "/state"))))))
+(test-equal "the agentkernel backend wraps argv with exec and a workspace path"
+  '("agentkernel" "exec" "box" "--workdir" "/workspace/crates/x" "--" "cargo" "test")
+  (executed-argv '("cargo" "test") "crates/x" 'agentkernel "box"))
+(test-equal "the project root maps to /workspace"
+  "/workspace" (list-ref (executed-argv '("ls") "." 'agentkernel "box") 4))
+(test-error "the agentkernel backend needs a sandbox name" #t (executed-argv '("ls") "." 'agentkernel #f))
+(test-assert "run has a provider schema" (json-object? (coding-tool-schema "run")))
 
 (system* "rm" "-rf" plain repo)
 (test-end "coding")

@@ -162,6 +162,7 @@
     "  /effort [default|low|medium|high|max]  model effort\n"
     "  /fast [on|off]                  fast provider service\n"
     "  /context [limit TOKENS]         usage and context budget\n"
+    "  /run [list|allow ARGV...|deny ARGV...]  commands run without asking\n"
     "  /thinking [MODE]  show or set off/on/low/medium/high\n"
     "  /stream [on|off]  show or set streaming output\n"
     "  /eval EXPR        transactionally add a live Scheme definition\n"
@@ -669,6 +670,9 @@
     (try-transition "settings" (lambda () (handle-preference-command runtime line)))
     'continue)
    ((string=? line "/help") (show-help) 'continue)
+   ((or (string=? line "/run") (string-prefix? "/run " line))
+    (try-transition "run allowlist" (lambda () (handle-run-command runtime line)))
+    'continue)
    ((string=? line "/show") (show-generation runtime) 'continue)
    ((or (string=? line "/thinking") (string-prefix? "/thinking " line))
     (handle-thinking-command runtime line)
@@ -870,7 +874,8 @@
                     (execute-change! runtime generation tracer name arguments #f))
                    ((member name coding-tool-names)
                     ((builtin-ref 'coding 'coding-execute)
-                     name arguments (getcwd) ledger (current-turn)))
+                     name arguments (getcwd) ledger (current-turn)
+                     (coding-context generation span)))
                    (else
                     (execute-tool
                      name arguments (getcwd)
@@ -1105,8 +1110,35 @@
 (define current-turn (make-parameter 0))
 ;; The change ledger is process-owned state beside the recovery record.
 (define ledger #f)
+(define (approval-letter answer)
+  (cond
+   ((char? answer) (char-downcase answer))
+   ((string? answer)
+    (let ((text (string-downcase (string-trim-both answer))))
+      (cond ((member text '("y" "yes")) #\y)
+            ((member text '("a" "always")) #\a)
+            (else #\n))))
+   (else #\n)))
+
+;; `a` on a run prompt approves it and adds the exact argv to this session's
+;; allowlist; /settings save promotes it like any other preference.
+(define (remember-run! generation arguments)
+  (let ((argv (run-argv-of arguments))
+        (current (setting-ref generation 'run-allow)))
+    (unless (member argv current)
+      (settings-set! (list (cons 'run-allow (append current (list argv))))))
+    (format #t "Allowed for this session: ~a~%" (string-join argv " "))))
+
+(define (run-preview arguments)
+  (format #f "run ~a  (cwd ~a, timeout ~as)~%"
+          (string-join (run-argv-of arguments) " ")
+          (json-object-ref arguments "cwd" ".")
+          (json-object-ref arguments "timeout_seconds" 120)))
+
 (define* (authorize-tool runtime generation name arguments #:optional (preview #f))
-  (let* ((decision (tool-decision (setting-ref generation 'mode) name arguments))
+  (let* ((run? (string=? name "run"))
+         (decision (tool-decision (setting-ref generation 'mode) name arguments
+                                  (setting-ref generation 'run-allow)))
          (allowed? (case decision
                      ((allow) #t)
                      ((ask) (and (interactive-approval?)
@@ -1114,9 +1146,13 @@
                          (if preview
                              (format #t "\n~a" preview)
                              (format #t "\nTool requests: ~a\n~a\n" name (json-write arguments)))
-                         (let ((answer (read-approval-key "Approve tool? [y/N] ")))
-                           (or (and (char? answer) (char-ci=? answer #\y))
-                               (and (string? answer) (member (string-downcase (string-trim-both answer)) '("y" "yes"))))))))
+                         (let ((letter (approval-letter
+                                        (read-approval-key
+                                         (if run? "Approve run? [y/N/a] " "Approve tool? [y/N] ")))))
+                           (cond
+                            ((char=? letter #\y) #t)
+                            ((and run? (char=? letter #\a)) (remember-run! generation arguments) #t)
+                            (else #f))))))
                      (else #f))))
     (runtime-record! runtime 'tool-approval
       `((tool . ,name) (mode . ,(setting-ref generation 'mode)) (decision . ,decision) (approved . ,(if allowed? #t #f))))
@@ -1141,6 +1177,34 @@
      (diff-preview (string-join (map prepared-change-diff changes) "") 120))))
 
 (define mutation-tool-names '("write" "edit" "apply_patch"))
+
+;; W3C trace context so a child process, local or sandboxed, joins the span.
+(define (coding-context generation span)
+  `((traceparent . ,(and span (trace-trace-id span) (trace-span-id span)
+                         (format #f "00-~a-~a-01" (trace-trace-id span) (trace-span-id span))))
+    (backend . ,(setting-ref generation 'run-backend))
+    (sandbox . ,(setting-ref generation 'run-sandbox))))
+
+(define (handle-run-command runtime line)
+  (let* ((generation (runtime-current runtime))
+         (parts (cdr (string-tokenize line)))
+         (current (setting-ref generation 'run-allow)))
+    (cond
+     ((or (null? parts) (equal? parts '("list")))
+      (if (null? current)
+          (display "Run allowlist is empty; answer a at a run prompt or use /run allow ARGV...\n")
+          (for-each (lambda (prefix) (format #t "allow ~a~%" (string-join prefix " "))) current)))
+     ((and (string=? (car parts) "allow") (pair? (cdr parts)))
+      (unless (member (cdr parts) current)
+        (settings-set! (list (cons 'run-allow (append current (list (cdr parts)))))))
+      (format #t "Allowed without asking in accept/auto: ~a~%" (string-join (cdr parts) " ")))
+     ((and (string=? (car parts) "deny") (pair? (cdr parts)))
+      (unless (member (cdr parts) current)
+        (error "that prefix is not in the allowlist" (string-join (cdr parts) " ")))
+      (settings-set! (list (cons 'run-allow (delete (cdr parts) current))))
+      (format #t "Removed: ~a~%" (string-join (cdr parts) " ")))
+     (else (error "use /run list, /run allow ARGV..., or /run deny ARGV...")))
+    #t))
 
 (define (prepare-changes name arguments)
   (if (string=? name "apply_patch")
@@ -1244,7 +1308,9 @@
                        ((member name mutation-tool-names)
                         (execute-change! runtime generation tracer name
                                          (tool-call-arguments call) (tool-call-id call)))
-                       ((not (authorize-tool runtime generation name (tool-call-arguments call)))
+                       ((not (authorize-tool runtime generation name (tool-call-arguments call)
+                                             (and (string=? name "run")
+                                                  (run-preview (tool-call-arguments call)))))
                         (unavailable-result name))
                        (else
                         ;; This write-ahead record is deliberately retained if
@@ -1267,7 +1333,8 @@
                               (execute-traces tracer (tool-call-arguments call)))
                              ((member name coding-tool-names)
                               ((builtin-ref 'coding 'coding-execute)
-                               name (tool-call-arguments call) (getcwd) ledger (current-turn)))
+                               name (tool-call-arguments call) (getcwd) ledger (current-turn)
+                               (coding-context generation span)))
                              (else
                               (execute-tool
                                name

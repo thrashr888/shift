@@ -3,16 +3,27 @@
 ;; steps of docs/coding-workflow-rfc.md. Nothing here goes through a shell.
 (define-module (shift coding)
   #:use-module (ice-9 textual-ports)
+  #:use-module (ice-9 binary-ports)
+  #:use-module (ice-9 iconv)
+  #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-11)
   #:use-module (live-agent json)
   #:use-module (live-agent tools)
   #:use-module (live-agent changes)
   #:use-module (live-agent diff)
   #:use-module (live-agent patch)
-  #:export (coding-tool-schema coding-execute coding-prepare run-argv))
+  #:use-module (live-agent sha256)
+  #:export (coding-tool-schema coding-execute coding-prepare run-argv
+            executed-argv capture-process))
 
 (define max-output (* 64 1024))
 (define max-patch-input (* 512 1024))
+(define default-timeout 120)
+(define max-timeout 600)
+(define head-bytes (* 16 1024))
+(define tail-bytes (* 48 1024))
+(define max-changed-check 200)
 
 (define (bounded text)
   (if (> (string-length text) max-output)
@@ -127,6 +138,18 @@
         (format port "git ~a · ~a dirty file~a~%" (car git) (length (cdr git))
                 (if (= 1 (length (cdr git))) "" "s"))
         (display "not a git repository\n" port))
+    (let ((runs (ledger-runs ledger)))
+      (unless (null? runs)
+        (let* ((last-run (last runs))
+               (input (json-object-ref (json-object-ref last-run "invocation") "input"))
+               (outcome (json-object-ref last-run "outcome")))
+          (format port "last run (turn ~a): ~a · ~a~%"
+                  (json-object-ref last-run "turn")
+                  (string-join (json-array-items (json-object-ref input "command")) " ")
+                  (if (json-object-ref outcome "success")
+                      "exit 0"
+                      (let ((error (json-object-ref outcome "error")))
+                        (if (string? error) error (format #f "exit ~a" (json-object-ref outcome "exit_code")))))))))
     (format port "changed this turn (turn ~a): ~a~%" turn
             (if (null? current) "nothing" (format-diffstat (total-diffstat current))))
     (for-each (lambda (entry)
@@ -249,6 +272,208 @@
         (error "patch touches the same path more than once"))
       changes)))
 
+;; --- run ---------------------------------------------------------------
+
+(define (parse-run-arguments arguments root)
+  (let* ((argv-value (json-object-ref arguments "argv" #f))
+         (argv (and (json-array? argv-value) (json-array-items argv-value)))
+         (cwd (json-object-ref arguments "cwd" "."))
+         (timeout (json-object-ref arguments "timeout_seconds" default-timeout)))
+    (unless (and argv (pair? argv)
+                 (every (lambda (item) (and (string? item) (not (string-null? item)))) argv))
+      (error "argv must be a non-empty array of strings"))
+    (unless (and (string? cwd) (valid-relative-path? cwd))
+      (error "cwd must be a project-relative directory"))
+    (unless (and (integer? timeout) (>= timeout 1) (<= timeout max-timeout))
+      (error (format #f "timeout_seconds must be an integer from 1 through ~a" max-timeout)))
+    (let* ((resolved (resolve-existing-path cwd root "run"))
+           (absolute (cadr resolved)))
+      (unless (eq? 'directory (stat:type (stat absolute)))
+        (error "cwd is not a directory" cwd))
+      (values argv
+              (if (string=? absolute (car resolved))
+                  "."
+                  (substring absolute (+ 1 (string-length (car resolved)))))
+              absolute
+              timeout))))
+
+;; The backend seam: local runs argv as given; agentkernel wraps it in
+;; `agentkernel exec`, which passes the exit code through and mounts the
+;; project at /workspace, so cwd maps directly.
+(define (executed-argv argv workdir backend sandbox)
+  (case backend
+    ((agentkernel)
+     (unless (and (string? sandbox) (not (string-null? sandbox)))
+       (error "run-backend agentkernel needs a run-sandbox name"))
+     (append (list "agentkernel" "exec" sandbox
+                   "--workdir" (if (string=? workdir ".")
+                                   "/workspace"
+                                   (string-append "/workspace/" workdir))
+                   "--")
+             argv))
+    ((local) argv)
+    (else (error "unknown run backend" backend))))
+
+;; spawn has no working-directory option and inherits this process's cwd,
+;; which need not be the project root. The shell here only changes directory
+;; and execs its positional parameters; argv is never interpolated.
+(define (in-directory argv absolute)
+  (if (string=? absolute (getcwd))
+      argv
+      (append (list "/bin/sh" "-c" "cd \"$1\" && shift && exec \"$@\"" "sh" absolute) argv)))
+
+(define (environment-with traceparent)
+  (let ((base (filter (lambda (entry) (not (string-prefix? "TRACEPARENT=" entry))) (environ))))
+    (if traceparent
+        (cons (string-append "TRACEPARENT=" traceparent) base)
+        base)))
+
+(define (drain! port sink)
+  (let loop ()
+    (let ((ready (select (list port) '() '() 0)))
+      (when (pair? (car ready))
+        (let ((chunk (get-bytevector-some port)))
+          (unless (eof-object? chunk)
+            (put-bytevector sink chunk)
+            (loop)))))))
+
+(define (terminate! pid)
+  (kill pid SIGTERM)
+  (let loop ((waited 0))
+    (let ((reaped (waitpid pid WNOHANG)))
+      (cond
+       ((not (= 0 (car reaped))) (cdr reaped))
+       ((>= waited 2000)
+        (kill pid SIGKILL)
+        (cdr (waitpid pid)))
+       (else (usleep 100000) (loop (+ waited 100)))))))
+
+;; Runs argv with combined output, a deadline, and guaranteed reaping. Output
+;; is collected until the child exits; descendants that keep the pipe open
+;; cannot stall the turn. Returns (values status code bytes duration-ms) where
+;; status is exit, signal, or timeout.
+(define (capture-process argv environment timeout-seconds)
+  (let-values (((sink get-bytes) (open-bytevector-output-port)))
+    (let* ((ends (pipe))
+           (in (car ends))
+           (started (get-internal-real-time))
+           (deadline (+ started (* timeout-seconds internal-time-units-per-second)))
+           (pid (spawn (car argv) argv #:output (cdr ends) #:error (cdr ends)
+                       #:environment environment))
+           (reaped #f))
+      (close-port (cdr ends))
+      (dynamic-wind
+        (lambda () #t)
+        (lambda ()
+          (let loop ()
+            (let ((ready (select (list in) '() '() 0.25)))
+              (when (pair? (car ready))
+                (let ((chunk (get-bytevector-some in)))
+                  (unless (eof-object? chunk) (put-bytevector sink chunk))))
+              (let ((status (waitpid pid WNOHANG)))
+                (cond
+                 ((not (= 0 (car status)))
+                  (set! reaped (cdr status))
+                  (drain! in sink)
+                  (let ((code (status:exit-val reaped))
+                        (signal (status:term-sig reaped)))
+                    (values (if signal 'signal 'exit)
+                            (or code signal -1)
+                            (get-bytes)
+                            (elapsed-ms started))))
+                 ((> (get-internal-real-time) deadline)
+                  (set! reaped (terminate! pid))
+                  (drain! in sink)
+                  (values 'timeout timeout-seconds (get-bytes) (elapsed-ms started)))
+                 (else (loop)))))))
+        (lambda ()
+          (unless reaped (set! reaped (terminate! pid)))
+          (unless (port-closed? in) (close-port in)))))))
+
+(define (elapsed-ms started)
+  (quotient (* 1000 (- (get-internal-real-time) started)) internal-time-units-per-second))
+
+(define (bounded-bytes bytes log-path)
+  (let ((total (bytevector-length bytes)))
+    (if (<= total (+ head-bytes tail-bytes))
+        (bytevector->string bytes "UTF-8" 'substitute)
+        (let ((head (make-bytevector head-bytes))
+              (tail (make-bytevector tail-bytes)))
+          (bytevector-copy! bytes 0 head 0 head-bytes)
+          (bytevector-copy! bytes (- total tail-bytes) tail 0 tail-bytes)
+          (string-append
+           (bytevector->string head "UTF-8" 'substitute)
+           (format #f "~%…[~a bytes omitted; full output in ~a]~%" (- total head-bytes tail-bytes) log-path)
+           (bytevector->string tail "UTF-8" 'substitute))))))
+
+(define (write-log! ledger turn bytes)
+  (let* ((directory (string-append (ledger-directory ledger) "/runs"))
+         (name (format #f "run-~a-~a.log" turn (+ 1 (length (ledger-runs ledger)))))
+         (path (string-append directory "/" name)))
+    (unless (file-exists? directory) (mkdir directory))
+    (call-with-output-file path
+      (lambda (port) (put-bytevector port bytes))
+      #:binary #t)
+    (string-append "runs/" name)))
+
+;; Files the session had seen whose content changed during the command,
+;; so the model re-reads them instead of failing a stale check later.
+(define (changed-seen-files ledger root)
+  (filter (lambda (path)
+            (let ((seen (ledger-seen ledger path)))
+              (and seen
+                   (not (equal? (car seen) (file-hash (string-append root "/" path)))))))
+          (let ((paths (ledger-seen-paths ledger)))
+            (if (> (length paths) max-changed-check) (take paths max-changed-check) paths))))
+
+(define (count-lines bytes)
+  (let loop ((index 0) (count 0))
+    (if (>= index (bytevector-length bytes))
+        (if (and (> index 0) (not (= 10 (bytevector-u8-ref bytes (- index 1))))) (+ count 1) count)
+        (loop (+ index 1) (if (= 10 (bytevector-u8-ref bytes index)) (+ count 1) count)))))
+
+(define (execute-run arguments root ledger turn context)
+  (let-values (((argv workdir absolute timeout) (parse-run-arguments arguments root)))
+    (let* ((backend (or (assq-ref context 'backend) 'local))
+           (sandbox (assq-ref context 'sandbox))
+           (mapped (executed-argv argv workdir backend sandbox))
+           (final (if (eq? backend 'local) (in-directory mapped absolute) mapped))
+           (environment (environment-with (assq-ref context 'traceparent))))
+      (let-values (((status code bytes duration) (capture-process final environment timeout)))
+        (let* ((log (write-log! ledger turn bytes))
+               (changed (changed-seen-files ledger root))
+               (success? (and (eq? status 'exit) (= code 0)))
+               (status-text (case status
+                              ((exit) (format #f "exit ~a" code))
+                              ((signal) (format #f "killed by signal ~a" code))
+                              (else (format #f "timeout after ~as (killed)" code))))
+               (record
+                (json-object
+                 (cons "invocation"
+                       (json-object (cons "mode" (if (eq? backend 'local) "local" "agentkernel_exec"))
+                                    (cons "input" (json-object (cons "command" (apply json-array argv))
+                                                               (cons "workdir" workdir)))))
+                 (cons "outcome"
+                       (json-object (cons "exit_code" (if (eq? status 'exit) code -1))
+                                    (cons "success" success?)
+                                    (cons "output_sha256" (sha256-bytevector bytes))
+                                    (cons "output_bytes" (bytevector-length bytes))
+                                    (cons "error" (if (eq? status 'exit) json-null status-text))))
+                 (cons "status" (symbol->string status))
+                 (cons "duration_ms" duration)
+                 (cons "log" log))))
+          (ledger-record-run! ledger turn record)
+          (make-tool-result
+           success?
+           (string-append
+            (format #f "run ~a · ~a · ~as · ~a lines · log ~a~%"
+                    (string-join argv " ") status-text
+                    (/ (round (/ duration 100.0)) 10.0) (count-lines bytes) log)
+            (if (null? changed)
+                ""
+                (format #f "files changed since you last read them: ~a~%" (string-join changed ", ")))
+            (bounded-bytes bytes log))))))))
+
 (define (error-detail key arguments)
   (catch #t
     (lambda ()
@@ -257,12 +482,14 @@
           (format #f "~a: ~s" key arguments)))
     (lambda _ (format #f "~a: ~s" key arguments))))
 
-(define (coding-execute name arguments root ledger turn)
+;; context carries process-owned facts: traceparent, backend, sandbox.
+(define* (coding-execute name arguments root ledger turn #:optional (context '()))
   (catch #t
     (lambda ()
       (cond
        ((string=? name "status") (execute-status root ledger turn))
        ((string=? name "diff") (execute-diff arguments root ledger turn))
+       ((string=? name "run") (execute-run arguments root ledger turn context))
        ((string=? name "apply_patch")
         (error "apply_patch is a mutation and runs through the prepare/approve/commit path"))
        (else (error "coding tool is not implemented yet" name))))
@@ -310,4 +537,24 @@
       "exact replacement and apply_patch for multi-hunk or multi-file changes.")
      (json-object (cons "patch" (string-parameter "Unified diff text")))
      '("patch")))
+   ((string=? name "run")
+    (function-tool
+     "run"
+     (string-append
+      "Run one program with an argv list, no shell: tests, builds, linters, "
+      "formatters. Output is combined stdout and stderr, bounded, with the full "
+      "log saved. The result reports the exit code, duration, and any files you "
+      "had read that the command changed; read those again before editing. "
+      "Use run instead of shell whenever the command is a plain argv.")
+     (json-object
+      (cons "argv"
+            (json-object (cons "type" "array")
+                         (cons "items" (json-object (cons "type" "string")))
+                         (cons "minItems" 1)
+                         (cons "description" "Program and arguments, for example [\"cargo\",\"test\"]")))
+      (cons "cwd" (string-parameter "Optional project-relative working directory; defaults to the project root"))
+      (cons "timeout_seconds"
+            (json-object (cons "type" "integer") (cons "minimum" 1) (cons "maximum" max-timeout)
+                         (cons "description" "Kill the command after this many seconds; defaults to 120"))))
+     '("argv")))
    (else (error "unknown coding tool" name))))
