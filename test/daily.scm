@@ -1,6 +1,6 @@
 (use-modules (srfi srfi-64) (srfi srfi-1)
              (live-agent json) (live-agent provider) (live-agent transcript)
-             (live-agent policy) (live-agent context) (shift claude) (shift openai))
+             (live-agent policy) (live-agent context) (live-agent trace) (shift claude) (shift openai))
 (test-begin "daily driver")
 (for-each
  (lambda (name)
@@ -50,6 +50,32 @@
 (test-equal "Claude result is a user block" "user" (json-object-ref (caddr converted) "role"))
 (test-equal "Claude preserves tool IDs" call-id
  (json-object-ref (car (json-array-items (json-object-ref (caddr converted) "content"))) "tool_use_id"))
+(define cached-request
+  (make-claude-request "claude-haiku-4-5-20251001"
+                       (list (make-message "system" "be brief") (make-message "user" "hi")) '("read") #t #f 'default #f 8192))
+(define system-blocks (json-array-items (json-object-ref cached-request "system")))
+(test-equal "the system prompt is a cache breakpoint" "ephemeral"
+  (json-object-ref (json-object-ref (car system-blocks) "cache_control") "type"))
+(test-equal "the final message block is a cache breakpoint" "ephemeral"
+  (let* ((messages (json-array-items (json-object-ref cached-request "messages")))
+         (blocks (json-array-items (json-object-ref (last messages) "content"))))
+    (json-object-ref (json-object-ref (last blocks) "cache_control") "type")))
+(test-assert "earlier blocks carry no breakpoint"
+  (let* ((messages (json-array-items (json-object-ref claude "messages")))
+         (first-blocks (json-array-items (json-object-ref (car messages) "content"))))
+    (not (json-object-ref (car first-blocks) "cache_control" #f))))
+(test-equal "an empty system prompt sends no blocks" '()
+  (json-array-items (json-object-ref (make-claude-request "claude-haiku-4-5-20251001" (list (make-message "user" "hi")) '() #t #f 'default #f 8192) "system")))
+(define claude-usage
+  (usage-attributes
+   (make-completion "ok" "" '() (make-message "assistant" "ok")
+                    (json-object (cons "usage" (json-object (cons "input_tokens" 100) (cons "output_tokens" 5)
+                                                            (cons "cache_read_input_tokens" 900)
+                                                            (cons "cache_creation_input_tokens" 40)))))))
+(test-equal "Claude cache reads count as cached prompt tokens" 900 (assq-ref claude-usage 'llm.token_count.prompt_cached))
+(test-equal "Claude prompt totals include cached and written tokens" 1040 (assq-ref claude-usage 'llm.token_count.prompt))
+(test-equal "Claude cache hits are marked" "hit" (assq-ref claude-usage 'llm.prompt_cache.status))
+(test-equal "Claude cache writes are recorded" 40 (assq-ref claude-usage 'llm.token_count.prompt_cache_write))
 (test-error "unsupported fast mode fails before request" #t
  (make-claude-request "claude-haiku-4-5-20251001" normalized '() #f #f 'default #t 8192))
 (test-error "unsupported effort fails before request" #t

@@ -48,6 +48,31 @@
            (else (loop (cdr remaining)
                    (cons (json-object (cons "role" role*) (cons "content" (apply json-array blocks))) out))))))))
 
+(define ephemeral (json-object (cons "type" "ephemeral")))
+
+(define (with-cache-control block)
+  (apply json-object (append (json-object-entries block) (list (cons "cache_control" ephemeral)))))
+
+;; Anthropic caches nothing without explicit breakpoints. One on the system
+;; block covers tools plus system; one on the final content block lets the
+;; next request reuse this whole conversation prefix, since lookup checks the
+;; earlier breakpoints automatically. Thinking blocks cannot carry one.
+(define (mark-last-block messages)
+  (if (null? messages)
+      messages
+      (let* ((last-message (last messages))
+             (blocks (json-array-items (json-object-ref last-message "content")))
+             (final (and (pair? blocks) (last blocks))))
+        (if (or (not final)
+                (member (json-object-ref final "type" "") '("thinking" "redacted_thinking")))
+            messages
+            (append (drop-right messages 1)
+                    (list (json-object (cons "role" (json-object-ref last-message "role"))
+                                       (cons "content"
+                                             (apply json-array
+                                                    (append (drop-right blocks 1)
+                                                            (list (with-cache-control final))))))))))))
+
 (define (make-claude-request model messages tools stream? thinking effort fast? reserve)
   (when (and fast? (not (claude-fast? model))) (error "fast mode unsupported for model" model))
   (when (and (not (eq? effort 'default)) (not (claude-effort? model)))
@@ -55,10 +80,15 @@
   (apply json-object
     (append
      (list (cons "model" model) (cons "max_tokens" reserve) (cons "stream" stream?)
-           (cons "messages" (apply json-array (claude-messages model messages)))
-           (cons "system" (string-join
-              (map (lambda (m) (json-object-ref m "content" ""))
-                   (filter (lambda (m) (string=? (json-object-ref m "role") "system")) messages)) "\n\n")))
+           (cons "messages" (apply json-array (mark-last-block (claude-messages model messages))))
+           (cons "system"
+                 (let ((text (string-join
+                              (map (lambda (m) (json-object-ref m "content" ""))
+                                   (filter (lambda (m) (string=? (json-object-ref m "role") "system")) messages))
+                              "\n\n")))
+                   (if (string-null? text)
+                       (json-array)
+                       (json-array (with-cache-control (block "text" "text" text)))))))
      (if (null? tools) '()
          (list (cons "tools" (apply json-array
            (map (lambda (name)

@@ -40,6 +40,15 @@ cache boundary between those cohorts rather than expose mutation authority on
 an ordinary turn. A live generation change and a compaction checkpoint are also
 intentional boundaries.
 
+Claude caches nothing unless the request marks breakpoints, so every Claude
+request sets `cache_control: ephemeral` on the system block, which covers the
+tool definitions and system prompt, and on the final content block of the last
+message, so the next request reuses the whole conversation prefix through
+Anthropic's automatic lookback over earlier breakpoints. Thinking blocks never
+carry a breakpoint. `cache_read_input_tokens` and `cache_creation_input_tokens`
+feed the same `llm.prompt_cache.*` and `llm.token_count.*` attributes as OpenAI.
+Prompts under Anthropic's minimum cacheable length simply report a miss.
+
 OpenAI requests also carry a stable `prompt_cache_key` derived from the live
 generation fingerprint and safety cohort. It stays consistent across resumed
 sessions with the same prompt/tool image, while a behavior change deliberately
