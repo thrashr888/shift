@@ -179,6 +179,6 @@
                 (map (lambda (entry)
                   (let* ((state (cdr entry)) (value (vector-ref state 0)) (args (vector-ref state 1)))
                     (if (string-null? args) value
-                        (apply json-object (acons "input" (json-read args)
+                        (apply json-object (acons "input" (tool-arguments-from-json args)
                           (filter (lambda (p) (not (string=? (car p) "input"))) (json-object-entries value)))))))
                   (sort blocks (lambda (a b) (< (car a) (car b)))))))) model)))))

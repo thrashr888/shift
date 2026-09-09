@@ -19,6 +19,16 @@ was validated the same day on `matplotlib-22719` (`evals/results/ak-mpl`):
 resolved, 6 rounds, two test commands inside the harness image, 62k prompt
 tokens with 86% cache reads.
 
+The 16 remaining slice instances ran through the agentkernel backend on
+September 9, 2026 (`evals/results/rest-16`). Its first hard instance,
+`django-15957`, exposed a harness defect: a 25 KB `edit` argument came back
+from Claude as JSON our reader rejected, and the parse error failed the whole
+turn after 30 rounds and 2M tokens. Tool arguments that are not a valid JSON
+object now fail only that call, with the parse error returned to the model,
+in all three adapters; the streaming request timeout also rose from 120 s to
+600 s so long generations cannot truncate. Instances later in that batch ran
+with the fix, since `bin/shift` rebuilds on launch.
+
 First graded batch, September 8, 2026, the nine `<15 min fix` instances of the
 slice with Sonnet 5 (`evals/results/easy-9`): 7 of 9 resolved. All five
 Django instances, `matplotlib-22719`, and `sphinx-9698` passed; `sphinx-10435`

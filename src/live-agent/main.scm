@@ -1508,6 +1508,16 @@
                     (lambda ()
                       (cond
                        ((not enabled?) (unavailable-result name))
+                       ((json-object-ref (tool-call-arguments call) "invalid_json" #f)
+                        (runtime-record! runtime 'tool-arguments-invalid
+                                         `((tool . ,name)
+                                           (error . ,(json-object-ref (tool-call-arguments call) "json_error" ""))))
+                        (make-tool-result
+                         #f
+                         (format #f "the arguments for ~a were not a valid JSON object (~a); nothing ran. Resend the call with well-formed JSON, splitting a very large edit into smaller ones if needed. Start of what arrived: ~a"
+                                 name
+                                 (json-object-ref (tool-call-arguments call) "json_error" "")
+                                 (clip (json-object-ref (tool-call-arguments call) "invalid_json" "") 120))))
                        ((member name mutation-tool-names)
                         (execute-change! runtime generation tracer name
                                          (tool-call-arguments call) (tool-call-id call)))

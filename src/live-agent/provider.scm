@@ -14,6 +14,7 @@
             completion-assistant-message
             completion-usage
             make-message
+            tool-arguments-from-json
             make-tool-result-message
             make-tool-call
             tool-call-raw-arguments
@@ -39,6 +40,30 @@
 
 (define (make-message role content)
   (json-object (cons "role" role) (cons "content" content)))
+
+;; A tool call whose arguments are not a valid JSON object fails that one
+;; call with a message the model can act on; it never fails the turn. A
+;; 30-round turn was lost to one malformed 25 KB edit before this existed.
+(define (tool-arguments-from-json text)
+  (define (invalid detail)
+    (json-object
+     (cons "invalid_json" (if (> (string-length text) 400)
+                              (string-append (substring text 0 400) "…")
+                              text))
+     (cons "json_error" detail)))
+  (catch #t
+    (lambda ()
+      (let ((value (json-read text)))
+        (if (json-object? value)
+            value
+            (invalid "arguments must be a JSON object"))))
+    (lambda (key . arguments)
+      (invalid (catch #t
+                 (lambda ()
+                   (if (and (>= (length arguments) 3) (string? (cadr arguments)) (list? (caddr arguments)))
+                       (apply format #f (cadr arguments) (caddr arguments))
+                       (format #f "~a" key)))
+                 (lambda _ (format #f "~a" key)))))))
 
 (define (make-tool-result-message provider call-id tool-name content)
   (json-object (cons "role" "tool") (cons "tool_name" tool-name)

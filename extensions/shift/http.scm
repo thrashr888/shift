@@ -38,7 +38,7 @@
         "/tmp/shift-headers-XXXXXX" headers
         (lambda (headers-path)
           (let ((port (apply open-pipe* OPEN_READ "curl" "-sS" "-N" "--fail-with-body"
-                                  "--connect-timeout" "10" "--max-time" "120"
+                                  "--connect-timeout" "10" "--max-time" "600"
                                   "--max-filesize" "4194304"
                                   "-H" (string-append "@" headers-path)
                                   (append (if payload (list "--data-binary" (string-append "@" payload-path)) '()) (list endpoint)))))

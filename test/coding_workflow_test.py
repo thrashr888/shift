@@ -397,6 +397,20 @@ class CodingWorkflow(unittest.TestCase):
         out = self.shift("/tools on\nlook\n/quit\n", plan, session="repl")
         self.assertIn("tool> read notes.txt", out)
 
+    def test_malformed_tool_arguments_fail_the_call_not_the_turn(self):
+        call = {"index": 0, "id": "call_bad", "type": "function",
+                "function": {"name": "edit", "arguments": '{"path":"notes.txt","old_text":"unterminated'}}
+        bad = sse([{"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]},
+                   {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}])
+        code, out, err = self.print_mode("edit it", [bad, answer("retrying")], "--mode", "accept")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "retrying\n")
+        result = self.tool_results()[-1]
+        self.assertIn("were not a valid JSON object", result)
+        self.assertIn("nothing ran", result)
+        self.assertEqual((self.project / "notes.txt").read_text(), "alpha port 8080\n")
+        self.assertIn("tool-arguments-invalid", (self.state("p") / "events.scm-log").read_text())
+
     def test_model_flag_selects_a_provider(self):
         code, out, err = self.print_mode("hi", [answer("x")], "--model", "openai/gpt-5.4-mini")
         settings = json.loads((self.state("p") / "settings.json").read_text())

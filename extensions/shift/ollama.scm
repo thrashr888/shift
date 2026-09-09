@@ -11,15 +11,13 @@
   (let* ((function (json-object-ref value "function"))
          (arguments-value (json-object-ref function "arguments" (json-object)))
          (arguments
-          (if (string? arguments-value)
-              (json-read arguments-value)
-              arguments-value))
+          (cond ((string? arguments-value) (tool-arguments-from-json arguments-value))
+                ((json-object? arguments-value) arguments-value)
+                (else (tool-arguments-from-json (json-write arguments-value)))))
          (raw-arguments
           (if (string? arguments-value)
               arguments-value
               (json-write arguments-value))))
-    (unless (json-object? arguments)
-      (error "tool arguments must be a JSON object" arguments-value))
     (make-tool-call
      (json-object-ref value "id" (string-append "call_" (number->string (random 1000000000))))
      (json-object-ref function "name")

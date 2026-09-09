@@ -17,9 +17,7 @@
 (define (parse-tool-call value)
   (let* ((function (json-object-ref value "function"))
          (raw-arguments (json-object-ref function "arguments" "{}"))
-         (arguments (json-read raw-arguments)))
-    (unless (json-object? arguments)
-      (error "tool arguments must decode to a JSON object" raw-arguments))
+         (arguments (tool-arguments-from-json raw-arguments)))
     (make-tool-call
      (json-object-ref value "id")
      (json-object-ref function "name")

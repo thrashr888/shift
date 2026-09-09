@@ -76,6 +76,19 @@
 (test-equal "Claude prompt totals include cached and written tokens" 1040 (assq-ref claude-usage 'llm.token_count.prompt))
 (test-equal "Claude cache hits are marked" "hit" (assq-ref claude-usage 'llm.prompt_cache.status))
 (test-equal "Claude cache writes are recorded" 40 (assq-ref claude-usage 'llm.token_count.prompt_cache_write))
+(test-equal "valid tool arguments parse to an object" "x.py"
+  (json-object-ref (tool-arguments-from-json "{\"path\":\"x.py\"}") "path"))
+(define broken (tool-arguments-from-json "{\"path\":\"x.py\", \"old_text\":\"unterminated}"))
+(test-assert "malformed tool arguments become an invalid_json marker, not an error"
+  (and (string? (json-object-ref broken "invalid_json" #f))
+       (string? (json-object-ref broken "json_error" #f))))
+(test-assert "non-object arguments are marked too"
+  (json-object-ref (tool-arguments-from-json "[1,2]") "invalid_json" #f))
+(test-assert "a truncated Claude tool input does not fail the whole response"
+  (let ((completion (parse-claude-response
+                     (json-read "{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"edit\",\"input\":{\"invalid_json\":\"{\\\"path\",\"json_error\":\"expected comma\"}}]}")
+                     "claude-haiku-4-5-20251001")))
+    (json-object-ref (tool-call-arguments (car (completion-tool-calls completion))) "invalid_json" #f)))
 (test-error "unsupported fast mode fails before request" #t
  (make-claude-request "claude-haiku-4-5-20251001" normalized '() #f #f 'default #t 8192))
 (test-error "unsupported effort fails before request" #t
