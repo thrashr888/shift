@@ -276,7 +276,10 @@ def run_instance(instance, args, run_dir):
     sandboxed = args.backend == "agentkernel"
     repo, venv, installed = setup(instance, args.python, venv=not sandboxed)
     env = environment()
-    settings = ["--set", f"agent-max-tool-rounds={args.rounds}", "--set", f"turn-token-budget={args.budget}"]
+    # Large edits exceed the default 8192-token output reserve, and a response
+    # cut off at max_tokens fails the turn rather than executing a partial call.
+    settings = ["--set", f"agent-max-tool-rounds={args.rounds}", "--set", f"turn-token-budget={args.budget}",
+                "--set", f"output-reserve={args.output_reserve}"]
     sandbox = None
     if sandboxed:
         sandbox = agentkernel_sandbox(instance, repo)
@@ -358,6 +361,8 @@ def grade(args):
     run_dir = RESULTS / args.run_id
     predictions = run_dir / "predictions.jsonl"
     ids = [json.loads(line)["instance_id"] for line in predictions.read_text().splitlines() if line.strip()]
+    if args.instances:
+        ids = [i for i in ids if i in args.instances.split(",")]
     pull_images(ids)
     command = ["uv", "run", "--python", "3.12", "--with", "swebench", "python", "-m",
                "swebench.harness.run_evaluation", "--dataset_name", GRADE_DATASET, "--predictions_path", str(predictions),
@@ -385,6 +390,7 @@ def main():
                         help="uncached prompt plus completion tokens per turn")
     runner.add_argument("--timeout", type=int, default=1500, help="wall-clock seconds per instance")
     runner.add_argument("--python", default="3.11", help="interpreter for each instance's virtualenv")
+    runner.add_argument("--output-reserve", type=int, default=32768, help="max output tokens per model response")
     runner.add_argument("--backend", choices=["local", "agentkernel"], default="local",
                         help="where the model's test commands run")
     runner.add_argument("--keep-sandbox", action="store_true", help="leave agentkernel sandboxes for inspection")
@@ -392,6 +398,7 @@ def main():
     grader = commands.add_parser("grade")
     grader.add_argument("run_id")
     grader.add_argument("--workers", type=int, default=2)
+    grader.add_argument("--instances", help="comma-separated subset of the run's instances to grade again")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade}[args.command](args)
 

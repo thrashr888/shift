@@ -19,6 +19,25 @@ was validated the same day on `matplotlib-22719` (`evals/results/ak-mpl`):
 resolved, 6 rounds, two test commands inside the harness image, 62k prompt
 tokens with 86% cache reads.
 
+## Slice results, September 9, 2026
+
+Single pass over the seeded 25-instance slice with Sonnet 5, graded by the
+official harness: **16 of 25 resolved** (`easy-9`: 7 of 9 locally;
+`rest-16`: 9 of 16 through the agentkernel backend). Two misses were
+harness defects, both fixed and rerun (`rerun-2`): `sympy-23413` then
+resolved, `django-15957` did not, which makes 17 of 25 with the fixes. A
+third, `xarray-4695`, has the correct one-line patch applied but the
+harness's own pytest segfaults under amd64 emulation on this machine before
+any test runs, so it can only be graded on a native amd64 host. The other
+six misses are model failures: five ended at the 40-round cap still working
+(`seaborn-3187`, `pylint-8898`, `sphinx-9461`, `sphinx-10435`,
+`django-15957`), and two completed with wrong fixes (`django-16877`,
+`sympy-15875`).
+
+Cost over the 16 sandboxed runs: 19.4M cached, 1.07M uncached, and 173k
+output tokens across 67 minutes of wall time, dominated by emulated test runs.
+Round limits, not budgets, are now the binding constraint on hard instances.
+
 The 16 remaining slice instances ran through the agentkernel backend on
 September 9, 2026 (`evals/results/rest-16`). Its first hard instance,
 `django-15957`, exposed a harness defect: a 25 KB `edit` argument came back
@@ -27,7 +46,12 @@ turn after 30 rounds and 2M tokens. Tool arguments that are not a valid JSON
 object now fail only that call, with the parse error returned to the model,
 in all three adapters; the streaming request timeout also rose from 120 s to
 600 s so long generations cannot truncate. Instances later in that batch ran
-with the fix, since `bin/shift` rebuilds on launch.
+with the fix, since `bin/shift` rebuilds on launch. The batch's last instance,
+`sympy-23413`, failed differently: a response hit the 8192-token output
+reserve, and a completion cut off at `max_tokens` fails the turn by design
+rather than executing a partial tool call. The driver now sets
+`output-reserve` to 32768. A softer recovery, keeping the partial text and
+nudging the model to continue in smaller steps, is a candidate follow-up.
 
 First graded batch, September 8, 2026, the nine `<15 min fix` instances of the
 slice with Sonnet 5 (`evals/results/easy-9`): 7 of 9 resolved. All five
