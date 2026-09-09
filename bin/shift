@@ -18,6 +18,13 @@ if [ "${1-}" = "session-fork" ]; then
   set -- --fork-session "$@"
 fi
 
+# Keep the compiled-module cache current so Guile never falls back to
+# interpreting stale sources after a pull. Compile warnings still show.
+if command -v make >/dev/null 2>&1; then
+  make -s -C "$project_root" build >/dev/null \
+    || echo "shift: build cache refresh failed; running from source" >&2
+fi
+
 exec guile \
   --no-auto-compile \
   -L "$project_root/src" \

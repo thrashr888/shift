@@ -4,8 +4,11 @@ Status: accepted September 8, 2026 with the draft answers to the open
 questions: Sonnet 5 as the baseline and Haiku 4.5 for cheap regression runs,
 dogfood tasks against the current tree, and local `pytest` for the first
 SWE-bench run. Step one of the implementation order (print mode,
-`--allow-run`, the 64-round ceiling, and `turn-token-budget`) is implemented;
-later steps are not.
+`--allow-run`, the 64-round ceiling, and `turn-token-budget`) is implemented,
+and `scripts/evals.py` with the seeded slice exists ahead of order. First
+graded result, September 8, 2026: `django__django-11099` resolved by Sonnet 5
+in 17 seconds, 6 rounds, 33k prompt tokens of which 92% were cache reads.
+The receipt, provider retries, and the dogfood task set are not implemented.
 
 ## Why now
 
@@ -41,7 +44,8 @@ tree after the run is the `model_patch` the harness grades.
 
 - Slice: 25 instance IDs chosen once by a seeded shuffle and committed to
   `evals/swebench-verified-25.txt`, so runs compare across commits and models.
-- Environment: the official harness builds one container per instance. With
+- Environment: the official harness pulls one prebuilt container per instance
+  (about 1.1 GB each, amd64 only; the driver pre-pulls them on Apple Silicon). With
   `run-backend agentkernel` the tests run inside that container while Shift
   edits the mounted checkout; without it, Shift runs `pytest` locally against
   the checkout, which is fine for the Python-only Verified set.

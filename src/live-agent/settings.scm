@@ -17,7 +17,7 @@
 (define defaults '((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
                    (run-allow . ()) (run-backend . local) (run-sandbox . #f)
-                   (turn-token-budget . #f)))
+                   (turn-token-budget . #f) (show-tools . #t)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
                   agent-stream? agent-thinking agent-keep-alive agent-max-tool-rounds))
 (define (valid? key value)
@@ -29,7 +29,7 @@
     ((agent-provider) (memq value '(ollama openai claude)))
     ((agent-model agent-base-url) (and (string? value) (not (string-null? value))))
     ((agent-api-key-environment) (or (not value) (string? value)))
-    ((agent-stream? fast) (boolean? value))
+    ((agent-stream? fast show-tools) (boolean? value))
     ((agent-thinking) (or (boolean? value) (memq value '(low medium high))))
     ((agent-keep-alive) (or (string? value) (number? value)))
     ((mode) (memq value '(manual plan accept auto)))

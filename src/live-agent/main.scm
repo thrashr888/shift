@@ -228,6 +228,7 @@
     "  /recover restore  put interrupted file mutations back to their pre-images\n"
     "  /recover discard  discard the recorded tool call\n"
     "  /undo             revert the last turn's file changes if they still match\n"
+    "  /tools [on|off]   show the enabled tools, or toggle echoing each tool call\n"
     "  /session          show the durable session identity and checkpoint\n"
     "  /reset            clear conversation state\n"
     "  /help             show this help\n"
@@ -580,6 +581,20 @@
                           current cli-allow-runs))))
   #t)
 
+(define (handle-tools-command runtime line)
+  (let* ((generation (runtime-current runtime))
+         (parts (cdr (string-tokenize line))))
+    (cond
+     ((null? parts)
+      (format #t "tool echo ~a · tools ~a~%"
+              (if (setting-ref generation 'show-tools) "on" "off")
+              (string-join (map tool-name (generation-ref generation 'agent-tools)) " ")))
+     ((member (car parts) '("on" "off"))
+      (setting-set! 'show-tools (string=? (car parts) "on"))
+      (format #t "tool echo ~a~%" (car parts)))
+     (else (error "use /tools, /tools on, or /tools off")))
+    #t))
+
 (define (undo-last-turn! runtime)
   (let ((turns (if ledger (ledger-undoable-turns ledger) '())))
     (if (null? turns)
@@ -835,6 +850,9 @@
    ((string=? line "/recover retry") 'recover-retry)
    ((string=? line "/recover restore") 'recover-restore)
    ((string=? line "/undo") 'undo)
+   ((or (string=? line "/tools") (string-prefix? "/tools " line))
+    (try-transition "tool echo" (lambda () (handle-tools-command runtime line)))
+    'continue)
    ((string=? line "/recover discard")
     (recovery-clear! (runtime-state-directory tracer))
     (display "Interrupted tool record discarded; no tool was executed.\n")
@@ -1423,6 +1441,43 @@
           (make-tool-result
            #f (string-append "tool error: " (caught-error-detail key detail)))))))
 
+;; One line per tool call and one per result, so a session shows what the
+;; model did even when nothing needed approval. Print mode keeps stdout for
+;; the answer and echoes to stderr.
+(define (clip text limit)
+  (let ((line (car (string-split text #\newline))))
+    (if (> (string-length line) limit)
+        (string-append (substring line 0 limit) "…")
+        line)))
+
+(define (tool-call-summary name arguments)
+  (define (field key)
+    (let ((value (json-object-ref arguments key #f)))
+      (and (string? value) value)))
+  (cond
+   ((member name '("read" "write" "edit")) (or (field "path") ""))
+   ((string=? name "apply_patch")
+    (let ((patch (field "patch")))
+      (if patch (format #f "~a lines" (length (string-split patch #\newline))) "")))
+   ((string=? name "rg") (or (field "query") ""))
+   ((string=? name "run") (string-join (run-argv-of arguments) " "))
+   ((string=? name "diff") (or (field "scope") "turn"))
+   ((string=? name "status") "")
+   (else (clip (json-write arguments) 100))))
+
+(define (tool-echo-port)
+  (if print-mode? (current-error-port) (current-output-port)))
+
+(define (echo-tool-call! generation name arguments)
+  (when (setting-ref generation 'show-tools)
+    (format (tool-echo-port) "tool> ~a ~a~%" name (clip (tool-call-summary name arguments) 120))
+    (force-output (tool-echo-port))))
+
+(define (echo-tool-result! generation ok? output)
+  (when (setting-ref generation 'show-tools)
+    (format (tool-echo-port) "      ~a ~a~%" (if ok? "✓" "✗") (clip output 120))
+    (force-output (tool-echo-port))))
+
 (define (execute-tool-calls runtime tracer parent generation provider calls
                             messages enabled-tools)
   (let loop ((remaining calls) (result messages))
@@ -1436,6 +1491,7 @@
            `((generation . ,(generation-id generation))
              (tool . ,name)
              (arguments . ,(json-write (tool-call-arguments call)))))
+          (echo-tool-call! generation name (tool-call-arguments call))
           (let* ((span
                   (trace-start!
                    tracer (string-append "tool." name) "TOOL"
@@ -1498,6 +1554,7 @@
                  (ok? (tool-result-success? outcome))
                  (output (tool-result-output outcome)))
             (when ok? (record-observations! outcome))
+            (echo-tool-result! generation ok? output)
             (trace-end! span (if ok? "OK" "ERROR")
                         `((output.value . ,output)
                           ,@(change-attributes outcome)))
@@ -1949,7 +2006,12 @@
                   (when (and mcp-http? (builtin-enabled? 'mcp))
                     (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
                   (force-output))
-                (when initial-prompt (with-mutex lock (process! initial-prompt)))
+                (when initial-prompt
+                  (with-mutex lock
+                    ;; Print mode has no one to ask: anything needing approval
+                    ;; is denied without a prompt, so stdout stays the answer.
+                    (parameterize ((interactive-approval? (not print-mode?)))
+                      (process! initial-prompt))))
                 (if print-mode?
                     ;; Exit status is the turn outcome: 0 completed, 1 failed
                     ;; or cancelled. Harness errors exit 2 before this point.

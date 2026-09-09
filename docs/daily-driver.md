@@ -151,8 +151,8 @@ Omit `coding` from `SHIFT_BUILTINS` to remove the tools.
 
 `make build` compiles the runtime into `build/`; `bin/shift` and `make test` load
 those modules and fall back to source, with a note, when a file is newer than its
-compiled form. The SHA-256 ledger is too slow interpreted, so run `make build`
-after pulling changes.
+compiled form. `bin/shift` runs `make build` itself before launching, so the cache
+is refreshed after a pull without any notes about stale modules.
 
 ## Print mode and unattended runs
 
@@ -171,6 +171,12 @@ answered, so anything that would ask is denied; use `--mode accept` for edits an
 `--allow-run "ARGV PREFIX"` (repeatable) for the commands the task may run. These
 flags seed the session's settings exactly as `/mode`, `/run allow`, `/model`, and
 `/settings` would, and `--set KEY=JSON` accepts any settings key.
+
+Every tool call is echoed as `tool> NAME SUMMARY` followed by a `✓` or `✗` line
+with the first line of its result, so a session shows what the model did even
+when nothing needed approval. In print mode the echo goes to stderr. `/tools`
+shows the enabled tools and the echo state, `/tools off` and `/tools on` toggle
+it, and `--set show-tools=false` does the same for an unattended run.
 
 Two turn limits exist. `agent-max-tool-rounds` now goes up to 64 and can be set
 per session. `turn-token-budget` caps the prompt plus completion tokens one turn

@@ -376,6 +376,26 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("(reason . tokens)", journal)
         self.assertEqual(self.checkpoint("b")["history"], [])
 
+    def test_tool_echo_is_a_setting(self):
+        plan = [tool_call("read", {"path": "notes.txt"}), answer("seen")]
+        code, out, err = self.print_mode("look", plan, "--mode", "accept")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "seen\n")
+        self.assertIn("tool> read notes.txt", err)
+        self.assertIn("✓ # notes.txt · 16 bytes · sha256", err)
+        code, out, err = self.print_mode("look", plan, session="manual")
+        self.assertEqual(out, "seen\n", "manual mode must deny without prompting in print mode")
+        self.assertNotIn("Approve", out + err)
+        self.assertIn("✗ tool unavailable in this turn: read", err)
+        code, out, err = self.print_mode("look", plan, "--mode", "accept", "--set", "show-tools=false", session="quiet")
+        self.assertEqual(out, "seen\n")
+        self.assertNotIn("tool>", err)
+        out = self.shift("/tools off\n/tools\nlook\n/quit\n", plan, session="repl")
+        self.assertIn("tool echo off · tools read rg", out)
+        self.assertNotIn("tool>", out)
+        out = self.shift("/tools on\nlook\n/quit\n", plan, session="repl")
+        self.assertIn("tool> read notes.txt", out)
+
     def test_model_flag_selects_a_provider(self):
         code, out, err = self.print_mode("hi", [answer("x")], "--model", "openai/gpt-5.4-mini")
         settings = json.loads((self.state("p") / "settings.json").read_text())
