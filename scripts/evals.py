@@ -66,6 +66,9 @@ def environment():
                     value = value[1:-1]
                 env.setdefault(key, value)
     env.setdefault("GUILE_AUTO_COMPILE", "0")
+    # No one can approve a shell command in print mode, so keep it out of the
+    # tool list rather than let the model burn rounds on denials.
+    env.setdefault("SHIFT_TOOL_CEILING", "read,rg,write,edit,apply_patch,status,diff,run,traces")
     return env
 
 
@@ -292,7 +295,8 @@ def main():
     runner.add_argument("--limit", type=int, default=0)
     runner.add_argument("--model", default="claude/claude-sonnet-5")
     runner.add_argument("--rounds", type=int, default=40)
-    runner.add_argument("--budget", type=int, default=600000)
+    runner.add_argument("--budget", type=int, default=300000,
+                        help="uncached prompt plus completion tokens per turn")
     runner.add_argument("--timeout", type=int, default=1500, help="wall-clock seconds per instance")
     runner.add_argument("--python", default="3.11", help="interpreter for each instance's virtualenv")
     runner.add_argument("--run-id")

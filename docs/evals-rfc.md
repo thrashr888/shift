@@ -10,6 +10,18 @@ graded result, September 8, 2026: `django__django-11099` resolved by Sonnet 5
 in 17 seconds, 6 rounds, 33k prompt tokens of which 92% were cache reads.
 The receipt, provider retries, and the dogfood task set are not implemented.
 
+First graded batch, September 8, 2026, the nine `<15 min fix` instances of the
+slice with Sonnet 5 (`evals/results/easy-9`): 7 of 9 resolved. All five
+Django instances, `matplotlib-22719`, and `sphinx-9698` passed; `sphinx-10435`
+ended in exploration with no patch and `sympy-15875` left an applied but
+incomplete fix. Five of nine runs were stopped by the token budget, three of
+which still resolved, because the budget counted cache reads at full weight:
+the batch read 3.79M cached tokens against 376k uncached and 52k output. The
+budget now counts uncached prompt plus completion tokens, `shell` is excluded
+from unattended runs through `SHIFT_TOOL_CEILING` since nobody can approve
+it, and matplotlib's editable install failed on its C extensions, which the
+record flags.
+
 ## Why now
 
 On September 8 Shift implemented one of its own RFC features in a single turn

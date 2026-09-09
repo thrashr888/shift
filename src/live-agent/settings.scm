@@ -23,8 +23,8 @@
 (define (valid? key value)
   (case key
     ((agent-max-tool-rounds) (and (integer? value) (>= value 0) (<= value 64)))
-    ;; Cumulative prompt plus completion tokens one turn may spend before it
-    ;; is ended with a recorded reason.
+    ;; Cumulative uncached prompt plus completion tokens one turn may spend
+    ;; before it is ended with a recorded reason.
     ((turn-token-budget) (or (not value) (and (integer? value) (>= value 1024))))
     ((agent-provider) (memq value '(ollama openai claude)))
     ((agent-model agent-base-url) (and (string? value) (not (string-null? value))))

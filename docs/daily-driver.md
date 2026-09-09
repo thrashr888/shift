@@ -179,8 +179,8 @@ shows the enabled tools and the echo state, `/tools off` and `/tools on` toggle
 it, and `--set show-tools=false` does the same for an unattended run.
 
 Two turn limits exist. `agent-max-tool-rounds` now goes up to 64 and can be set
-per session. `turn-token-budget` caps the prompt plus completion tokens one turn
-may spend across its tool rounds; either limit ends the turn as a failure, keeps
+per session. `turn-token-budget` caps the uncached prompt tokens plus completion tokens one
+turn may spend across its tool rounds, so cache reads do not count; either limit ends the turn as a failure, keeps
 the conversation unchanged, and journals a `turn-limit` event with the reason.
 Files the turn already changed stay changed and remain undoable.
 

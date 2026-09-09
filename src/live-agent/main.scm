@@ -712,12 +712,16 @@
   (set! run-completion-tokens 0)
   (set! run-usage-reported? #f))
 
+;; The turn budget counts what a turn actually spends: uncached prompt tokens
+;; plus completion tokens. Cache reads are near free and, once a turn is
+;; deep in a repository, dwarf everything else in the raw prompt count.
 (define (record-run-usage! attributes)
   (let ((prompt (assq-ref attributes 'llm.token_count.prompt))
+        (uncached (assq-ref attributes 'llm.token_count.prompt_uncached))
         (completion (assq-ref attributes 'llm.token_count.completion)))
     (when (number? prompt)
       (set! run-prompt-tokens (+ run-prompt-tokens prompt))
-      (set! turn-tokens (+ turn-tokens prompt))
+      (set! turn-tokens (+ turn-tokens (if (number? uncached) uncached prompt)))
       (set! run-usage-reported? #t))
     (when (number? completion)
       (set! run-completion-tokens (+ run-completion-tokens completion))
