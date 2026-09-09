@@ -15,7 +15,7 @@
   #:use-module (live-agent patch)
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
-            executed-argv capture-process))
+            executed-argv capture-process unwrap-agentkernel-output))
 
 (define max-output (* 64 1024))
 (define max-patch-input (* 512 1024))
@@ -301,8 +301,27 @@
               timeout))))
 
 ;; The backend seam: local runs argv as given; agentkernel wraps it in
-;; `agentkernel exec`, which passes the exit code through and mounts the
-;; project at /workspace, so cwd maps directly.
+;; `agentkernel exec`, which mounts the project at /workspace so cwd maps
+;; directly. It does not pass exit codes through: a failing command makes
+;; agentkernel exit 1 and fold the output into an error line, which
+;; unwrap-agentkernel-output undoes.
+(define agentkernel-marker "Error: Command exited with code ")
+
+(define (unwrap-agentkernel-output status code bytes)
+  (if (not (and (eq? status 'exit) (= code 1)))
+      (values status code bytes)
+      (let* ((text (bytevector->string bytes "UTF-8" 'substitute))
+             (at (string-contains text agentkernel-marker))
+             (start (and at (+ at (string-length agentkernel-marker))))
+             (colon (and start (string-index text #\: start)))
+             (real (and colon (string->number (substring text start colon)))))
+        (if (and real (exact-integer? real))
+            (values 'exit real
+                    (string->utf8
+                     (string-append (substring text 0 at)
+                                    (string-trim (substring text (+ colon 1)) #\space))))
+            (values status code bytes)))))
+
 (define (executed-argv argv workdir backend sandbox)
   (case backend
     ((agentkernel)
@@ -442,7 +461,10 @@
            (mapped (executed-argv argv workdir backend sandbox))
            (final (if (eq? backend 'local) (in-directory mapped absolute) mapped))
            (environment (environment-with (assq-ref context 'traceparent))))
-      (let-values (((status code bytes duration) (capture-process final environment timeout)))
+      (let*-values (((raw-status raw-code raw-bytes duration) (capture-process final environment timeout))
+                    ((status code bytes) (if (eq? backend 'agentkernel)
+                                             (unwrap-agentkernel-output raw-status raw-code raw-bytes)
+                                             (values raw-status raw-code raw-bytes))))
         (let* ((log (write-log! ledger turn bytes))
                (changed (changed-seen-files ledger root))
                (success? (and (eq? status 'exit) (= code 0)))

@@ -10,6 +10,15 @@ graded result, September 8, 2026: `django__django-11099` resolved by Sonnet 5
 in 17 seconds, 6 rounds, 33k prompt tokens of which 92% were cache reads.
 The receipt, provider retries, and the dogfood task set are not implemented.
 
+Rerun of the two misses with the corrected budget, September 9, 2026
+(`evals/results/misses-2`): still 0 of 2. Sphinx-10435 patched
+`sphinx/writers/latex.py` but hit the 40-round cap without running a single
+test; SymPy-15875 completed with a fix that still fails `test_Add_is_zero`.
+Both are model failures now, not harness artifacts. The agentkernel backend
+was validated the same day on `matplotlib-22719` (`evals/results/ak-mpl`):
+resolved, 6 rounds, two test commands inside the harness image, 62k prompt
+tokens with 86% cache reads.
+
 First graded batch, September 8, 2026, the nine `<15 min fix` instances of the
 slice with Sonnet 5 (`evals/results/easy-9`): 7 of 9 resolved. All five
 Django instances, `matplotlib-22719`, and `sphinx-9698` passed; `sphinx-10435`
@@ -57,10 +66,17 @@ tree after the run is the `model_patch` the harness grades.
 - Slice: 25 instance IDs chosen once by a seeded shuffle and committed to
   `evals/swebench-verified-25.txt`, so runs compare across commits and models.
 - Environment: the official harness pulls one prebuilt container per instance
-  (about 1.1 GB each, amd64 only; the driver pre-pulls them on Apple Silicon). With
-  `run-backend agentkernel` the tests run inside that container while Shift
-  edits the mounted checkout; without it, Shift runs `pytest` locally against
-  the checkout, which is fine for the Python-only Verified set.
+  (about 1.1 GB each, amd64 only; the driver pre-pulls them on Apple Silicon).
+  With `--backend agentkernel` the driver creates a sandbox from that same
+  image with the host checkout mounted at `/workspace`, copies the image's
+  build artifacts (compiled extensions, egg-info, generated version files)
+  into the checkout once, records them in `.git/info/exclude`, and symlinks
+  `/testbed` to `/workspace`, so the conda environment's editable install
+  resolves to the model's live edits and C-extension repositories test
+  correctly with no per-run sync. The sandbox gets 4 vCPUs and 4 GB; the
+  default 512 MB was killed by matplotlib's suite. Without the backend, Shift
+  runs `pytest` in a local `uv` virtualenv, which works for pure-Python repos
+  and fails for the ones that compile.
 - Cost: capped per instance by tokens and turns; a run that hits the cap is a
   recorded failure, not a retry.
 - Output: resolved rate, plus per-instance receipt fields: rounds, tool calls,

@@ -1,4 +1,4 @@
-(use-modules (srfi srfi-64) (ice-9 textual-ports)
+(use-modules (srfi srfi-64) (ice-9 textual-ports) (rnrs bytevectors)
              (live-agent json) (live-agent tools) (live-agent changes) (live-agent sha256) (shift coding))
 
 (test-begin "coding")
@@ -73,7 +73,7 @@
 (write-file! repo "theirs.txt" "user work\n")
 (system* "git" "-C" repo "init" "-q")
 (system* "git" "-C" repo "-c" "user.name=t" "-c" "user.email=t@example.com" "add" ".")
-(system* "git" "-C" repo "-c" "user.name=t" "-c" "user.email=t@example.com" "commit" "-q" "-m" "base")
+(system* "git" "-C" repo "-c" "user.name=t" "-c" "user.email=t@example.com" "-c" "commit.gpgsign=false" "commit" "-q" "-m" "base")
 (write-file! repo "theirs.txt" "user work\nuser edit\n")
 ;; The ledger lives under the project's .shift/, which status must not count as dirt.
 (define repo-ledger (open-ledger (string-append repo "/.shift")))
@@ -214,6 +214,16 @@
 (test-equal "the project root maps to /workspace"
   "/workspace" (list-ref (executed-argv '("ls") "." 'agentkernel "box") 4))
 (test-error "the agentkernel backend needs a sandbox name" #t (executed-argv '("ls") "." 'agentkernel #f))
+(test-equal "agentkernel's folded error line yields the real exit code and output"
+  '(exit 3 "before\nout line\n")
+  (call-with-values
+      (lambda () (unwrap-agentkernel-output 'exit 1 (string->utf8 "before\nError: Command exited with code 3: out line\n")))
+    (lambda (status code bytes) (list status code (utf8->string bytes)))))
+(test-equal "an ordinary exit 1 is left alone"
+  '(exit 1 "plain failure\n")
+  (call-with-values
+      (lambda () (unwrap-agentkernel-output 'exit 1 (string->utf8 "plain failure\n")))
+    (lambda (status code bytes) (list status code (utf8->string bytes)))))
 (test-assert "run has a provider schema" (json-object? (coding-tool-schema "run")))
 
 (system* "rm" "-rf" plain repo)

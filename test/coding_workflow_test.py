@@ -159,7 +159,8 @@ class CodingWorkflow(unittest.TestCase):
 
     def git(self, *args):
         subprocess.run(
-            ["git", "-C", str(self.project), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            ["git", "-C", str(self.project), "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "-c", "commit.gpgsign=false", *args],
             check=True, capture_output=True,
         )
 

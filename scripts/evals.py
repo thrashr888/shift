@@ -112,11 +112,10 @@ def sh(argv, cwd=None, timeout=600, check=True, env=None):
     return result
 
 
-def setup(instance, python_version):
+def setup(instance, python_version, venv=True):
     """Checkout at the base commit plus a virtualenv with the project installed."""
     folder = WORK / instance["instance_id"]
     repo = folder / "repo"
-    venv = folder / "venv"
     folder.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
         log(f"cloning {instance['repo']}")
@@ -125,7 +124,14 @@ def setup(instance, python_version):
     sh(["git", "checkout", "--quiet", "--force", instance["base_commit"]], cwd=repo, timeout=600)
     sh(["git", "clean", "-fdq", "-e", ".shift"], cwd=repo)
     shutil.rmtree(repo / ".shift", ignore_errors=True)
+    exclude = repo / ".git" / "info" / "exclude"
+    if ".shift/" not in exclude.read_text().split():
+        with exclude.open("a") as handle:
+            handle.write(".shift/\n.shift-adopted.txt\n")
     installed = True
+    if not venv:
+        return repo, None, installed
+    venv = folder / "venv"
     if not (venv / "bin" / "python").exists():
         sh(["uv", "venv", "--quiet", "--python", python_version, str(venv)], timeout=600)
         install = subprocess.run(
@@ -138,8 +144,77 @@ def setup(instance, python_version):
     return repo, venv, installed
 
 
+AGENTKERNEL_PYTHON = "/opt/miniconda3/envs/testbed/bin/python"
+SANDBOX_CONFIG = """[sandbox]
+name = "{name}"
+base_image = "{image}"
+
+[resources]
+vcpus = 4
+memory_mb = 4096
+
+[security]
+profile = "moderate"
+network = false
+mount_cwd = true
+"""
+
+
+def agentkernel_binary():
+    """Homebrew's agentkernel is current; a stale cargo install may shadow it."""
+    for candidate in ("/opt/homebrew/opt/agentkernel/bin/agentkernel", shutil.which("agentkernel")):
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError("agentkernel is not installed")
+
+
+def sandbox_name(instance_id):
+    """agentkernel allows alphanumerics, hyphens, and underscores, never
+    consecutively; instance ids use a double underscore."""
+    name = "swe-"
+    for character in instance_id:
+        if character.isalnum():
+            name += character
+        elif not name.endswith("-"):
+            name += "-"
+    return name.rstrip("-")
+
+
+def agentkernel_sandbox(instance, repo):
+    """Run the instance's tests inside the SWE-bench harness image, where C
+    extensions are already built. The host checkout is mounted at /workspace;
+    the image's build artifacts are copied into it once and /testbed becomes
+    a symlink, so the model's edits are live and no per-run sync exists."""
+    ak = agentkernel_binary()
+    name = sandbox_name(instance["instance_id"])
+    image = instance["image"]
+    pull_images([instance["instance_id"]])
+    config = repo.parent / "sandbox.toml"
+    config.write_text(SANDBOX_CONFIG.format(name=name, image=image))
+    subprocess.run([ak, "sandbox", "remove", name], capture_output=True)
+    sh([ak, "sandbox", "create", name, "--config", str(config), "--dir", str(repo), "-B", "docker"], timeout=900)
+    adopt = (
+        "cd /testbed && find . -path ./.git -prune -o -type f -print | "
+        "while read f; do [ -e \"/workspace/$f\" ] || echo \"${f#./}\"; done > /workspace/.shift-adopted.txt && "
+        "if [ -s /workspace/.shift-adopted.txt ]; then "
+        "tar -C /testbed --exclude=./.git -cf - $(sed 's|^|./|' /workspace/.shift-adopted.txt) | tar -C /workspace -xf -; fi && "
+        "mv /testbed /testbed.image && ln -s /workspace /testbed"
+    )
+    sh([ak, "exec", name, "--", "sh", "-c", adopt], timeout=900)
+    exclude = repo / ".git" / "info" / "exclude"
+    adopted = (repo / ".shift-adopted.txt").read_text().splitlines()
+    with exclude.open("a") as handle:
+        handle.write("\n".join(adopted) + "\n")
+    log(f"sandbox {name} ready: {len(adopted)} build artifacts adopted from {image}")
+    return name
+
+
+def remove_sandbox(name):
+    subprocess.run([agentkernel_binary(), "sandbox", "remove", name], capture_output=True)
+
+
 def model_patch(repo):
-    sh(["git", "add", "-A", "--", ".", ":!.shift"], cwd=repo)
+    sh(["git", "add", "-A", "--", "."], cwd=repo)
     patch = sh(["git", "diff", "--cached", "--binary"], cwd=repo).stdout
     sh(["git", "reset", "-q"], cwd=repo)
     return patch
@@ -198,23 +273,34 @@ def classify(exit_code, stderr, patch):
 
 def run_instance(instance, args, run_dir):
     started = time.time()
-    repo, venv, installed = setup(instance, args.python)
+    sandboxed = args.backend == "agentkernel"
+    repo, venv, installed = setup(instance, args.python, venv=not sandboxed)
+    env = environment()
+    settings = ["--set", f"agent-max-tool-rounds={args.rounds}", "--set", f"turn-token-budget={args.budget}"]
+    sandbox = None
+    if sandboxed:
+        sandbox = agentkernel_sandbox(instance, repo)
+        venv = Path(AGENTKERNEL_PYTHON).parent.parent
+        settings += ["--set", 'run-backend="agentkernel"', "--set", f'run-sandbox="{sandbox}"']
+        env["PATH"] = str(Path(agentkernel_binary()).parent) + ":" + env.get("PATH", "")
     prompt = PROMPT.format(repo=instance["repo"], base=instance["base_commit"][:12], venv=venv,
                            problem=instance["problem_statement"].strip())
     command = [str(ROOT / "bin/shift"), "--print", prompt, "--mode", "accept", "--model", args.model,
-               "--allow-run", f"{venv}/bin/python", "--set", f"agent-max-tool-rounds={args.rounds}",
-               "--set", f"turn-token-budget={args.budget}", "--session", "swe", "--no-watch", "--no-mcp"]
-    log(f"running {instance['instance_id']} ({instance.get('difficulty', '?')})")
+               "--allow-run", f"{venv}/bin/python", *settings, "--session", "swe", "--no-watch", "--no-mcp"]
+    log(f"running {instance['instance_id']} ({instance.get('difficulty', '?')}, {args.backend})")
     try:
         result = subprocess.run(command, cwd=repo, text=True, capture_output=True, timeout=args.timeout,
-                                stdin=subprocess.DEVNULL, env=environment())
+                                stdin=subprocess.DEVNULL, env=env)
         exit_code, stdout, stderr = result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as expired:
         exit_code, stdout, stderr = 124, expired.stdout or "", (expired.stderr or "") + "\nwall-clock timeout"
+    finally:
+        if sandbox and not args.keep_sandbox:
+            remove_sandbox(sandbox)
     patch = model_patch(repo)
     record = {
         "instance_id": instance["instance_id"], "repo": instance["repo"], "difficulty": instance.get("difficulty"),
-        "model": args.model, "exit_code": exit_code, "wall_s": round(time.time() - started, 1),
+        "model": args.model, "backend": args.backend, "exit_code": exit_code, "wall_s": round(time.time() - started, 1),
         "editable_install": installed, "patch_bytes": len(patch.encode()),
         "failure_class": classify(exit_code, stderr, patch),
         "answer_tail": stdout[-600:], "stderr_tail": stderr[-600:],
@@ -299,6 +385,9 @@ def main():
                         help="uncached prompt plus completion tokens per turn")
     runner.add_argument("--timeout", type=int, default=1500, help="wall-clock seconds per instance")
     runner.add_argument("--python", default="3.11", help="interpreter for each instance's virtualenv")
+    runner.add_argument("--backend", choices=["local", "agentkernel"], default="local",
+                        help="where the model's test commands run")
+    runner.add_argument("--keep-sandbox", action="store_true", help="leave agentkernel sandboxes for inspection")
     runner.add_argument("--run-id")
     grader = commands.add_parser("grade")
     grader.add_argument("run_id")

@@ -128,7 +128,13 @@ only the direct child is signalled, while Ctrl-C in a terminal also reaches its
 descendants through the process group. The child receives `TRACEPARENT` for the
 tool span. Every run is journaled with agentkernel-shaped `invocation` and `outcome`
 records. Settings `run-backend` (`local` or `agentkernel`) and `run-sandbox` route
-argv through `agentkernel exec SANDBOX --workdir /workspace/CWD -- ARGV` instead.
+argv through `agentkernel exec SANDBOX --workdir /workspace/CWD -- ARGV` instead,
+so the project must be mounted at `/workspace` in that sandbox. agentkernel 0.20
+does not pass a failing command's exit code through: it exits 1 and folds the
+output into an `Error: Command exited with code N:` line, which Shift unwraps
+back into the real exit code and output. The `agentkernel` on `PATH` must be
+that version or newer; a stale `cargo install` in `~/.cargo/bin` shadows the
+Homebrew one.
 
 Every mode except plan asks before a run. The answer `a` approves it and adds the
 exact argv to this session's allowlist; `/run allow cargo test` adds a prefix,
