@@ -154,6 +154,30 @@ those modules and fall back to source, with a note, when a file is newer than it
 compiled form. The SHA-256 ledger is too slow interpreted, so run `make build`
 after pulling changes.
 
+## Print mode and unattended runs
+
+```
+./bin/shift --print "Add a test for the parser" --mode accept --allow-run "pytest" \
+  --model claude/claude-sonnet-5 --set agent-max-tool-rounds=40 --set turn-token-budget=400000 \
+  --session task-17
+```
+
+`--print TASK` (or `-p`) runs one task with no prompt loop and no stdin: the
+banner, thinking, and `assistant>` prefix are omitted so stdout is the answer
+alone, the usual close message goes to stderr, and the exit status is 0 for a
+completed turn, 1 for a failed or cancelled one, and 2 for a startup error. It
+implies `--no-watch` and starts no MCP endpoint. Approval prompts cannot be
+answered, so anything that would ask is denied; use `--mode accept` for edits and
+`--allow-run "ARGV PREFIX"` (repeatable) for the commands the task may run. These
+flags seed the session's settings exactly as `/mode`, `/run allow`, `/model`, and
+`/settings` would, and `--set KEY=JSON` accepts any settings key.
+
+Two turn limits exist. `agent-max-tool-rounds` now goes up to 64 and can be set
+per session. `turn-token-budget` caps the prompt plus completion tokens one turn
+may spend across its tool rounds; either limit ends the turn as a failure, keeps
+the conversation unchanged, and journals a `turn-limit` event with the reason.
+Files the turn already changed stay changed and remain undoable.
+
 ## Live MCP
 
 An interactive session starts a built-in HTTP MCP server in the same Guile process:

@@ -22,7 +22,11 @@ def sse(events):
     return "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
 
 
-def tool_call(name, arguments):
+def usage_event(usage):
+    return [{"choices": [], "usage": usage}] if usage else []
+
+
+def tool_call(name, arguments, usage=None):
     call = {
         "index": 0,
         "id": "call_" + name,
@@ -34,16 +38,21 @@ def tool_call(name, arguments):
             {"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]},
             {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
         ]
+        + usage_event(usage)
     )
 
 
-def answer(text):
+def answer(text, usage=None):
     return sse(
         [
             {"choices": [{"index": 0, "delta": {"content": text}}]},
             {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
         ]
+        + usage_event(usage)
     )
+
+
+PROVIDER_ERROR = "provider-error"
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -61,6 +70,12 @@ class Provider(BaseHTTPRequestHandler):
             step = Provider.plan.pop(0) if Provider.plan else answer("done")
         if callable(step):
             step = step()
+        if step == PROVIDER_ERROR:
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":{"message":"unavailable"}}')
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -116,6 +131,16 @@ class CodingWorkflow(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout + result.stderr
+
+    def print_mode(self, task, plan, *flags, session="p"):
+        """Unattended run; returns (exit code, stdout, stderr)."""
+        Provider.plan = list(plan)
+        result = subprocess.run(
+            [BIN, "--agent", str(self.agent), "--session", session, "--print", task, *flags],
+            text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+        return result.returncode, result.stdout, result.stderr
 
     def tool_results(self):
         return [m.get("content") for m in Provider.last_messages if m.get("role") == "tool"]
@@ -292,6 +317,70 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual((self.project / "notes.txt").read_text(), "alpha port 9443\n")
         self.assertEqual((self.project / "second.txt").read_text(), "alpha\nbeta\nuser addition\n")
         self.assertEqual([e for e in self.ledger() if e["kind"] == "undo"], [])
+
+
+    def test_print_mode_answers_once_with_a_clean_stdout(self):
+        code, out, err = self.print_mode("say hi", [answer("hello there")])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "hello there\n")
+        self.assertNotIn("shift λ", out)
+        self.assertIn("Session closed", err)
+        self.assertEqual(self.checkpoint("p")["next_turn"], 2)
+
+    def test_print_mode_exit_codes_and_flags(self):
+        code, out, err = self.print_mode("fail", [PROVIDER_ERROR])
+        self.assertEqual(code, 1)
+        self.assertIn("turn failed", err)
+        code, out, err = self.print_mode("bad mode", [answer("x")], "--mode", "sideways")
+        self.assertEqual(code, 2)
+        self.assertIn("startup options rejected", err)
+        code, out, err = self.print_mode("bad set", [answer("x")], "--set", "agent-max-tool-rounds=99")
+        self.assertEqual(code, 2)
+        code, out, err = self.print_mode("bad json", [answer("x")], "--set", "turn-token-budget=notjson")
+        self.assertEqual(code, 2)
+        result = subprocess.run([BIN, "--agent", str(self.agent), "--print"], text=True,
+                                capture_output=True, cwd=self.project, env=self.env)
+        self.assertEqual(result.returncode, 2)
+
+    def test_print_mode_allow_run_executes_without_a_prompt(self):
+        code, out, err = self.print_mode(
+            "run it", [tool_call("run", {"argv": ["sh", "-c", "echo ran"]}), answer("ok")],
+            "--mode", "accept", "--allow-run", "sh -c", "--allow-run", "make check")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Approve", out + err)
+        self.assertIn("· exit 0 ·", self.tool_results()[-1])
+        settings = json.loads((self.state("p") / "settings.json").read_text())
+        self.assertEqual(settings["run-allow"], [["sh", "-c"], ["make", "check"]])
+        self.assertEqual(settings["mode"], "accept")
+
+    def test_print_mode_denies_runs_that_are_not_allowlisted(self):
+        code, out, err = self.print_mode(
+            "run it", [tool_call("run", {"argv": ["sh", "-c", "echo ran"]}), answer("ok")],
+            "--mode", "accept")
+        self.assertEqual(code, 0, err)
+        self.assertIn("tool unavailable in this turn: run", self.tool_results()[-1])
+
+    def test_round_limit_and_token_budget_end_the_turn_with_a_reason(self):
+        read = tool_call("read", {"path": "notes.txt"})
+        code, out, err = self.print_mode("loop", [read, read, answer("never")],
+                                         "--mode", "accept", "--set", "agent-max-tool-rounds=1")
+        self.assertEqual(code, 1)
+        self.assertIn("tool round limit reached", err)
+        spent = tool_call("read", {"path": "notes.txt"}, usage={"prompt_tokens": 5000, "completion_tokens": 20})
+        code, out, err = self.print_mode("spend", [spent, answer("never")],
+                                         "--mode", "accept", "--set", "turn-token-budget=2048", session="b")
+        self.assertEqual(code, 1)
+        self.assertIn("turn token budget exceeded", err)
+        journal = (self.state("b") / "events.scm-log").read_text()
+        self.assertIn("turn-limit", journal)
+        self.assertIn("(reason . tokens)", journal)
+        self.assertEqual(self.checkpoint("b")["history"], [])
+
+    def test_model_flag_selects_a_provider(self):
+        code, out, err = self.print_mode("hi", [answer("x")], "--model", "openai/gpt-5.4-mini")
+        settings = json.loads((self.state("p") / "settings.json").read_text())
+        self.assertEqual(settings["agent-model"], "gpt-5.4-mini")
+        self.assertEqual(settings["agent-provider"], "openai")
 
 
 if __name__ == "__main__":

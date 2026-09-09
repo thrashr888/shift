@@ -3,7 +3,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
   #:use-module (live-agent generation)
-  #:export (settings-init! setting-ref setting-set! settings-set! settings-save!
+  #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
             settings-show settings-object load-dotenv!))
 
 ;; Data only: never evaluate persisted preferences as Scheme. Live image code
@@ -16,11 +16,16 @@
 (define user-file #f)
 (define defaults '((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
-                   (run-allow . ()) (run-backend . local) (run-sandbox . #f)))
+                   (run-allow . ()) (run-backend . local) (run-sandbox . #f)
+                   (turn-token-budget . #f)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
-                  agent-stream? agent-thinking agent-keep-alive))
+                  agent-stream? agent-thinking agent-keep-alive agent-max-tool-rounds))
 (define (valid? key value)
   (case key
+    ((agent-max-tool-rounds) (and (integer? value) (>= value 0) (<= value 64)))
+    ;; Cumulative prompt plus completion tokens one turn may spend before it
+    ;; is ended with a recorded reason.
+    ((turn-token-budget) (or (not value) (and (integer? value) (>= value 1024))))
     ((agent-provider) (memq value '(ollama openai claude)))
     ((agent-model agent-base-url) (and (string? value) (not (string-null? value))))
     ((agent-api-key-environment) (or (not value) (string? value)))
@@ -111,6 +116,11 @@
     (for-each (lambda (entry)
                 (set! sources (acons (car entry) 'session (assq-delete-all (car entry) sources)))) entries)))
 (define (setting-set! key value) (settings-set! (list (cons key value))))
+;; For --set KEY=JSON: the value is parsed as JSON and decoded like a file.
+(define (setting-set-json! key text)
+  (let ((value (catch #t (lambda () (json-read text))
+                 (lambda _ (error "setting value must be JSON" key text)))))
+    (setting-set! key (decode key value))))
 (define (settings-save! generation scope)
   (let ((path (if (eq? scope 'user) user-file project-file)))
     (write-settings path (map (lambda (entry) (cons (string->symbol (car entry))

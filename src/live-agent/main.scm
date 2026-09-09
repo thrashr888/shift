@@ -85,11 +85,22 @@
      (when turn-thread
        (system-async-mark (lambda () (throw 'turn-cancelled "cancelled by user")) turn-thread)))))
 
+;; Unattended runs: --print answers one prompt and exits, and the other flags
+;; seed session settings that the REPL would otherwise take as slash commands.
+(define print-mode? #f)
+(define cli-mode #f)
+(define cli-model #f)
+(define cli-allow-runs '())
+(define cli-settings '())
+(define turn-tokens 0)
+
 (define (usage)
   (display
    (string-append
     "Usage: shift [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
     "                  [--session NAME|--new-session NAME|--resume NAME] [PROMPT]\n"
+    "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
+    "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]...\n"
     "       shift --list-sessions [--state-dir PATH]\n"
     "       shift session-fork PARENT CHILD\n")))
 
@@ -136,6 +147,40 @@
      ((string=? (car rest) "--list-sessions")
       (loop (cdr rest) agent state-dir watch?
             session-name session-mode #t initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (member (car rest) '("--print" "-p")))
+      (when initial-prompt
+        (format (current-error-port) "Only one prompt may be provided.\n")
+        (exit 2))
+      (set! print-mode? #t)
+      (loop (cddr rest) agent state-dir #f session-name session-mode list?
+            (cadr rest) fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--mode"))
+      (set! cli-mode (cadr rest))
+      (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--model"))
+      (set! cli-model (cadr rest))
+      (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--allow-run"))
+      (let ((prefix (string-tokenize (cadr rest))))
+        (when (null? prefix)
+          (format (current-error-port) "--allow-run needs an argv prefix.\n")
+          (exit 2))
+        (set! cli-allow-runs (append cli-allow-runs (list prefix))))
+      (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--set"))
+      (let ((equals (string-index (cadr rest) #\=)))
+        (unless (and equals (> equals 0))
+          (format (current-error-port) "--set needs KEY=JSON.\n")
+          (exit 2))
+        (set! cli-settings
+              (append cli-settings
+                      (list (cons (string->symbol (substring (cadr rest) 0 equals))
+                                  (substring (cadr rest) (+ equals 1)))))))
+      (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
      ((member (car rest) '("-h" "--help"))
       (usage)
       (exit 0))
@@ -518,6 +563,23 @@
               (display "Some files diverged; the recovery record is retained for inspection.\n"))))
     #t))
 
+;; Applied once settings are loaded; every value goes through the same
+;; validation as a slash command or a settings file.
+(define (apply-cli-overrides!)
+  (when cli-mode
+    (unless (member cli-mode '("manual" "plan" "accept" "auto"))
+      (error "--mode must be manual, plan, accept, or auto" cli-mode))
+    (setting-set! 'mode (string->symbol cli-mode)))
+  (when cli-model (model-select! cli-model))
+  (for-each (lambda (entry) (setting-set-json! (car entry) (cdr entry))) cli-settings)
+  (unless (null? cli-allow-runs)
+    ;; run-allow has a process default, so no generation is consulted.
+    (let ((current (setting-ref #f 'run-allow)))
+      (setting-set! 'run-allow
+                    (fold (lambda (prefix acc) (if (member prefix acc) acc (append acc (list prefix))))
+                          current cli-allow-runs))))
+  #t)
+
 (define (undo-last-turn! runtime)
   (let ((turns (if ledger (ledger-undoable-turns ledger) '())))
     (if (null? turns)
@@ -640,9 +702,11 @@
         (completion (assq-ref attributes 'llm.token_count.completion)))
     (when (number? prompt)
       (set! run-prompt-tokens (+ run-prompt-tokens prompt))
+      (set! turn-tokens (+ turn-tokens prompt))
       (set! run-usage-reported? #t))
     (when (number? completion)
       (set! run-completion-tokens (+ run-completion-tokens completion))
+      (set! turn-tokens (+ turn-tokens completion))
       (set! run-usage-reported? #t))))
 
 (define (show-close-message session)
@@ -1476,16 +1540,17 @@
         (thinking-started? #f)
         (content-started? #f))
     (define (on-thinking chunk)
-      (unless thinking-started?
-        (set! thinking-started? #t)
-        (display "thinking> "))
-      (display chunk)
-      (force-output))
+      (unless print-mode?
+        (unless thinking-started?
+          (set! thinking-started? #t)
+          (display "thinking> "))
+        (display chunk)
+        (force-output)))
     (define (on-content chunk)
       (unless content-started?
         (set! content-started? #t)
         (when thinking-started? (newline))
-        (display "assistant> "))
+        (unless print-mode? (display "assistant> ")))
       (display chunk)
       (force-output))
     (catch #t
@@ -1541,7 +1606,7 @@
                          (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
                   configured-tools))
          (max-rounds
-          (generation-ref generation 'agent-max-tool-rounds))
+          (setting-ref generation 'agent-max-tool-rounds))
          (stream? (setting-ref generation 'agent-stream?))
          (thinking (setting-ref generation 'agent-thinking))
          (keep-alive (setting-ref generation 'agent-keep-alive))
@@ -1622,9 +1687,9 @@
             (let ((reply (or (completion-content completion) "")))
               (record-output! runtime generation turn-count reply)
               (unless content-streamed?
-                (unless (string-null? (or (completion-thinking completion) ""))
+                (unless (or print-mode? (string-null? (or (completion-thinking completion) "")))
                   (format #t "thinking> ~a~%" (completion-thinking completion)))
-                (format #t "assistant> ~a~%" reply))
+                (format #t "~a~a~%" (if print-mode? "" "assistant> ") reply))
               ;; Drop the runtime-owned system prompt and this turn's selected
               ;; context while retaining the prior history and new turn tail.
               (list
@@ -1633,7 +1698,15 @@
                reply))
             (begin
               (when (>= round max-rounds)
+                (runtime-record! runtime 'turn-limit
+                                 `((reason . rounds) (rounds . ,max-rounds) (turn . ,turn-count)))
                 (error "tool round limit reached" max-rounds))
+              (let ((budget (setting-ref generation 'turn-token-budget)))
+                (when (and budget (> turn-tokens budget))
+                  (runtime-record! runtime 'turn-limit
+                                   `((reason . tokens) (budget . ,budget) (used . ,turn-tokens)
+                                     (turn . ,turn-count)))
+                  (error "turn token budget exceeded" turn-tokens budget)))
               (loop
                (execute-tool-calls
                 runtime tracer parent generation provider calls with-assistant
@@ -1737,6 +1810,7 @@
                   (lambda () (set! turn-active? #f) (set! turn-thread #f)))))))))
 
 (define (perform-turn! runtime tracer history line turn-count)
+  (set! turn-tokens 0)
   (let* ((generation (runtime-current runtime))
          (span
           (trace-start!
@@ -1869,12 +1943,17 @@
           (if mcp-stdio?
               ((builtin-ref 'mcp 'run-mcp-stdio) dispatch)
               (begin
-                (show-banner runtime watch? session)
-                (show-model (runtime-current runtime))
-                (when (and mcp-http? (builtin-enabled? 'mcp))
-                  (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
-                (force-output)
+                (unless print-mode?
+                  (show-banner runtime watch? session)
+                  (show-model (runtime-current runtime))
+                  (when (and mcp-http? (builtin-enabled? 'mcp))
+                    (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
+                  (force-output))
                 (when initial-prompt (with-mutex lock (process! initial-prompt)))
+                (if print-mode?
+                    ;; Exit status is the turn outcome: 0 completed, 1 failed
+                    ;; or cancelled. Harness errors exit 2 before this point.
+                    (if (string=? operation-status "ok") 0 1)
                 (let loop ()
                   (let ((line (read-user-line "shift> ")))
                     (cond
@@ -1885,7 +1964,7 @@
                                        (lambda () (process! line))
                                        (lambda () (unlock-mutex lock)))))
                          (unless (eq? action 'quit) (loop))))
-                      (else (display "Session busy with an MCP operation.\n") (loop))))))))
+                      (else (display "Session busy with an MCP operation.\n") (loop)))))))))
         (lambda () (stop-mcp!))))))
 
 (define (main args)
@@ -1895,6 +1974,10 @@
     (lambda (agent-path state-directory watch? requested-session-name session-mode
              list? initial-prompt fork-parent fork-child)
       (when mcp-stdio? (set! watch? #f))
+      (when print-mode?
+        (unless initial-prompt (error "--print needs a task"))
+        (set! watch? #f)
+        (set! mcp-http? #f))
       (when (and mcp-stdio? (not (builtin-enabled? 'mcp))) (error "MCP built-in is disabled"))
       (unless (and agent-path state-directory)
         (usage)
@@ -1955,6 +2038,8 @@
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
         (load-dotenv! (string-append (getcwd) "/.env"))
+        (unless (try-transition "startup options" apply-cli-overrides!)
+          (exit 2))
         (input-init! state-directory)
         (install-cancellation-handler!)
         (let ((checkpoint-history
@@ -1981,16 +2066,23 @@
                       (lambda ()
                         (checkpoint! checkpoint-history checkpoint-turn)))
                      (lambda () #t))))
-          (dynamic-wind
-            (lambda () #t)
-            (lambda ()
-              (when (recovery-read runtime-state-directory)
-                (display
-                 "\n! interrupted tool record found; use /recover before continuing.\n"))
-              (repl runtime tracer watch? session checkpoint! initial-prompt))
-            (lambda ()
-              (stop-watcher!)
-              (trace-close! tracer)
-              (unless (or mcp-stdio? control-port)
-                (show-close-message session))
-              (when session (close-session! session))))))))))
+          (let ((outcome
+                 (dynamic-wind
+                   (lambda () #t)
+                   (lambda ()
+                     (when (recovery-read runtime-state-directory)
+                       (display
+                        "\n! interrupted tool record found; use /recover before continuing.\n"
+                        (if print-mode? (current-error-port) (current-output-port))))
+                     (repl runtime tracer watch? session checkpoint! initial-prompt))
+                   (lambda ()
+                     (stop-watcher!)
+                     (trace-close! tracer)
+                     (unless (or mcp-stdio? control-port)
+                       (if print-mode?
+                           (with-output-to-port (current-error-port)
+                             (lambda () (show-close-message session)))
+                           (show-close-message session)))
+                     (when session (close-session! session))))))
+            (when print-mode?
+              (exit (if (integer? outcome) outcome 1))))))))))

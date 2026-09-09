@@ -1,6 +1,11 @@
 # RFC: a minimal evaluation set for Shift
 
-Status: draft, September 8, 2026. Nothing here is implemented.
+Status: accepted September 8, 2026 with the draft answers to the open
+questions: Sonnet 5 as the baseline and Haiku 4.5 for cheap regression runs,
+dogfood tasks against the current tree, and local `pytest` for the first
+SWE-bench run. Step one of the implementation order (print mode,
+`--allow-run`, the 64-round ceiling, and `turn-token-budget`) is implemented;
+later steps are not.
 
 ## Why now
 
