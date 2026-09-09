@@ -8,8 +8,9 @@
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
-and results.jsonl (one metrics record per instance, from Shift's own ledger
-and traces, never from the transcript).
+and results.jsonl (one metrics record per instance, from the receipt Shift
+writes with --receipt, never from the transcript). The receipts themselves are
+kept under receipts/.
 """
 
 import argparse
@@ -220,42 +221,21 @@ def model_patch(repo):
     return patch
 
 
-def collect(state):
-    """Metrics from Shift's traces and ledger for one session."""
-    metrics = {"rounds": 0, "tool_calls": collections.Counter(), "tokens": collections.Counter(),
+def collect(receipt_path):
+    """Per-instance metrics from the receipt Shift wrote with --receipt, so the
+    driver never reconstructs a turn from traces or the ledger."""
+    metrics = {"receipt_status": None, "receipt_error": None, "rounds": 0, "tool_calls": {}, "tokens": {},
                "files_changed": [], "runs": []}
-    traces = state / "traces.jsonl"
-    if traces.exists():
-        for line in traces.read_text().splitlines():
-            try:
-                span = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            attributes = span.get("attributes", {})
-            if span.get("kind") == "LLM":
-                metrics["rounds"] += 1
-                for key, name in (("llm.token_count.prompt", "prompt"), ("llm.token_count.prompt_cached", "cached"),
-                                  ("llm.token_count.prompt_uncached", "uncached"), ("llm.token_count.completion", "completion")):
-                    metrics["tokens"][name] += attributes.get(key, 0) or 0
-            elif span.get("kind") == "TOOL":
-                metrics["tool_calls"][span["name"].removeprefix("tool.")] += 1
-    ledger = state / "changes.jsonl"
-    files = set()
-    if ledger.exists():
-        for line in ledger.read_text().splitlines():
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("kind") == "change" and entry.get("state") == "committed":
-                files.add(entry["path"])
-            elif entry.get("kind") == "run":
-                metrics["runs"].append({"command": entry["invocation"]["input"]["command"][:4],
-                                        "exit_code": entry["outcome"]["exit_code"],
-                                        "status": entry.get("status")})
-    metrics["files_changed"] = sorted(files)
-    metrics["tool_calls"] = dict(metrics["tool_calls"])
-    metrics["tokens"] = dict(metrics["tokens"])
+    if not receipt_path.exists():
+        return metrics
+    receipt = json.loads(receipt_path.read_text())
+    metrics.update(
+        receipt_status=receipt["status"], receipt_error=receipt.get("error"), rounds=receipt["rounds"],
+        tool_calls=receipt["tool_calls"], tokens=receipt["tokens"],
+        files_changed=[change["path"] for change in receipt["changed"]],
+        runs=[{"command": run["command"][:4], "exit_code": run["exit_code"], "status": run["status"]}
+              for run in receipt["runs"]],
+    )
     return metrics
 
 
@@ -288,8 +268,11 @@ def run_instance(instance, args, run_dir):
         env["PATH"] = str(Path(agentkernel_binary()).parent) + ":" + env.get("PATH", "")
     prompt = PROMPT.format(repo=instance["repo"], base=instance["base_commit"][:12], venv=venv,
                            problem=instance["problem_statement"].strip())
+    (run_dir / "receipts").mkdir(exist_ok=True)
+    receipt_path = run_dir / "receipts" / f"{instance['instance_id']}.json"
     command = [str(ROOT / "bin/shift"), "--print", prompt, "--mode", "accept", "--model", args.model,
-               "--allow-run", f"{venv}/bin/python", *settings, "--session", "swe", "--no-watch", "--no-mcp"]
+               "--allow-run", f"{venv}/bin/python", *settings, "--session", "swe", "--no-watch", "--no-mcp",
+               "--receipt", str(receipt_path)]
     log(f"running {instance['instance_id']} ({instance.get('difficulty', '?')}, {args.backend})")
     try:
         result = subprocess.run(command, cwd=repo, text=True, capture_output=True, timeout=args.timeout,
@@ -307,7 +290,7 @@ def run_instance(instance, args, run_dir):
         "editable_install": installed, "patch_bytes": len(patch.encode()),
         "failure_class": classify(exit_code, stderr, patch),
         "answer_tail": stdout[-600:], "stderr_tail": stderr[-600:],
-        **collect(repo / ".shift" / "sessions" / "swe"),
+        **collect(receipt_path),
     }
     (run_dir / "patches").mkdir(exist_ok=True)
     (run_dir / "patches" / f"{instance['instance_id']}.diff").write_text(patch)

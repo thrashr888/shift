@@ -411,6 +411,74 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual((self.project / "notes.txt").read_text(), "alpha port 8080\n")
         self.assertIn("tool-arguments-invalid", (self.state("p") / "events.scm-log").read_text())
 
+    def receipts(self, session="p"):
+        path = self.state(session) / "receipts.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def turn_span(self, session="p"):
+        for line in (self.state(session) / "traces.jsonl").read_text().splitlines():
+            span = json.loads(line)
+            if span["name"] == "agent.turn":
+                return span
+        self.fail("no agent.turn span")
+
+    def test_receipt_reports_the_turn_in_every_form(self):
+        cached = {"prompt_tokens": 1200, "completion_tokens": 30, "prompt_tokens_details": {"cached_tokens": 1000}}
+        plan = [tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"}, usage=cached),
+                tool_call("run", {"argv": ["sh", "-c", "echo ran; exit 3"]}, usage={"prompt_tokens": 1500, "completion_tokens": 20}),
+                answer("done", usage={"prompt_tokens": 1600, "completion_tokens": 5})]
+        receipt_file = self.project / "receipt.json"
+        code, out, err = self.print_mode("edit and run", plan, "--mode", "accept", "--allow-run", "sh -c",
+                                         "--receipt", str(receipt_file))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "done\n", "the receipt must not touch stdout")
+        self.assertIn("turn 1 · fake · generation 1 · 3 rounds · 4,300 in (1,000 cached) + 55 out", err)
+        self.assertIn("changed  notes.txt (+1 −1)", err)
+        self.assertIn("ran      sh -c echo ran; exit 3  exit 3", err)
+        self.assertIn("undo     available (/undo)", err)
+        self.assertIn("resume ./bin/shift --resume p", err)
+        (receipt,) = self.receipts()
+        self.assertEqual(json.loads(receipt_file.read_text()), receipt)
+        self.assertEqual(receipt["status"], "ok")
+        self.assertEqual(receipt["tokens"], {"prompt": 4300, "cached": 1000, "uncached": 3300, "completion": 55})
+        self.assertEqual(receipt["tool_calls"], {"edit": 1, "run": 1})
+        self.assertEqual([c["path"] for c in receipt["changed"]], ["notes.txt"])
+        self.assertEqual((receipt["changed"][0]["added"], receipt["changed"][0]["removed"]), (1, 1))
+        self.assertEqual(receipt["changed"][0]["after"], sha256("alpha port 9443\n"))
+        self.assertEqual(receipt["runs"][0]["command"], ["sh", "-c", "echo ran; exit 3"])
+        self.assertEqual((receipt["runs"][0]["exit_code"], receipt["runs"][0]["success"]), (3, False))
+        self.assertTrue(receipt["undo"])
+        span = self.turn_span()
+        self.assertEqual(receipt["trace_id"], span["trace_id"])
+        self.assertEqual(receipt["span_id"], span["span_id"])
+        self.assertEqual(span["attributes"]["receipt.files"], "notes.txt")
+        self.assertEqual(span["attributes"]["receipt.runs_failed"], 1)
+        self.assertEqual(span["attributes"]["receipt.tokens.cached"], 1000)
+        out = self.shift("/receipt\n/quit\n", [], session="p")
+        self.assertIn("turn 1 · fake · generation 1 · 3 rounds", out, "/receipt reads the last record of a resumed session")
+        self.assertIn("changed  notes.txt (+1 −1)", out)
+
+    def test_failed_and_cancelled_turns_still_get_a_receipt(self):
+        read = tool_call("read", {"path": "notes.txt"})
+        code, out, err = self.print_mode("loop", [self.edit_notes, read, read, answer("never")],
+                                         "--mode", "accept", "--set", "agent-max-tool-rounds=2")
+        self.assertEqual(code, 1)
+        self.assertIn("status   failed · tool round limit reached", err)
+        self.assertIn("changed  notes.txt (+1 −1)", err)
+        (receipt,) = self.receipts()
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("round limit", receipt["error"])
+        self.assertEqual(receipt["tool_calls"], {"edit": 1, "read": 1})
+        self.assertTrue(receipt["undo"], "changes a failed turn committed stay undoable")
+        self.assertEqual(self.turn_span()["attributes"]["receipt.status"], "failed")
+        code, out, err = self.print_mode("no turn", [answer("x")], "--receipt", str(self.project / "missing" / "r.json"),
+                                         session="unwritable")
+        self.assertEqual(code, 0, "a receipt that cannot be written never fails the turn")
+        self.assertIn("receipt not written", err)
+        self.assertEqual(len(self.receipts("unwritable")), 1)
+
     def test_model_flag_selects_a_provider(self):
         code, out, err = self.print_mode("hi", [answer("x")], "--model", "openai/gpt-5.4-mini")
         settings = json.loads((self.state("p") / "settings.json").read_text())

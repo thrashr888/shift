@@ -7,7 +7,8 @@ ledger, the prepare/commit split with diff previews for `write` and `edit`, the
 all-or-nothing multi-file commit, and `run` with timeouts, logs, the
 allowlist, `TRACEPARENT`, and the agentkernel backend seam. From steps five
 and six, `/undo`, `/recover restore`, the Python workflow suite, and the
-documentation refresh are implemented. The end-of-turn receipt is not.
+documentation refresh are implemented. The end-of-turn receipt landed on
+September 9, 2026, with the JSON form the evals RFC asked for.
 
 ## Summary
 
@@ -279,21 +280,48 @@ exact on the leading elements; `["cargo","test"]` does not allow
 
 ### 9. Receipt
 
-After every completed turn, and on `/receipt`, the REPL prints:
+After every turn, and on `/receipt`, the REPL prints:
 
 ```
-turn 12 · claude-sonnet-5 · generation 3 · 2,445 in + 611 out
-changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0)
+turn 12 · claude-sonnet-5 · generation 3 · 4 rounds · 2,445 in (1,900 cached) + 611 out · 6.1s
+changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
 ran      cargo test -- session  exit 0  4.8s
 undo     available (/undo)
-trace    3f9a… span 8c21…   resume ./bin/shift --resume dogfood
+trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift --resume dogfood
 ```
 
-The receipt is also appended to `receipts.jsonl` and attached to the
-`agent.turn` span as `receipt.*` attributes, so `/traces` and the MCP
-`shift_prompt` result carry the same facts an external supervisor used to
-reconstruct from shell output. A cancelled or failed turn prints a receipt
-with its status and whatever mutations committed before the interruption.
+The receipt is a projection, not a store: the changed files and their
+diffstats come from the ledger's committed entries and stored images for
+that turn, the `ran` lines from the ledger's run records, the tokens and
+rounds from the turn's provider usage, and the identities from the
+`agent.turn` span and the session. The same record is appended as one JSON
+line to the session's `receipts.jsonl`, attached to the `agent.turn` span as
+`receipt.*` attributes (status, rounds, token counts, tool call count,
+changed file count and names, run and failed-run counts, undo), written
+whole to `--receipt FILE` in print mode, and carried by the MCP
+`shift_prompt` output because it is part of the turn's printed text;
+`shift_inspect` accepts `/receipt`. A cancelled or failed turn gets a receipt
+with a `status` line and reason and whatever mutations committed before the
+interruption, so `undo` is reported for them too. A receipt that cannot be
+written is reported on stderr and never fails the turn.
+
+The JSON form:
+
+```json
+{"turn": 12, "at": "2026-09-09T20:39:24Z", "status": "ok", "error": null,
+ "model": "claude-sonnet-5", "provider": "claude", "generation": 3, "duration_ms": 6100,
+ "rounds": 4, "tokens": {"prompt": 2445, "cached": 1900, "uncached": 545, "completion": 611},
+ "tool_calls": {"read": 2, "edit": 1, "run": 1},
+ "changed": [{"path": "src/app.rs", "added": 14, "removed": 3, "created": false, "deleted": false,
+              "before": "<sha256>", "after": "<sha256>"}],
+ "runs": [{"command": ["cargo", "test", "--", "session"], "mode": "local", "exit_code": 0,
+           "success": true, "status": "exit", "duration_ms": 4800, "log": "runs/run-12-1.log"}],
+ "undo": true, "trace_id": "…", "span_id": "…",
+ "session": "dogfood", "session_id": "…", "resume": "./bin/shift --resume dogfood"}
+```
+
+Run entries use the agentkernel receipt vocabulary (`exit_code`, `success`,
+`mode`) so a signed sandbox receipt can be attached beside them later.
 
 ### 10. Interrupted mutation recovery
 

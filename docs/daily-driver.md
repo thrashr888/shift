@@ -115,8 +115,26 @@ time, and a system message tells the model what was reverted. `/undo` never touc
 git. After a crash or cancellation mid-mutation, `/recover` lists the in-flight
 files with their recorded and current hashes, and `/recover restore` puts back any
 file that carries the interrupted post-image, leaves untouched files alone, and
-keeps the record when a file matches neither. Receipts are described in
-[the coding workflow RFC](coding-workflow-rfc.md) and are not implemented yet.
+keeps the record when a file matches neither.
+
+Every turn ends with a receipt, and `/receipt` reprints the last one (for a
+resumed session, from its `receipts.jsonl`):
+
+```
+turn 3 · claude-sonnet-5 · generation 1 · 4 rounds · 2,445 in (1,900 cached) + 611 out · 6.1s
+changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
+ran      cargo test -- session  exit 0  4.8s
+undo     available (/undo)
+trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift --resume dogfood
+```
+
+The files and diffstats come from the ledger, the `ran` lines from its run
+records, the tokens and rounds from the turn's provider usage. Failed and
+cancelled turns get a `status` line with the reason and still list whatever
+committed before the interruption. The same record is appended as JSON to the
+session's `receipts.jsonl` and attached to the `agent.turn` span as `receipt.*`
+attributes, so `/traces` shows it too. The JSON shape is in
+[the coding workflow RFC](coding-workflow-rfc.md#9-receipt).
 
 `run` executes one program from an `argv` list with no shell, an optional
 project-relative `cwd`, and a `timeout_seconds` up to 600 (default 120). stdout and
@@ -170,8 +188,10 @@ is refreshed after a pull without any notes about stale modules.
 
 `--print TASK` (or `-p`) runs one task with no prompt loop and no stdin: the
 banner, thinking, and `assistant>` prefix are omitted so stdout is the answer
-alone, the usual close message goes to stderr, and the exit status is 0 for a
-completed turn, 1 for a failed or cancelled one, and 2 for a startup error. It
+alone, the receipt and the usual close message go to stderr, and the exit
+status is 0 for a completed turn, 1 for a failed or cancelled one, and 2 for a
+startup error. `--receipt FILE` writes the turn's receipt as one JSON object
+to FILE, which is how the eval driver reads a task's outcome. It
 implies `--no-watch` and starts no MCP endpoint. Approval prompts cannot be
 answered, so anything that would ask is denied; use `--mode accept` for edits and
 `--allow-run "ARGV PREFIX"` (repeatable) for the commands the task may run. These

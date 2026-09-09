@@ -22,6 +22,7 @@
   #:use-module (live-agent generation)
   #:use-module (live-agent provider)
   #:use-module (live-agent prompt)
+  #:use-module (live-agent receipt)
   #:use-module (live-agent recovery)
   #:use-module (live-agent runtime)
   #:use-module (live-agent session)
@@ -92,7 +93,32 @@
 (define cli-model #f)
 (define cli-allow-runs '())
 (define cli-settings '())
+(define cli-receipt-path #f)
 (define turn-tokens 0)
+;; Per-turn facts the receipt reports: provider usage, model rounds, and tool
+;; calls by name. Reset when a turn starts.
+(define turn-prompt-tokens 0)
+(define turn-cached-tokens 0)
+(define turn-uncached-tokens 0)
+(define turn-completion-tokens 0)
+(define turn-rounds 0)
+(define turn-tool-calls '())
+(define last-receipt #f)
+
+(define (reset-turn-usage!)
+  (set! turn-tokens 0)
+  (set! turn-prompt-tokens 0)
+  (set! turn-cached-tokens 0)
+  (set! turn-uncached-tokens 0)
+  (set! turn-completion-tokens 0)
+  (set! turn-rounds 0)
+  (set! turn-tool-calls '()))
+
+(define (count-turn-tool-call! name)
+  (let ((current (or (assoc-ref turn-tool-calls name) 0)))
+    (set! turn-tool-calls
+          (append (filter (lambda (entry) (not (string=? (car entry) name))) turn-tool-calls)
+                  (list (cons name (+ current 1)))))))
 
 (define (usage)
   (display
@@ -100,7 +126,7 @@
     "Usage: shift [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
     "                  [--session NAME|--new-session NAME|--resume NAME] [PROMPT]\n"
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
-    "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]...\n"
+    "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift --list-sessions [--state-dir PATH]\n"
     "       shift session-fork PARENT CHILD\n")))
 
@@ -170,6 +196,10 @@
         (set! cli-allow-runs (append cli-allow-runs (list prefix))))
       (loop (cddr rest) agent state-dir watch? session-name session-mode list?
             initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--receipt"))
+      (set! cli-receipt-path (cadr rest))
+      (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
      ((and (pair? (cdr rest)) (string=? (car rest) "--set"))
       (let ((equals (string-index (cadr rest) #\=)))
         (unless (and equals (> equals 0))
@@ -228,6 +258,7 @@
     "  /recover restore  put interrupted file mutations back to their pre-images\n"
     "  /recover discard  discard the recorded tool call\n"
     "  /undo             revert the last turn's file changes if they still match\n"
+    "  /receipt          show the last turn's receipt: files, runs, tokens, trace, resume\n"
     "  /tools [on|off]   show the enabled tools, or toggle echoing each tool call\n"
     "  /session          show the durable session identity and checkpoint\n"
     "  /reset            clear conversation state\n"
@@ -721,10 +752,16 @@
         (completion (assq-ref attributes 'llm.token_count.completion)))
     (when (number? prompt)
       (set! run-prompt-tokens (+ run-prompt-tokens prompt))
+      (set! turn-prompt-tokens (+ turn-prompt-tokens prompt))
       (set! turn-tokens (+ turn-tokens (if (number? uncached) uncached prompt)))
+      (set! turn-uncached-tokens (+ turn-uncached-tokens (if (number? uncached) uncached prompt)))
       (set! run-usage-reported? #t))
+    (let ((cached (assq-ref attributes 'llm.token_count.prompt_cached)))
+      (when (number? cached)
+        (set! turn-cached-tokens (+ turn-cached-tokens cached))))
     (when (number? completion)
       (set! run-completion-tokens (+ run-completion-tokens completion))
+      (set! turn-completion-tokens (+ turn-completion-tokens completion))
       (set! turn-tokens (+ turn-tokens completion))
       (set! run-usage-reported? #t))))
 
@@ -854,6 +891,7 @@
    ((string=? line "/recover retry") 'recover-retry)
    ((string=? line "/recover restore") 'recover-restore)
    ((string=? line "/undo") 'undo)
+   ((string=? line "/receipt") (show-receipt tracer) 'continue)
    ((or (string=? line "/tools") (string-prefix? "/tools " line))
     (try-transition "tool echo" (lambda () (handle-tools-command runtime line)))
     'continue)
@@ -1496,6 +1534,7 @@
              (tool . ,name)
              (arguments . ,(json-write (tool-call-arguments call)))))
           (echo-tool-call! generation name (tool-call-arguments call))
+          (count-turn-tool-call! name)
           (let* ((span
                   (trace-start!
                    tracer (string-append "tool." name) "TOOL"
@@ -1645,6 +1684,7 @@
                     (apply json-object (acons "service_tier" (json-object-ref raw "service_tier") (json-object-entries value))) value))))
           (let ((attributes (usage-attributes completion)))
             (record-run-usage! attributes)
+            (set! turn-rounds (+ turn-rounds 1))
             (trace-end!
              span "OK"
              (append
@@ -1880,15 +1920,81 @@
                         history)))
                   (lambda () (set! turn-active? #f) (set! turn-thread #f)))))))))
 
+;; The receipt is a projection of what the turn left behind: the ledger's
+;; committed changes and run records for this turn, the usage counters, and
+;; the span identities. It exists for completed, failed, and cancelled turns.
+(define (build-turn-receipt tracer generation turn started status error span)
+  (build-receipt
+   #:turn turn #:status status #:error error
+   #:model (setting-ref generation 'agent-model)
+   #:provider (symbol->string (setting-ref generation 'agent-provider))
+   #:generation (generation-id generation)
+   #:duration-ms (inexact->exact
+                  (round (* 1000 (/ (- (get-internal-real-time) started)
+                                    internal-time-units-per-second))))
+   #:usage `((prompt . ,turn-prompt-tokens) (cached . ,turn-cached-tokens)
+             (uncached . ,turn-uncached-tokens) (completion . ,turn-completion-tokens)
+             (rounds . ,turn-rounds))
+   #:tool-calls turn-tool-calls
+   #:ledger ledger
+   #:trace-id (trace-trace-id span) #:span-id (trace-span-id span)
+   #:session-name (tracer-session-name tracer)
+   #:session-id (and (tracer-session-name tracer) (tracer-session-id tracer))))
+
+(define (receipts-path tracer)
+  (string-append (runtime-state-directory tracer) "/receipts.jsonl"))
+
+;; Text to the terminal (stderr in print mode, so stdout stays the answer),
+;; a JSON line in the session's receipts.jsonl, and the whole record to
+;; --receipt FILE. A receipt that cannot be written never fails the turn.
+(define (deliver-receipt! tracer receipt)
+  (set! last-receipt receipt)
+  (let ((port (if print-mode? (current-error-port) (current-output-port))))
+    (display (receipt->text receipt) port)
+    (force-output port))
+  (catch #t
+    (lambda ()
+      (receipt-append! (receipts-path tracer) receipt)
+      (when cli-receipt-path (receipt-write! cli-receipt-path receipt)))
+    (lambda (key . arguments)
+      (format (current-error-port) "receipt not written: ~a~%"
+              (caught-error-detail key arguments)))))
+
+;; The last receipt of a resumed session comes from its receipts.jsonl.
+(define (last-recorded-receipt tracer)
+  (let ((path (receipts-path tracer)))
+    (and (file-exists? path)
+         (let ((lines (filter (lambda (line) (not (string-null? (string-trim-both line))))
+                              (string-split (call-with-input-file path get-string-all) #\newline))))
+           (and (pair? lines)
+                (catch #t
+                  (lambda () (receipt-from-json (json-read (last lines))))
+                  (lambda _ #f)))))))
+
+(define (show-receipt tracer)
+  (let ((receipt (or last-receipt (last-recorded-receipt tracer))))
+    (if receipt
+        (display (receipt->text receipt))
+        (display "No turn has completed in this session yet.\n"))))
+
 (define (perform-turn! runtime tracer history line turn-count)
-  (set! turn-tokens 0)
+  (reset-turn-usage!)
   (let* ((generation (runtime-current runtime))
+         (started (get-internal-real-time))
          (span
           (trace-start!
            tracer "agent.turn" "AGENT"
            `((generation.id . ,(generation-id generation))
              (turn.number . ,turn-count)
              (input.value . ,line)))))
+    (define (finish! status error attributes)
+      (let ((receipt (build-turn-receipt tracer generation turn-count started status error span)))
+        (trace-end! span
+                    (cond ((string=? status "ok") "OK")
+                          ((string=? status "cancelled") "CANCELLED")
+                          (else "ERROR"))
+                    (append attributes (receipt-attributes receipt)))
+        (deliver-receipt! tracer receipt)))
     (set! operation-span (trace-span-id span))
     (record-input! runtime generation turn-count line)
     (dynamic-wind
@@ -1901,24 +2007,25 @@
                        (demo-turn! runtime generation history line turn-count)
                        (provider-turn!
                         runtime tracer span generation history line turn-count))))
-              (trace-end! span "OK" `((output.value . ,(cadr new-history))))
+              (finish! "ok" #f `((output.value . ,(cadr new-history))))
               (list 'ok (car new-history))))
           (lambda (key . arguments)
             (if (cancelled? key)
                 (begin
-                  (trace-end! span "CANCELLED"
-                              '((error.message . "cancelled by user")))
                   (runtime-record!
                    runtime 'turn-cancelled
                    `((generation . ,(generation-id generation))
                      (turn . ,turn-count)))
                   (set! operation-status "cancelled")
                   (display "turn cancelled; conversation state is unchanged.\n")
+                  (finish! "cancelled" "cancelled by user"
+                           '((error.message . "cancelled by user")))
                   #f)
                 (let ((detail (format #f "~s: ~s" key arguments)))
                   (operation-failed! detail)
-                  (trace-end! span "ERROR" `((error.message . ,detail)))
                   (format (current-error-port) "turn failed: ~a~%" detail)
+                  (finish! "failed" (caught-error-detail key arguments)
+                           `((error.message . ,detail)))
                   #f)))))
       (lambda () (set! turn-active? #f) (set! turn-thread #f)))))
 
@@ -1989,7 +2096,7 @@
             (when (and (eq? method 'prompt) (string-prefix? "/" argument))
               (error "shift_prompt accepts prompts; use shift_inspect for read-only commands"))
             (when (and (eq? method 'inspect)
-                       (not (or (member argument '("/show" "/settings" "/context" "/session" "/generations" "/traces" "/extensions"))
+                       (not (or (member argument '("/show" "/settings" "/context" "/session" "/generations" "/traces" "/extensions" "/receipt"))
                                 (string-prefix? "/trace " argument) (string-prefix? "/traces " argument))))
               (error "command is not read-only; change settings in the terminal"))
             (unless (try-mutex lock) (error "session busy; retry after the active operation finishes"))

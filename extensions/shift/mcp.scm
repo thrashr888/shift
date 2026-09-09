@@ -20,7 +20,7 @@
     (tool "shift_status" "Inspect this live Shift process, project, model, settings and session." (json-object) (json-array))
     (tool "shift_prompt" "Submit a prompt to the live session. Uses the session's tool approval policy; busy sessions reject concurrent turns."
       (json-object (cons "text" (json-object (cons "type" "string")))) (json-array "text"))
-    (tool "shift_inspect" "Inspect live state using /show, /settings, /context, /session, /generations, /traces or /trace ID."
+    (tool "shift_inspect" "Inspect live state using /show, /settings, /context, /session, /generations, /receipt, /traces or /trace ID."
       (json-object (cons "command" (json-object (cons "type" "string")))) (json-array "command"))))
 (define (mcp-dispatch request dispatch)
   (let ((id (json-object-ref request "id" #f))
