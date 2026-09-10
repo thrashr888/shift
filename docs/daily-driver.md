@@ -200,9 +200,13 @@ flags seed the session's settings exactly as `/mode`, `/run allow`, `/model`, an
 
 Every tool call is echoed as `tool> NAME SUMMARY` followed by a `✓` or `✗` line
 with the first line of its result, so a session shows what the model did even
-when nothing needed approval. In print mode the echo goes to stderr. `/tools`
-shows the enabled tools and the echo state, `/tools off` and `/tools on` toggle
-it, and `--set show-tools=false` does the same for an unattended run.
+when nothing needed approval. In print mode the echo goes to stderr. One
+setting, `show-work`, covers everything Shift prints about its own work between
+the prompt and the answer: the tool echo and the receipt text. `/work off` and
+`/work on` toggle it, `/tools` lists the enabled tools with its state, and
+`--set show-work=false` does the same for an unattended run. Receipts are
+still recorded in `receipts.jsonl` and to `--receipt FILE` either way, and
+`/receipt` shows the last one on request.
 
 Two turn limits exist. `agent-max-tool-rounds` now goes up to 64 and can be set
 per session. `turn-token-budget` caps the uncached prompt tokens plus completion tokens one

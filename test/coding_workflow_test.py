@@ -377,7 +377,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("(reason . tokens)", journal)
         self.assertEqual(self.checkpoint("b")["history"], [])
 
-    def test_tool_echo_is_a_setting(self):
+    def test_show_work_covers_tool_echo_and_the_receipt(self):
         plan = [tool_call("read", {"path": "notes.txt"}), answer("seen")]
         code, out, err = self.print_mode("look", plan, "--mode", "accept")
         self.assertEqual(code, 0, err)
@@ -388,14 +388,21 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(out, "seen\n", "manual mode must deny without prompting in print mode")
         self.assertNotIn("Approve", out + err)
         self.assertIn("✗ tool unavailable in this turn: read", err)
-        code, out, err = self.print_mode("look", plan, "--mode", "accept", "--set", "show-tools=false", session="quiet")
+        self.assertIn("turn 1 · fake · generation 1", err)
+        code, out, err = self.print_mode("look", plan, "--mode", "accept", "--set", "show-work=false",
+                                         "--receipt", str(self.project / "quiet.json"), session="quiet")
         self.assertEqual(out, "seen\n")
         self.assertNotIn("tool>", err)
-        out = self.shift("/tools off\n/tools\nlook\n/quit\n", plan, session="repl")
-        self.assertIn("tool echo off · tools read rg", out)
+        self.assertNotIn("turn 1 ·", err, "show-work off hides the receipt text too")
+        self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
+        self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
+        out = self.shift("/mode accept\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
+        self.assertIn("tools read rg write edit apply_patch status diff run · show-work off", out)
         self.assertNotIn("tool>", out)
-        out = self.shift("/tools on\nlook\n/quit\n", plan, session="repl")
+        self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
+        out = self.shift("/work on\nlook\n/quit\n", plan, session="repl")
         self.assertIn("tool> read notes.txt", out)
+        self.assertIn("turn 2 · fake · generation 1", out)
 
     def test_malformed_tool_arguments_fail_the_call_not_the_turn(self):
         call = {"index": 0, "id": "call_bad", "type": "function",

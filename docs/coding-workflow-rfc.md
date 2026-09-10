@@ -303,7 +303,9 @@ whole to `--receipt FILE` in print mode, and carried by the MCP
 `shift_inspect` accepts `/receipt`. A cancelled or failed turn gets a receipt
 with a `status` line and reason and whatever mutations committed before the
 interruption, so `undo` is reported for them too. A receipt that cannot be
-written is reported on stderr and never fails the turn.
+written is reported on stderr and never fails the turn. The `show-work`
+setting (`/work on|off`) hides the printed text along with the tool echo;
+the JSON forms are always written.
 
 The JSON form:
 

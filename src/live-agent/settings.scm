@@ -17,7 +17,7 @@
 (define defaults '((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
                    (run-allow . ()) (run-backend . local) (run-sandbox . #f)
-                   (turn-token-budget . #f) (show-tools . #t)))
+                   (turn-token-budget . #f) (show-work . #t)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
                   agent-stream? agent-thinking agent-keep-alive agent-max-tool-rounds))
 (define (valid? key value)
@@ -29,7 +29,8 @@
     ((agent-provider) (memq value '(ollama openai claude)))
     ((agent-model agent-base-url) (and (string? value) (not (string-null? value))))
     ((agent-api-key-environment) (or (not value) (string? value)))
-    ((agent-stream? fast show-tools) (boolean? value))
+    ;; show-work covers the per-call tool echo and the end-of-turn receipt text.
+    ((agent-stream? fast show-work) (boolean? value))
     ((agent-thinking) (or (boolean? value) (memq value '(low medium high))))
     ((agent-keep-alive) (or (string? value) (number? value)))
     ((mode) (memq value '(manual plan accept auto)))
@@ -73,6 +74,8 @@
       (lambda ()
         (unless (port-closed? port) (close-port port))
         (when (file-exists? temporary) (delete-file temporary))))))
+;; Keys that were renamed; files written by earlier builds still load.
+(define (rename key) (if (eq? key 'show-tools) 'show-work key))
 (define (load-settings! path source)
   (when (file-exists? path)
     (when (> (stat:size (stat path)) 32768) (error "settings file too large" path))
@@ -80,7 +83,7 @@
       (unless (json-object? value) (error "settings must be an object" path))
       (for-each
        (lambda (entry)
-         (let* ((key (string->symbol (car entry))) (value (decode key (cdr entry))))
+         (let* ((key (rename (string->symbol (car entry)))) (value (decode key (cdr entry))))
            (unless (valid? key value) (error "invalid setting" path key))
            (set! preferences (acons key value (assq-delete-all key preferences)))
            (set! sources (acons key source (assq-delete-all key sources)))))

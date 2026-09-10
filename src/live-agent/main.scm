@@ -259,7 +259,8 @@
     "  /recover discard  discard the recorded tool call\n"
     "  /undo             revert the last turn's file changes if they still match\n"
     "  /receipt          show the last turn's receipt: files, runs, tokens, trace, resume\n"
-    "  /tools [on|off]   show the enabled tools, or toggle echoing each tool call\n"
+    "  /tools            show the enabled tools\n"
+    "  /work [on|off]    show or toggle the work display: tool echo and the receipt\n"
     "  /session          show the durable session identity and checkpoint\n"
     "  /reset            clear conversation state\n"
     "  /help             show this help\n"
@@ -613,17 +614,26 @@
   #t)
 
 (define (handle-tools-command runtime line)
+  (let ((generation (runtime-current runtime)))
+    (unless (string=? line "/tools") (error "use /tools to list tools, or /work on|off for the work display"))
+    (format #t "tools ~a · show-work ~a~%"
+            (string-join (map tool-name (generation-ref generation 'agent-tools)) " ")
+            (if (setting-ref generation 'show-work) "on" "off"))
+    #t))
+
+;; One switch for everything Shift prints about its own work between the
+;; prompt and the answer: the tool echo and the receipt. Off leaves stdout
+;; with the answer alone; receipts.jsonl and --receipt FILE are still written.
+(define (handle-work-command runtime line)
   (let* ((generation (runtime-current runtime))
          (parts (cdr (string-tokenize line))))
     (cond
      ((null? parts)
-      (format #t "tool echo ~a · tools ~a~%"
-              (if (setting-ref generation 'show-tools) "on" "off")
-              (string-join (map tool-name (generation-ref generation 'agent-tools)) " ")))
+      (format #t "show-work ~a~%" (if (setting-ref generation 'show-work) "on" "off")))
      ((member (car parts) '("on" "off"))
-      (setting-set! 'show-tools (string=? (car parts) "on"))
-      (format #t "tool echo ~a~%" (car parts)))
-     (else (error "use /tools, /tools on, or /tools off")))
+      (setting-set! 'show-work (string=? (car parts) "on"))
+      (format #t "show-work ~a~%" (car parts)))
+     (else (error "use /work, /work on, or /work off")))
     #t))
 
 (define (undo-last-turn! runtime)
@@ -893,7 +903,10 @@
    ((string=? line "/undo") 'undo)
    ((string=? line "/receipt") (show-receipt tracer) 'continue)
    ((or (string=? line "/tools") (string-prefix? "/tools " line))
-    (try-transition "tool echo" (lambda () (handle-tools-command runtime line)))
+    (try-transition "tools" (lambda () (handle-tools-command runtime line)))
+    'continue)
+   ((or (string=? line "/work") (string-prefix? "/work " line))
+    (try-transition "work display" (lambda () (handle-work-command runtime line)))
     'continue)
    ((string=? line "/recover discard")
     (recovery-clear! (runtime-state-directory tracer))
@@ -1511,12 +1524,12 @@
   (if print-mode? (current-error-port) (current-output-port)))
 
 (define (echo-tool-call! generation name arguments)
-  (when (setting-ref generation 'show-tools)
+  (when (setting-ref generation 'show-work)
     (format (tool-echo-port) "tool> ~a ~a~%" name (clip (tool-call-summary name arguments) 120))
     (force-output (tool-echo-port))))
 
 (define (echo-tool-result! generation ok? output)
-  (when (setting-ref generation 'show-tools)
+  (when (setting-ref generation 'show-work)
     (format (tool-echo-port) "      ~a ~a~%" (if ok? "✓" "✗") (clip output 120))
     (force-output (tool-echo-port))))
 
@@ -1947,11 +1960,12 @@
 ;; Text to the terminal (stderr in print mode, so stdout stays the answer),
 ;; a JSON line in the session's receipts.jsonl, and the whole record to
 ;; --receipt FILE. A receipt that cannot be written never fails the turn.
-(define (deliver-receipt! tracer receipt)
+(define (deliver-receipt! runtime tracer receipt)
   (set! last-receipt receipt)
-  (let ((port (if print-mode? (current-error-port) (current-output-port))))
-    (display (receipt->text receipt) port)
-    (force-output port))
+  (when (setting-ref (runtime-current runtime) 'show-work)
+    (let ((port (if print-mode? (current-error-port) (current-output-port))))
+      (display (receipt->text receipt) port)
+      (force-output port)))
   (catch #t
     (lambda ()
       (receipt-append! (receipts-path tracer) receipt)
@@ -1994,7 +2008,7 @@
                           ((string=? status "cancelled") "CANCELLED")
                           (else "ERROR"))
                     (append attributes (receipt-attributes receipt)))
-        (deliver-receipt! tracer receipt)))
+        (deliver-receipt! runtime tracer receipt)))
     (set! operation-span (trace-span-id span))
     (record-input! runtime generation turn-count line)
     (dynamic-wind
