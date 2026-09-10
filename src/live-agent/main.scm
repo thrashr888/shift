@@ -1697,7 +1697,8 @@
         (let ((completion
                (parameterize ((current-retry-observer on-retry)
                               (provider-retry-limit
-                               (setting-ref generation 'provider-retries)))
+                               (setting-ref generation 'provider-retries))
+                              (provider-context-limit (model-context-limit generation)))
                  (provider-complete
                   provider model base-url api-key messages enabled-tools
                   stream? thinking keep-alive prompt-cache-key

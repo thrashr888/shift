@@ -1,6 +1,6 @@
 (use-modules (srfi srfi-64) (srfi srfi-1)
              (live-agent json) (live-agent provider) (live-agent transcript)
-             (live-agent policy) (live-agent context) (live-agent trace) (shift claude) (shift openai))
+             (live-agent policy) (live-agent context) (live-agent trace) (shift claude) (shift openai) (shift ollama))
 (test-begin "daily driver")
 (for-each
  (lambda (name)
@@ -112,4 +112,10 @@
 (test-equal "OpenAI fast service is separate from effort" "fast" (json-object-ref fast-openai "service_tier"))
 (test-equal "OpenAI effort parameter" "high" (json-object-ref fast-openai "reasoning_effort"))
 (test-equal "output reservation reaches OpenAI" 2048 (json-object-ref fast-openai "max_completion_tokens"))
+(define plain-ollama (make-ollama-request "qwen" (list (make-message "user" "hi")) '() #t #f "10m"))
+(test-assert "Ollama gets no options without a known context limit"
+  (not (json-object-ref plain-ollama "options" #f)))
+(test-equal "Ollama num_ctx follows the runtime's context limit" 131072
+  (parameterize ((provider-context-limit 131072))
+    (json-object-ref (json-object-ref (make-ollama-request "qwen" (list (make-message "user" "hi")) '() #t #f "10m") "options") "num_ctx")))
 (test-end "daily driver")

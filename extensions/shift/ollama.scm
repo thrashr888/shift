@@ -53,7 +53,12 @@
                       thinking)))
            (if (null? tool-values)
                '()
-               (list (cons "tools" (apply json-array tool-values)))))))
+               (list (cons "tools" (apply json-array tool-values))))
+           ;; Ollama truncates the prompt to num_ctx without saying so; the
+           ;; window the runtime budgets for is the window the server gets.
+           (if (number? (provider-context-limit))
+               (list (cons "options" (json-object (cons "num_ctx" (provider-context-limit)))))
+               '()))))
     (apply json-object fields)))
 
 (define (parse-ollama-response text)

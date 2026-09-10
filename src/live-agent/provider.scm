@@ -4,6 +4,7 @@
   #:use-module (live-agent builtins)
   #:use-module (live-agent json)
   #:export (provider-retry-limit
+            provider-context-limit
             current-retry-observer
             retryable-status?
             tool-call?
@@ -52,6 +53,11 @@
 ;; Called as (observer attempt reason delay-ms) before each pause; reason is
 ;; an HTTP status or a curl exit-code symbol such as curl-7.
 (define current-retry-observer (make-parameter (lambda (attempt reason delay) #f)))
+
+;; The context window the runtime believes the model has, so an adapter
+;; that must ask its server for a window (Ollama's num_ctx) asks for the
+;; same number the compaction budget uses. #f means the server's default.
+(define provider-context-limit (make-parameter #f))
 
 (define (retryable-status? status)
   (and (memv status '(408 409 425 429 500 502 503 504 529)) #t))

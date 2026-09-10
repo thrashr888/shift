@@ -260,6 +260,8 @@ def run_instance(instance, args, run_dir):
     # cut off at max_tokens fails the turn rather than executing a partial call.
     settings = ["--set", f"agent-max-tool-rounds={args.rounds}", "--set", f"turn-token-budget={args.budget}",
                 "--set", f"output-reserve={args.output_reserve}"]
+    if args.context_limit:
+        settings += ["--set", f"context-limit={args.context_limit}"]
     sandbox = None
     if sandboxed:
         sandbox = agentkernel_sandbox(instance, repo)
@@ -303,6 +305,23 @@ def run_instance(instance, args, run_dir):
     return record
 
 
+# A local model reports no cache reads, so every round costs its whole prompt
+# against the budget; it is slower per round; and Ollama truncates silently
+# past num_ctx, so the window is pinned to what Shift budgets for.
+PROVIDER_DEFAULTS = {
+    "ollama": {"budget": 2_000_000, "timeout": 5400, "output_reserve": 8192, "context_limit": 131072},
+    "default": {"budget": 300_000, "timeout": 1500, "output_reserve": 32768, "context_limit": None},
+}
+
+
+def apply_provider_defaults(args):
+    provider = args.model.split("/", 1)[0]
+    defaults = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["default"])
+    for key, value in defaults.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+
+
 def run(args):
     rows = {row["instance_id"]: row for row in load_rows()}
     if args.instances:
@@ -312,6 +331,7 @@ def run(args):
             make_slice()
         ids = SLICE.read_text().split()
     ids = ids[: args.limit] if args.limit else ids
+    apply_provider_defaults(args)
     run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + args.model.replace("/", "-")
     run_dir = RESULTS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -369,11 +389,12 @@ def main():
     runner.add_argument("--limit", type=int, default=0)
     runner.add_argument("--model", default="claude/claude-sonnet-5")
     runner.add_argument("--rounds", type=int, default=40)
-    runner.add_argument("--budget", type=int, default=300000,
+    runner.add_argument("--budget", type=int, default=None,
                         help="uncached prompt plus completion tokens per turn")
-    runner.add_argument("--timeout", type=int, default=1500, help="wall-clock seconds per instance")
+    runner.add_argument("--timeout", type=int, default=None, help="wall-clock seconds per instance (1500; 5400 for ollama)")
     runner.add_argument("--python", default="3.11", help="interpreter for each instance's virtualenv")
-    runner.add_argument("--output-reserve", type=int, default=32768, help="max output tokens per model response")
+    runner.add_argument("--output-reserve", type=int, default=None, help="max output tokens per model response (32768; 8192 for ollama)")
+    runner.add_argument("--context-limit", type=int, default=None, help="context window to budget for and, on ollama, request (131072 for ollama)")
     runner.add_argument("--backend", choices=["local", "agentkernel"], default="local",
                         help="where the model's test commands run")
     runner.add_argument("--keep-sandbox", action="store_true", help="leave agentkernel sandboxes for inspection")
