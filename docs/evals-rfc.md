@@ -33,7 +33,7 @@ resolved, `django-15957` did not, which makes 17 of 25 with the fixes. A
 third, `xarray-4695`, has the correct one-line patch applied but the
 harness's own pytest segfaults under amd64 emulation on this machine before
 any test runs, so it can only be graded on a native amd64 host. The other
-six misses are model failures: five ended at the 40-round cap still working
+seven misses are model failures: five ended at the 40-round cap still working
 (`seaborn-3187`, `pylint-8898`, `sphinx-9461`, `sphinx-10435`,
 `django-15957`), and two completed with wrong fixes (`django-16877`,
 `sympy-15875`).
