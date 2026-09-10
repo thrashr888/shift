@@ -3,7 +3,10 @@
   #:use-module (live-agent transcript)
   #:use-module (live-agent builtins)
   #:use-module (live-agent json)
-  #:export (tool-call?
+  #:export (provider-retry-limit
+            current-retry-observer
+            retryable-status?
+            tool-call?
             tool-call-id
             tool-call-name
             tool-call-arguments
@@ -37,6 +40,21 @@
   (tool-calls completion-tool-calls)
   (assistant-message completion-assistant-message)
   (usage completion-usage))
+
+;; Retries of a provider request that failed before any of the response was
+;; consumed. The limit comes from the provider-retries setting through this
+;; parameter; SHIFT_PROVIDER_RETRIES is the process-wide default (tests use 0).
+(define provider-retry-limit
+  (make-parameter
+   (let ((value (getenv "SHIFT_PROVIDER_RETRIES")))
+     (or (and value (string->number value)) 3))))
+
+;; Called as (observer attempt reason delay-ms) before each pause; reason is
+;; an HTTP status or a curl exit-code symbol such as curl-7.
+(define current-retry-observer (make-parameter (lambda (attempt reason delay) #f)))
+
+(define (retryable-status? status)
+  (and (memv status '(408 409 425 429 500 502 503 504 529)) #t))
 
 (define (make-message role content)
   (json-object (cons "role" role) (cons "content" content)))

@@ -10,7 +10,9 @@ graded result, September 8, 2026: `django__django-11099` resolved by Sonnet 5
 in 17 seconds, 6 rounds, 33k prompt tokens of which 92% were cache reads.
 The receipt landed September 9, 2026; `scripts/evals.py` now reads each
 instance's `--receipt` file instead of reconstructing the turn from traces
-and the ledger. Provider retries and the dogfood task set are not implemented.
+and the ledger. Provider retries landed September 10, 2026, along with a
+once-per-turn limit nudge (three rounds left or 80% of the budget) aimed at
+the five round-limit misses. The dogfood task set is not implemented.
 
 Rerun of the two misses with the corrected budget, September 9, 2026
 (`evals/results/misses-2`): still 0 of 2. Sphinx-10435 patched
@@ -155,6 +157,7 @@ These came out of the dogfood run and block unattended evaluation.
    The dogfood run used exactly 8 rounds and would have failed one read later.
 4. **Provider retries.** Retry 429 and 5xx responses with bounded backoff and
    record each retry on the LLM span. A 25-instance run will hit rate limits.
+   Done: `provider-retries` setting, `llm.retries` and `llm.retry_log`.
 5. **The receipt.** RFC section 9 of the coding workflow, now with a JSON
    form. It is the per-task result record, so the driver never parses
    transcripts. Done: `--receipt FILE`, `receipts.jsonl`, and `receipt.*`

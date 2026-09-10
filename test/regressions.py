@@ -80,6 +80,7 @@ class ReviewRegressions(unittest.TestCase):
         Provider.mode = "ok"
         Provider.calls = 0
         Provider.release.clear()
+        os.environ["SHIFT_PROVIDER_RETRIES"] = "0"
         self.provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
         threading.Thread(target=self.provider.serve_forever, daemon=True).start()
         image = (ROOT / "test/session-agent.scm").read_text()

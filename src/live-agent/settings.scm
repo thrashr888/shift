@@ -14,15 +14,24 @@
 (define project-file #f)
 (define session-file #f)
 (define user-file #f)
-(define defaults '((mode . manual) (effort . default) (fast . #f)
+;; SHIFT_PROVIDER_RETRIES sets the process-wide default so test harnesses can
+;; make planned provider errors fail fast; the setting still wins.
+(define default-provider-retries
+  (let ((value (getenv "SHIFT_PROVIDER_RETRIES")))
+    (or (and value (string->number value)) 3)))
+(define defaults `((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
                    (run-allow . ()) (run-backend . local) (run-sandbox . #f)
-                   (turn-token-budget . #f) (show-work . #t)))
+                   (turn-token-budget . #f) (show-work . #t)
+                   (provider-retries . ,default-provider-retries)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
                   agent-stream? agent-thinking agent-keep-alive agent-max-tool-rounds))
 (define (valid? key value)
   (case key
     ((agent-max-tool-rounds) (and (integer? value) (>= value 0) (<= value 64)))
+    ;; Retries of a provider request that failed with 429, 5xx, or a connection
+    ;; error before any of the response was consumed.
+    ((provider-retries) (and (integer? value) (>= value 0) (<= value 10)))
     ;; Cumulative uncached prompt plus completion tokens one turn may spend
     ;; before it is ended with a recorded reason.
     ((turn-token-budget) (or (not value) (and (integer? value) (>= value 1024))))

@@ -212,7 +212,22 @@ Two turn limits exist. `agent-max-tool-rounds` now goes up to 64 and can be set
 per session. `turn-token-budget` caps the uncached prompt tokens plus completion tokens one
 turn may spend across its tool rounds, so cache reads do not count; either limit ends the turn as a failure, keeps
 the conversation unchanged, and journals a `turn-limit` event with the reason.
-Files the turn already changed stay changed and remain undoable.
+Files the turn already changed stay changed and remain undoable. Before either
+limit lands, once per turn, when three rounds remain or the budget is 80%
+spent, Shift appends a user message telling the model to stop exploring, write
+its fix, run one test, and answer. The message is sent for the rest of that
+turn only, never persisted into the session history, journaled as
+`turn-nudge`, and shown as `shift> … asked the model to finish` when
+`show-work` is on.
+
+Provider requests that fail with 429, 5xx, or a connection error before any
+of the response was consumed are retried with exponential backoff (1s, 2s,
+4s, capped at 30s, or the server's `Retry-After` if longer). `provider-retries`
+sets the limit (default 3, 0 disables) and each retry is shown as
+`provider 429 · retrying in 1.0s (attempt 2 of 4)` and recorded on the LLM
+span as `llm.retries` and `llm.retry_log`. A stream that already produced
+output is never replayed. Non-retryable failures now report the HTTP status
+and the response body instead of only curl's exit code.
 
 ## Live MCP
 

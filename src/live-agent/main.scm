@@ -103,6 +103,7 @@
 (define turn-completion-tokens 0)
 (define turn-rounds 0)
 (define turn-tool-calls '())
+(define turn-nudged? #f)
 (define last-receipt #f)
 
 (define (reset-turn-usage!)
@@ -112,6 +113,7 @@
   (set! turn-uncached-tokens 0)
   (set! turn-completion-tokens 0)
   (set! turn-rounds 0)
+  (set! turn-nudged? #f)
   (set! turn-tool-calls '()))
 
 (define (count-turn-tool-call! name)
@@ -1645,11 +1647,12 @@
           (+ total (string-length (json-write message))))
         0 messages))
 
-(define (complete-with-trace tracer parent generation-id provider model base-url
+(define (complete-with-trace tracer parent generation provider model base-url
                              api-key messages enabled-tools stream? thinking
                              keep-alive prompt-cache-key round
                              prompt-attributes effort fast? reserve)
-  (let ((span
+  (let* ((generation-id (generation-id generation))
+        (span
          (trace-start!
           tracer (string-append (symbol->string provider) ".chat") "LLM"
           (append
@@ -1661,7 +1664,20 @@
            prompt-attributes)
           parent))
         (thinking-started? #f)
-        (content-started? #f))
+        (content-started? #f)
+        (retries '()))
+    ;; Each retry is shown as work and recorded on the span; the pause
+    ;; itself happens in the transport.
+    (define (on-retry attempt reason delay)
+      (set! retries (cons (format #f "~a@~as" reason (/ delay 1000.0)) retries))
+      (when (setting-ref generation 'show-work)
+        (format (tool-echo-port) "provider ~a · retrying in ~as (attempt ~a of ~a)~%"
+                reason (/ delay 1000.0) (+ attempt 1) (+ (provider-retry-limit) 1))
+        (force-output (tool-echo-port))))
+    (define (retry-attributes)
+      (if (null? retries) '()
+          `((llm.retries . ,(length retries))
+            (llm.retry_log . ,(string-join (reverse retries) ",")))))
     (define (on-thinking chunk)
       (unless print-mode?
         (unless thinking-started?
@@ -1679,11 +1695,14 @@
     (catch #t
       (lambda ()
         (let ((completion
-               (provider-complete
-                provider model base-url api-key messages enabled-tools
-                stream? thinking keep-alive prompt-cache-key
-                on-content on-thinking
-                effort fast? reserve)))
+               (parameterize ((current-retry-observer on-retry)
+                              (provider-retry-limit
+                               (setting-ref generation 'provider-retries)))
+                 (provider-complete
+                  provider model base-url api-key messages enabled-tools
+                  stream? thinking keep-alive prompt-cache-key
+                  on-content on-thinking
+                  effort fast? reserve))))
           (when (or thinking-started? content-started?)
             (newline)
             (force-output))
@@ -1703,6 +1722,7 @@
              (append
               `((output.value . ,(or (completion-content completion) ""))
                 (llm.thinking . ,(or (completion-thinking completion) "")))
+              (retry-attributes)
               attributes)))
           (cons completion content-started?)))
       (lambda (key . arguments)
@@ -1711,7 +1731,8 @@
           (force-output))
         (trace-end! span (if (cancelled? key) "CANCELLED" "ERROR")
                     `((error.type . ,(symbol->string key))
-                      (error.message . ,(format #f "~s" arguments))))
+                      (error.message . ,(format #f "~s" arguments))
+                      ,@(retry-attributes)))
         (apply throw key arguments)))))
 
 (define (provider-turn! runtime tracer parent generation history line turn-count)
@@ -1797,7 +1818,7 @@
           (error "Context still exceeds the budget; original checkpoint retained. Reduce input or increase /context limit.")))
       (let* ((outcome
               (complete-with-trace
-               tracer parent (generation-id generation)
+               tracer parent generation
                provider model base-url api-key messages
                enabled-tools stream? thinking keep-alive prompt-cache-key round
                prompt-attributes (effective-effort generation) (effective-fast? generation)
@@ -1818,7 +1839,7 @@
               ;; context while retaining the prior history and new turn tail.
               (list
                (persist-provider-turn
-                history (length context-messages) with-assistant)
+                history (length context-messages) (without-ephemeral with-assistant))
                reply))
             (begin
               (when (>= round max-rounds)
@@ -1832,10 +1853,55 @@
                                      (turn . ,turn-count)))
                   (error "turn token budget exceeded" turn-tokens budget)))
               (loop
-               (execute-tool-calls
-                runtime tracer parent generation provider calls with-assistant
-                enabled-tools)
+               (with-limit-nudge
+                runtime generation turn-count (+ round 1) max-rounds
+                (execute-tool-calls
+                 runtime tracer parent generation provider calls with-assistant
+                 enabled-tools))
                (+ round 1))))))))
+
+;; Five of the six model misses on the first SWE-bench slice ended at the
+;; round cap still exploring. Once per turn, when three rounds remain or the
+;; token budget is 80% spent, a user message tells the model to finish. It
+;; is marked ephemeral so it is sent for the rest of this turn but never
+;; persisted into the session history.
+(define (limit-nudge-reason generation next-round max-rounds)
+  (let ((budget (setting-ref generation 'turn-token-budget))
+        (rounds-left (- max-rounds next-round)))
+    (cond
+     ((= rounds-left 3) (format #f "~a tool rounds remain in this turn" rounds-left))
+     ((and budget (> turn-tokens (* 0.8 budget)))
+      (format #f "the turn's token budget is ~a% spent"
+              (inexact->exact (round (* 100 (/ turn-tokens budget))))))
+     (else #f))))
+
+(define (with-limit-nudge runtime generation turn-count next-round max-rounds messages)
+  (let ((reason (and (not turn-nudged?)
+                     (limit-nudge-reason generation next-round max-rounds))))
+    (if (not reason)
+        messages
+        (begin
+          (set! turn-nudged? #t)
+          (runtime-record! runtime 'turn-nudge
+                           `((reason . ,reason) (round . ,next-round) (turn . ,turn-count)))
+          (when (setting-ref generation 'show-work)
+            (format (tool-echo-port) "shift> ~a; asked the model to finish~%" reason)
+            (force-output (tool-echo-port)))
+          (append messages
+                  (list (json-object
+                         (cons "role" "user")
+                         (cons "ephemeral" #t)
+                         (cons "content"
+                               (string-append
+                                "Note from the harness: " reason
+                                ". Stop exploring and finish now. If you have a fix, make sure it is "
+                                "written to the files, run the single most relevant test once if you "
+                                "have not already, then reply with a summary of what you changed. "
+                                "If you cannot finish, reply with what you found and what remains. "
+                                "A turn that ends on a tool call is a failure.")))))))))
+
+(define (without-ephemeral messages)
+  (filter (lambda (message) (not (json-object-ref message "ephemeral" #f))) messages))
 
 (define (summarize-compaction generation prefix)
   (when (context-over-budget? (+ 256 (estimate-input-tokens prefix '()))

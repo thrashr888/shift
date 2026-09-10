@@ -53,6 +53,7 @@ def answer(text, usage=None):
 
 
 PROVIDER_ERROR = "provider-error"
+RATE_LIMITED = "rate-limited"
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -70,9 +71,11 @@ class Provider(BaseHTTPRequestHandler):
             step = Provider.plan.pop(0) if Provider.plan else answer("done")
         if callable(step):
             step = step()
-        if step == PROVIDER_ERROR:
-            self.send_response(503)
+        if step in (PROVIDER_ERROR, RATE_LIMITED):
+            self.send_response(503 if step == PROVIDER_ERROR else 429)
             self.send_header("Content-Type", "application/json")
+            if step == RATE_LIMITED:
+                self.send_header("Retry-After", "1")
             self.end_headers()
             self.wfile.write(b'{"error":{"message":"unavailable"}}')
             return
@@ -111,7 +114,8 @@ class CodingWorkflow(unittest.TestCase):
             image = image.replace(old, new)
         self.agent = self.project / ".agent.scm"
         self.agent.write_text(image)
-        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / ".config")}
+        # Retries are opt-in per test so a planned provider error fails fast.
+        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / ".config"), "SHIFT_PROVIDER_RETRIES": "0"}
         self.env.pop("SHIFT_BUILTINS", None)
         (self.project / "notes.txt").write_text("alpha port 8080\n")
 
@@ -485,6 +489,55 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(code, 0, "a receipt that cannot be written never fails the turn")
         self.assertIn("receipt not written", err)
         self.assertEqual(len(self.receipts("unwritable")), 1)
+
+    def llm_spans(self, session="p"):
+        return [json.loads(line) for line in (self.state(session) / "traces.jsonl").read_text().splitlines()
+                if '"kind":"LLM"' in line]
+
+    def test_provider_errors_are_retried_with_backoff_and_recorded(self):
+        started = time.time()
+        code, out, err = self.print_mode("hi", [RATE_LIMITED, PROVIDER_ERROR, answer("ok")],
+                                         "--set", "provider-retries=3")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "ok\n")
+        self.assertGreaterEqual(time.time() - started, 3, "1s Retry-After then 2s backoff")
+        self.assertIn("provider 429 · retrying in 1.0s (attempt 2 of 4)", err)
+        self.assertIn("provider 503 · retrying in 2.0s (attempt 3 of 4)", err)
+        (span,) = self.llm_spans()
+        self.assertEqual(span["attributes"]["llm.retries"], 2)
+        self.assertEqual(span["attributes"]["llm.retry_log"], "429@1.0s,503@2.0s")
+        code, out, err = self.print_mode("hi", [PROVIDER_ERROR, answer("never")], session="none")
+        self.assertEqual(code, 1, "provider-retries=0 fails on the first error")
+        self.assertIn("provider request failed after retries", err)
+        self.assertNotIn("retrying", err)
+        code, out, err = self.print_mode("hi", [PROVIDER_ERROR, PROVIDER_ERROR, answer("never")],
+                                         "--set", "provider-retries=1", session="one")
+        self.assertEqual(code, 1, "the limit is honoured")
+        self.assertEqual(err.count("retrying"), 1)
+        (span,) = self.llm_spans("one")
+        self.assertEqual(span["attributes"]["llm.retries"], 1)
+
+    def test_limit_nudge_asks_the_model_to_finish_once_and_is_not_persisted(self):
+        read = tool_call("read", {"path": "notes.txt"})
+        code, out, err = self.print_mode("look", [read, read, answer("done")],
+                                         "--mode", "accept", "--set", "agent-max-tool-rounds=5")
+        self.assertEqual(code, 0, err)
+        self.assertIn("shift> 3 tool rounds remain in this turn; asked the model to finish", err)
+        last = Provider.last_messages[-1]
+        self.assertEqual(last["role"], "user")
+        self.assertIn("3 tool rounds remain", last["content"])
+        self.assertNotIn("ephemeral", last, "the marker never reaches the provider")
+        self.assertEqual(Provider.last_messages[-2]["role"], "tool")
+        history = json.dumps(self.checkpoint("p")["history"])
+        self.assertNotIn("rounds remain", history, "the nudge is not persisted")
+        self.assertIn("read result", history.lower() if "read result" in history.lower() else "read result")
+        self.assertIn("turn-nudge", (self.state("p") / "events.scm-log").read_text())
+        spent = tool_call("read", {"path": "notes.txt"}, usage={"prompt_tokens": 900, "completion_tokens": 10})
+        code, out, err = self.print_mode("spend", [spent, read, answer("done")], "--mode", "accept",
+                                         "--set", "turn-token-budget=1024", session="budget")
+        self.assertEqual(code, 0, err)
+        self.assertIn("token budget is 89% spent; asked the model to finish", err)
+        self.assertEqual(err.count("asked the model to finish"), 1, "nudged once per turn")
 
     def test_model_flag_selects_a_provider(self):
         code, out, err = self.print_mode("hi", [answer("x")], "--model", "openai/gpt-5.4-mini")
