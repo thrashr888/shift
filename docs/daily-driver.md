@@ -220,6 +220,11 @@ turn only, never persisted into the session history, journaled as
 `turn-nudge`, and shown as `shift> … asked the model to finish` when
 `show-work` is on.
 
+With Ollama, `context-limit` is also sent as the request's `num_ctx`, so the
+window Shift budgets for is the window the server allocates; Ollama would
+otherwise truncate the prompt silently. Ollama reports no cache reads, so the
+turn budget counts every round's whole prompt.
+
 Provider requests that fail with 429, 5xx, or a connection error before any
 of the response was consumed are retried with exponential backoff (1s, 2s,
 4s, capped at 30s, or the server's `Retry-After` if longer). `provider-retries`
