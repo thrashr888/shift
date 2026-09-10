@@ -307,9 +307,12 @@ def run_instance(instance, args, run_dir):
 
 # A local model reports no cache reads, so every round costs its whole prompt
 # against the budget; it is slower per round; and Ollama truncates silently
-# past num_ctx, so the window is pinned to what Shift budgets for.
+# past num_ctx, so the window is pinned to what Shift budgets for. Shift's
+# byte-based estimate overshoots real token counts on code by 15-20% and
+# compaction cannot shrink a single turn, so the window is the model's full
+# 262k: at 131k a Django task hit the guard after 11 rounds at 73k real tokens.
 PROVIDER_DEFAULTS = {
-    "ollama": {"budget": 2_000_000, "timeout": 5400, "output_reserve": 8192, "context_limit": 131072},
+    "ollama": {"budget": 4_000_000, "timeout": 5400, "output_reserve": 8192, "context_limit": 262144},
     "default": {"budget": 300_000, "timeout": 1500, "output_reserve": 32768, "context_limit": None},
 }
 
@@ -394,7 +397,7 @@ def main():
     runner.add_argument("--timeout", type=int, default=None, help="wall-clock seconds per instance (1500; 5400 for ollama)")
     runner.add_argument("--python", default="3.11", help="interpreter for each instance's virtualenv")
     runner.add_argument("--output-reserve", type=int, default=None, help="max output tokens per model response (32768; 8192 for ollama)")
-    runner.add_argument("--context-limit", type=int, default=None, help="context window to budget for and, on ollama, request (131072 for ollama)")
+    runner.add_argument("--context-limit", type=int, default=None, help="context window to budget for and, on ollama, request (262144 for ollama)")
     runner.add_argument("--backend", choices=["local", "agentkernel"], default="local",
                         help="where the model's test commands run")
     runner.add_argument("--keep-sandbox", action="store_true", help="leave agentkernel sandboxes for inspection")
