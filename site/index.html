@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en" data-theme="acid">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101116">
+  <meta name="description" content="Shift is an experimental coding-agent harness with live Scheme behavior and a terminal interface you can make your own. Change the agent, not the session.">
+  <title>Shift — an agent, made yours.</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./showcase.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="./" aria-label="Shift home" data-brand-link><span data-display-name>shift</span><span class="brand-mark" aria-hidden="true">///</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#playground">Playground</a>
+      <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="appearance wrap" id="appearance" aria-labelledby="appearance-title" hidden>
+      <div class="appearance-intro"><h2 id="appearance-title">Make this site yours.</h2><p>The whole page. Not just the box.</p></div>
+      <div class="appearance-controls">
+        <label>Site theme
+          <select id="theme">
+            <option value="acid">Acid Garage</option>
+            <option value="paddock">Paddock</option>
+            <option value="blueprint">Blueprint</option>
+          </select>
+        </label>
+        <form id="identity-form">
+          <label for="identity">Display name</label>
+          <div class="input-action"><input id="identity" name="identity" value="shift" maxlength="24" required autocomplete="off" aria-describedby="identity-error appearance-notice"><button type="submit">Apply name</button></div>
+          <span class="field-error" id="identity-error"></span>
+        </form>
+        <button id="undo" type="button" disabled>Undo change</button>
+        <button id="reset" type="button">Reset appearance</button>
+      </div>
+      <p id="appearance-notice" class="appearance-notice" role="status">Local to this page. Nothing saved. Real Shift commands and links stay unchanged.</p>
+    </section>
+    <noscript><p class="no-script wrap">Enable JavaScript to personalize the whole site and try the simulated terminal. This static view uses Shift’s original appearance.</p></noscript>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <p class="eyebrow hero-identity"><span class="status-dot" aria-hidden="true"></span> <span data-display-name>shift</span> / A live agent experiment</p>
+      <div class="hero-grid">
+        <h1 id="hero-title">An agent.<br><span>Made yours.</span></h1>
+        <div class="hero-copy">
+          <p class="lead">Your tools feel better<br class="desktop-break"> when they feel like you.</p>
+          <p>Shift is a tiny coding-agent harness with a live Scheme heart. Change its behavior, reshape its terminal, and keep the session going.</p>
+          <div class="actions">
+            <a class="button primary" href="#start">Try Shift <span aria-hidden="true">↗</span></a>
+            <a class="text-link" href="#playground">Make it yours <span aria-hidden="true">↓</span></a>
+          </div>
+          <p class="small-note">An executable spike. Not a production coding agent yet.</p>
+        </div>
+      </div>
+      <div class="hero-baseline mono"><span>LIVE BEHAVIOR / PERSONAL INTERFACE</span><span>GUILE + YOUR TERMINAL</span></div>
+    </section>
+
+    <section class="playground wrap" id="playground" aria-labelledby="playground-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">01 / Make yourself at home</p><h2 id="playground-title">Same session. Your instrument.</h2></div>
+        <p>Your site theme and name carry right into the terminal. Try moving the inspector or setting the busy mark in motion. Nothing leaves your browser.</p>
+      </div>
+
+      <div class="demo-shell">
+        <div class="demo-label mono"><span><span class="status-dot" aria-hidden="true"></span> INTERACTIVE SIMULATION</span><span>No model connected</span></div>
+        <div class="demo-controls" id="demo-controls" hidden>
+          <label>Demo inspector
+            <select id="placement">
+              <option value="bottom">Bottom</option>
+              <option value="right">Right</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </label>
+          <a href="#appearance">Change site appearance <span aria-hidden="true">↑</span></a>
+        </div>
+
+        <div class="terminal" id="terminal" data-placement="bottom" data-working="false" data-visible="false" aria-label="Simulated Shift terminal">
+          <div class="terminal-header">
+            <div class="terminal-wordmark"><span id="preview-identity" data-display-name>shift</span> <span class="slashes" aria-hidden="true"><span>/</span><span>/</span><span>/</span></span></div>
+            <span class="terminal-theme mono" id="theme-name">ACID GARAGE</span>
+          </div>
+          <div class="terminal-meta mono"><span class="session-label"><span data-display-name>shift</span> / website-demo</span><span class="mode">MANUAL</span><span class="terminal-state" id="work-state">READY</span></div>
+          <div class="terminal-workspace">
+            <div class="transcript">
+              <div class="message"><span class="role">YOU</span><p>I want this to feel like my own workspace.</p></div>
+              <div class="message"><span class="role agent-role" data-display-name>shift</span><p>Start with the interface. Your name, your colors, your layout. The session stays with you.</p></div>
+              <details class="example-commands" open>
+                <summary>In the real terminal</summary>
+                <div class="command-example"><code>/name your-name<br>/brand replace<br>/place bottom<br>/ui save user</code><span class="command-note">Make it personal.<br>Keep it next time.</span></div>
+              </details>
+              <div class="message last-message"><span class="role agent-role" data-display-name>shift</span><p>And when you want to change how I work, the behavior is Scheme you can edit live.</p></div>
+            </div>
+            <aside class="inspector" id="inspector" aria-label="Simulated session inspector">
+              <section><h3>SESSION</h3><dl><div><dt>View</dt><dd>Simulation</dd></div><div><dt>Model</dt><dd>Not connected</dd></div></dl></section>
+              <section><h3>INTERFACE</h3><dl><div><dt>Theme</dt><dd id="inspector-theme">Acid Garage</dd></div><div><dt>Placement</dt><dd id="inspector-placement">Bottom</dd></div></dl></section>
+              <section><h3>YOUR CHANGES</h3><p>Preview only.<br>No files or settings written.</p></section>
+            </aside>
+          </div>
+          <div class="terminal-prompt mono"><span aria-hidden="true">❯</span><span>Your next idea goes here.</span><span class="prompt-note">ILLUSTRATIVE TRANSCRIPT</span></div>
+        </div>
+        <div class="demo-footer">
+          <p class="demo-notice" id="demo-notice" role="status">A little less default. A little more you.</p>
+          <div class="motion-controls" id="motion-controls" hidden>
+            <label class="checkbox-label"><input type="checkbox" id="motion"> Animate busy mark</label>
+            <button id="simulate" type="button" aria-pressed="false" aria-controls="terminal">Simulate work <span aria-hidden="true">///</span></button>
+          </div>
+        </div>
+      </div>
+      <p class="caption">A browser interpretation of Shift’s opt-in curses TUI, not a terminal emulator. The <span class="mono">///</span> mark cycles only while simulated work is active. Reduced-motion preferences are respected.</p>
+    </section>
+
+    <section class="live-section wrap" id="inside" aria-labelledby="inside-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">02 / More than a new coat of paint</p><h2 id="inside-title">Change the behavior.<br>Keep the boundary.</h2></div>
+        <p>The interface is just the beginning. Shift explores what happens when the agent’s behavior is a live, user-owned program.</p>
+      </div>
+      <div class="principles">
+        <article><span class="index mono">[01]</span><h3>Edit while it’s running.</h3><p>The Scheme image defines the agent. Edit the prompt or behavior live; a validated candidate becomes the next atomic generation.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/live-updates.md">How live updates work <span aria-hidden="true">↗</span></a></article>
+        <article><span class="index mono">[02]</span><h3>Keep a working version.</h3><p>Invalid changes leave the current image intact. In-flight turns stay pinned to their generation. Roll back live behavior or undo UI edits.</p><a href="https://github.com/thrashr888/shift#try-the-live-loop">Explore the live loop <span aria-hidden="true">↗</span></a></article>
+        <article><span class="index mono">[03]</span><h3>Make authority explicit.</h3><p>The permanent runtime owns provider transport, tool execution, and approval policy. Live Scheme defines behavior, not new permissions.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#tool-policy">Read the tool policy <span aria-hidden="true">↗</span></a></article>
+      </div>
+      <div class="live-example">
+        <div><span class="eyebrow">Not a restart. A new generation.</span><p>A small change you can try in the real session:</p></div>
+        <pre aria-label="Example live Scheme prompt edit and rollback"><code><span class="code-muted">shift&gt;</span> /eval (define agent-system-prompt <span class="code-accent">"Be concise."</span>)
+<span class="code-muted">shift&gt;</span> /rollback</code></pre>
+      </div>
+      <p class="caption">Live patches use a constrained Scheme surface, not a resource or semantic sandbox. Trusted runtime and built-in extension changes still require a restart.</p>
+    </section>
+
+    <section class="start-section wrap" id="start" aria-labelledby="start-title">
+      <div class="start-copy"><p class="eyebrow">03 / Start small. Make it yours.</p><h2 id="start-title">Meet your<br>next instrument.</h2><p>Try the terminal without a model first. Then connect a provider when you’re ready to put the live loop to work.</p><a class="text-link" href="https://github.com/thrashr888/shift">Explore the source <span aria-hidden="true">↗</span></a></div>
+      <div class="quickstart">
+        <h3>Take the interface for a spin</h3>
+        <p>Use macOS or Linux with <strong>Git, Make, Guile 3.0, ripgrep, and Python 3 with curses</strong>, in an interactive terminal. No API key or local model needed for this demo.</p>
+        <pre aria-label="Clone Shift and launch its no-model terminal demo"><code>git clone https://github.com/thrashr888/shift.git
+cd shift
+./bin/shift --tui --session ui-demo \
+  --set 'agent-model="demo"'</code></pre>
+        <details class="provider-details"><summary>Ready for a real model?</summary><p>The checked-in image defaults to Ollama with <code>qwen3.8:27b-mlx</code>. You’ll need Ollama running and a compatible, tool-capable model installed, or credentials for a supported remote provider. Model availability and hardware requirements vary.</p><p>Run <code>./bin/shift --tui</code> for the terminal interface. To keep the saved demo separate, use <code>./bin/shift --tui --session first-run</code>; the demo session retains its demo-model setting.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Provider setup and model selection <span aria-hidden="true">↗</span></a></details>
+        <a class="guide-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">Read the terminal guide <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <div class="reality-note wrap"><span class="mono">WORK IN PROGRESS</span><p>Shift is an executable experiment, not a finished product. Expect rough edges. Read the source, inspect changes, and use it in projects where you can review and recover your work.</p></div>
+  </main>
+
+  <footer class="site-footer wrap">
+    <a class="wordmark" href="./" aria-label="Shift home" data-brand-link><span data-display-name>shift</span><span class="brand-mark" aria-hidden="true">///</span></a>
+    <p>A Shift experiment. Make the agent your own.</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="https://github.com/thrashr888/shift/blob/main/README.md">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

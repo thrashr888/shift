@@ -8,6 +8,13 @@ This is intentionally not a production coding agent yet. The first question is
 whether changing agent behavior *inside a running session* feels materially
 better than editing and restarting a conventional extension.
 
+## Website
+
+The [Shift website](https://thrashr888.github.io/shift/) includes whole-page
+theme and display-name customization and a local-only, simulated terminal
+playground. See [website preview and publishing](docs/website.md) for local setup
+and the manually triggered GitHub Pages workflow. A push alone does not deploy.
+
 ## Principle: making it mine
 
 Shift should become the user's own instrument. Identity, appearance, layout, and
