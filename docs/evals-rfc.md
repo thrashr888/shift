@@ -69,6 +69,35 @@ from unattended runs through `SHIFT_TOOL_CEILING` since nobody can approve
 it, and matplotlib's editable install failed on its C extensions, which the
 record flags.
 
+## Seven-miss rerun, September 10, 2026
+
+Rerun of the seven model misses with `ollama/qwen3.8:27b-mlx`, through
+agentkernel and graded by the official harness (`evals/results/ollama-misses-7`):
+**1 of 7 resolved**, `sympy-15875`. All four nonempty patches were graded
+without harness errors; the three empty patches remain unresolved. The run
+included provider retries and the finish nudge, with a 40-round cap, a 4M
+uncached-input-plus-output budget, a 262,144-token context limit, and an
+8,192-token output reserve.
+
+| Instance | Graded outcome and turn ending | Rounds | Prompt tokens | Output tokens | Wall seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `django-16877` | Unresolved; completed with a wrong fix | 22 | 893,234 | 3,236 | 451.1 |
+| `sympy-15875` | Resolved; completed | 26 | 1,442,697 | 3,851 | 667.4 |
+| `sphinx-10435` | Unresolved; token budget, no edits | 39 | 4,036,787 | 3,323 | 1,270.2 |
+| `seaborn-3187` | Unresolved; round limit with a patch | 41 | 2,296,297 | 6,313 | 1,819.5 |
+| `pylint-8898` | Unresolved; round limit, no edits | 41 | 1,551,775 | 2,371 | 797.2 |
+| `sphinx-9461` | Unresolved; context guard, no edits or test runs | 21 | 1,458,275 | 1,705 | 1,171.2 |
+| `django-15957` | Unresolved; round limit with a patch | 41 | 2,594,327 | 5,669 | 2,059.0 |
+
+Total: 14,273,392 prompt tokens, all uncached as reported by Ollama, and
+26,468 output tokens over 8,235.6 seconds (137.3 minutes), excluding grading.
+Rounds are receipt counts of model responses; the 40-tool-round limit can
+produce a 41st response before refusing another tool call. The context
+guard still stopped `sphinx-9461` in the larger window; calibrating the
+byte-based estimate against provider-reported prompt counts is the next
+harness fix. This rerun changes both provider and model, so it does not
+isolate the effect of retries or the finish nudge.
+
 ## Why now
 
 On September 8 Shift implemented one of its own RFC features in a single turn
