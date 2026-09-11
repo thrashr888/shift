@@ -169,6 +169,9 @@
     (let ((undoable (ledger-undoable-turns ledger)))
       (format port "undoable turns: ~a~%"
               (if (null? undoable) "none" (string-join (map number->string undoable) ", "))))
+    (format port "last undo: ~a~%"
+            (let ((last (ledger-last-undo ledger)))
+              (if last (string-append "turn " (number->string last)) "none")))
     (unless (null? untouched)
       (format port "dirty in git but not touched by shift: ~a~%" (length untouched))
       (for-each (lambda (path) (format port "  ~a~%" path)) untouched))

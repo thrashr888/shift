@@ -173,7 +173,9 @@ match their context exactly, with no fuzz; a rename is applied as a delete plus 
 create; and the whole patch is prepared in memory, previewed, and committed as one
 unit, so a failure in any file leaves every file untouched. `status` reports the git branch
 and dirty count, files shift changed this turn and this session with diffstats, and
-dirty files shift did not touch. `diff` takes `scope` `turn` (default), `session`, or
+dirty files shift did not touch. It also reports `last undo: none` or the most
+recently undone turn, including after reopening the session. Failed undo attempts
+and later edits leave that value unchanged. `diff` takes `scope` `turn` (default), `session`, or
 `git` (working tree against HEAD) and optional `paths`. Both are read-only, work
 without git, spawn `git` and `diff` without a shell, and are bounded at 64 KiB.
 Omit `coding` from `SHIFT_BUILTINS` to remove the tools.

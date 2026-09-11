@@ -66,6 +66,44 @@
 (test-assert "unknown scopes are rejected"
   (not (tool-result-success? (coding-execute "diff" (args (cons "scope" "all")) plain plain-ledger 4))))
 
+;; Independent fixture: undo assertions must not mutate the diff fixture.
+(define undo-root (string-append "/tmp/shift-coding-undo-" (number->string (getpid))))
+(system* "mkdir" "-p" (string-append undo-root "/state"))
+(define undo-ledger (open-ledger (string-append undo-root "/state")))
+(mutate! undo-ledger undo-root 3 "a.txt" "one\n" "two\n")
+(test-assert "status reports no prior undo before any undo"
+  (string-contains (output (coding-execute "status" (args) undo-root undo-ledger 0)) "last undo: none"))
+
+;; Last undo tracks the most recent successful undo, not the highest turn.
+(mutate! undo-ledger undo-root 11 "c.txt" "c1\n" "c2\n")
+(ledger-undo! undo-ledger undo-root 11)
+(test-assert "status reports the most recent successful undo"
+  (string-contains (output (coding-execute "status" (args) undo-root undo-ledger 11))
+                   "last undo: turn 11"))
+(ledger-undo! undo-ledger undo-root 3)
+(test-assert "a later undo of a lower turn becomes the last undo"
+  (string-contains (output (coding-execute "status" (args) undo-root undo-ledger 4))
+                   "last undo: turn 3"))
+;; A refused undo (a diverged file) leaves the last undo untouched.
+(mutate! undo-ledger undo-root 12 "d.txt" "d1\n" "d2\n")
+(write-file! undo-root "d.txt" "d1 user-edited\n")
+(catch #t (lambda () (ledger-undo! undo-ledger undo-root 12)) (lambda _ #f))
+(test-assert "a refused undo does not change the last undo"
+  (string-contains (output (coding-execute "status" (args) undo-root undo-ledger 12))
+                   "last undo: turn 3"))
+;; A subsequent successful edit does not erase the last undo.
+(mutate! undo-ledger undo-root 13 "d.txt" "d1 user-edited\n" "d1 user-edited\nmore\n")
+(test-assert "subsequent edits do not erase the last undo"
+  (string-contains (output (coding-execute "status" (args) undo-root undo-ledger 13))
+                   "last undo: turn 3"))
+;; The last undo survives reopening the ledger.
+(test-equal "the last undo is the head of the undone stack"
+   3 (ledger-last-undo (open-ledger (string-append undo-root "/state"))))
+(test-assert "last undo survives ledger replay"
+  (string-contains (output (coding-execute "status" (args) undo-root (open-ledger (string-append undo-root "/state")) 13))
+                   "last undo: turn 3"))
+(system* "rm" "-rf" undo-root)
+
 ;; A dirty git checkout
 (define repo (string-append "/tmp/shift-coding-git-" (number->string (getpid))))
 (system* "mkdir" "-p" (string-append repo "/.shift"))

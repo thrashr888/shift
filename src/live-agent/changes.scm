@@ -25,6 +25,7 @@
             ledger-open-entries
             ledger-resolve-open!
             ledger-undoable-turns
+            ledger-last-undo
             ledger-turn-groups
             ledger-undo!
             ledger-seen-paths
@@ -187,6 +188,13 @@
                      (filter (lambda (entry) (eq? (assq-ref entry 'state) 'committed))
                              (ledger-entries ledger))))))
     (sort (filter (lambda (turn) (not (memv turn (ledger-undone ledger)))) turns) >)))
+
+;; The most recently successful undo, newest first: ledger-undo! prepends each
+;; turn, so the head is the last one that actually reverted. A refused undo is
+;; never recorded, and later edits leave the recorded turn untouched.
+(define (ledger-last-undo ledger)
+  (let ((undone (ledger-undone ledger)))
+    (and (pair? undone) (car undone))))
 
 (define (short hash) (if (string? hash) (substring hash 0 12) "absent"))
 
