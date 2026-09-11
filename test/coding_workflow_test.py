@@ -381,6 +381,50 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("(reason . tokens)", journal)
         self.assertEqual(self.checkpoint("b")["history"], [])
 
+    def test_context_estimate_calibrates_later_rounds_but_not_the_next_turn(self):
+        (self.project / "notes.txt").write_text("value = 1\n" * 6000)
+        (self.project / ".shift").mkdir()
+        (self.project / ".shift/settings.json").write_text(json.dumps({
+            "context-limit": 131072, "output-reserve": 8192,
+        }))
+        # The initial request fits, but bytes/3 puts the read result over the
+        # guard. The provider's 73k count leaves room at this same window.
+        output = self.shift(
+            "/mode plan\n" + "code " * 50000 + "\n/context\nnext turn\n/quit\n",
+            [tool_call("read", {"path": "notes.txt"},
+                       usage={"prompt_tokens": 73000, "completion_tokens": 5}),
+             answer("CALIBRATED_OK", usage={"prompt_tokens": 88000, "completion_tokens": 5}),
+             answer("MUST_NOT_REUSE_CALIBRATION")],
+        )
+        self.assertIn("CALIBRATED_OK", output)
+        self.assertNotIn("MUST_NOT_REUSE_CALIBRATION", output)
+        self.assertTrue(any(m["role"] == "tool" for m in Provider.last_messages),
+                        "the answer must finish the original tool chain")
+        self.assertEqual(len(Provider.plan), 1, "the next turn must use its own estimate")
+        self.assertIn("current turn is too large to compact safely", output)
+        self.assertEqual(self.checkpoint()["next_turn"], 2)
+
+    def test_context_calibration_uses_latest_usage_without_compounding(self):
+        (self.project / "notes.txt").write_text("value = 1\n" * 6000)
+        (self.project / ".shift").mkdir()
+        (self.project / ".shift/settings.json").write_text(json.dumps({
+            "context-limit": 131072, "output-reserve": 8192,
+        }))
+        # Reusing the first ratio, or dividing by the calibrated second
+        # estimate, would incorrectly reject the third request.
+        output = self.shift(
+            "/mode plan\n" + "code " * 50000 + "\n/quit\n",
+            [tool_call("read", {"path": "notes.txt"},
+                       usage={"prompt_tokens": 73000, "completion_tokens": 5}),
+             tool_call("read", {"path": "notes.txt"},
+                       usage={"prompt_tokens": 78000, "completion_tokens": 5}),
+             answer("LATEST_USAGE_OK", usage={"prompt_tokens": 93000, "completion_tokens": 5})],
+        )
+        self.assertIn("LATEST_USAGE_OK", output)
+        self.assertNotIn("Context budget exceeded", output)
+        self.assertEqual(len(self.tool_results()), 2)
+        self.assertEqual(self.checkpoint()["next_turn"], 2)
+
     def test_show_work_covers_tool_echo_and_the_receipt(self):
         plan = [tool_call("read", {"path": "notes.txt"}), answer("seen")]
         code, out, err = self.print_mode("look", plan, "--mode", "accept")

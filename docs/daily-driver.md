@@ -70,7 +70,12 @@ Capability mappings are deliberately conservative. See the current
 
 `/context` shows the last request's estimated input, known context limit, output
 reserve, and reported usage. Estimates include tool schemas and message framing;
-they are not tokenizer counts. Claude's context window is discovered from the
+they are not tokenizer counts. The first request of each turn uses bytes/3.
+Later tool rounds scale that estimate by the last provider-reported full prompt
+count divided by the raw estimate for the same request. Cache reads count toward
+context size. Missing usage retains the last calibration, and a new turn starts
+fresh; summarizer usage does not change the tool-loop calibration. The 20% margin
+and output reserve still apply. Claude's context window is discovered from the
 account's model metadata. If a provider does not report its effective window,
 the limit stays unknown; set `/context limit TOKENS` explicitly. Switching models
 clears that explicit override. The JSON `output-reserve` setting defaults to 8192.

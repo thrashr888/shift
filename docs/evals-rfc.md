@@ -93,9 +93,11 @@ Total: 14,273,392 prompt tokens, all uncached as reported by Ollama, and
 26,468 output tokens over 8,235.6 seconds (137.3 minutes), excluding grading.
 Rounds are receipt counts of model responses; the 40-tool-round limit can
 produce a 41st response before refusing another tool call. The context
-guard still stopped `sphinx-9461` in the larger window; calibrating the
-byte-based estimate against provider-reported prompt counts is the next
-harness fix. This rerun changes both provider and model, so it does not
+guard still stopped `sphinx-9461` in the larger window. After this run,
+the estimate was calibrated against the last provider-reported full prompt
+count for later rounds of the same turn, retaining the safety margin and
+output reserve. That fix is regression-tested; this batch has not been rerun
+with it. This rerun changes both provider and model, so it does not
 isolate the effect of retries or the finish nudge.
 
 ## Why now

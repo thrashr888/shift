@@ -108,6 +108,23 @@
  (> (estimate-input-tokens normalized '("read")) (estimate-input-tokens normalized '())))
 (test-assert "output space reserved" (context-over-budget? 7000 10000 2000))
 (test-assert "unknown limit stays unknown" (not (context-over-budget? 100000 #f 8192)))
+(test-equal "prompt usage scales the next raw estimate" 80300
+  (calibrate-input-estimate 121000 110000 73000))
+(test-assert "the calibrated code prompt fits the 131k window"
+  (and (context-over-budget? 121000 131072 8192)
+       (not (context-over-budget?
+             (calibrate-input-estimate 121000 110000 73000) 131072 8192))))
+(test-equal "later rounds use the latest actual count and its raw estimate" 87273
+  (calibrate-input-estimate 132000 121000 80000))
+(test-equal "underestimates are calibrated upward too" 144000
+  (calibrate-input-estimate 120000 100000 120000))
+(test-assert "calibration preserves the output reserve and safety margin"
+  (context-over-budget? (calibrate-input-estimate 150000 100000 73000) 131072 8192))
+(for-each
+ (lambda (reference)
+   (test-equal "missing or zero usage keeps the raw estimate" 121000
+     (calibrate-input-estimate 121000 (car reference) (cadr reference))))
+ '((#f #f) (110000 #f) (110000 0) (0 73000) (110000 -1)))
 (define fast-openai (make-openai-request "gpt-5.4-mini" (list (make-message "user" "hi")) '() "test" #t 'high #t 2048))
 (test-equal "OpenAI fast service is separate from effort" "fast" (json-object-ref fast-openai "service_tier"))
 (test-equal "OpenAI effort parameter" "high" (json-object-ref fast-openai "reasoning_effort"))

@@ -1798,8 +1798,13 @@
          (working
           (build-provider-messages
            system history context-messages user-message)))
-    (let loop ((messages working) (round 0))
-      (set! last-estimate (estimate-input-tokens messages enabled-tools))
+    ;; Calibration belongs to this turn and its tool-bearing requests, not to
+    ;; another model, a previous turn, or the separate summarizer request.
+    (let loop ((messages working) (round 0)
+               (previous-estimate #f) (previous-prompt #f))
+      (define raw-estimate (estimate-input-tokens messages enabled-tools))
+      (set! last-estimate
+        (calibrate-input-estimate raw-estimate previous-estimate previous-prompt))
       (when (context-over-budget? last-estimate (model-context-limit generation)
                                   (setting-ref generation 'output-reserve))
         (let* ((prefix (compaction-prefix history 4))
@@ -1810,7 +1815,9 @@
                  (compacted (compact-history-with-summary history summary 4)))
             (set! history compacted)
             (set! messages (append (list system) history context-messages tail))
-            (set! last-estimate (estimate-input-tokens messages enabled-tools))
+            (set! raw-estimate (estimate-input-tokens messages enabled-tools))
+            (set! last-estimate
+              (calibrate-input-estimate raw-estimate previous-estimate previous-prompt))
             (runtime-record! runtime 'session-compacted
               `((reason . token-budget) (estimated-tokens . ,last-estimate)))
             (display "Compacted earlier turns before the request.\n")))
@@ -1825,6 +1832,8 @@
                prompt-attributes (effective-effort generation) (effective-fast? generation)
                (setting-ref generation 'output-reserve)))
              (completion (car outcome))
+             (prompt (assq-ref (usage-attributes completion) 'llm.token_count.prompt))
+             (prompt-reported? (and (integer? prompt) (> prompt 0)))
              (content-streamed? (cdr outcome))
              (calls (completion-tool-calls completion))
              (with-assistant
@@ -1859,7 +1868,9 @@
                 (execute-tool-calls
                  runtime tracer parent generation provider calls with-assistant
                  enabled-tools))
-               (+ round 1))))))))
+               (+ round 1)
+               (if prompt-reported? raw-estimate previous-estimate)
+               (if prompt-reported? prompt previous-prompt))))))))
 
 ;; Five of the six model misses on the first SWE-bench slice ended at the
 ;; round cap still exploring. Once per turn, when three rounds remain or the
