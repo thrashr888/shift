@@ -3,6 +3,11 @@ set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export SHIFT_INSTALL_ROOT="$project_root"
+for argument do
+  if [ "$argument" = "--tui" ]; then
+    exec python3 "$project_root/scripts/tui.py" "$@"
+  fi
+done
 working_root=$(pwd -P)
 export SHIFT_PROJECT_ROOT="$working_root"
 # Compatibility for older extensions and trace bridge processes.

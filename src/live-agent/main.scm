@@ -8,6 +8,7 @@
   #:use-module (ice-9 textual-ports)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent settings)
+  #:use-module (live-agent ui)
   #:use-module (live-agent input)
   #:use-module (live-agent models)
   #:use-module (live-agent policy)
@@ -56,7 +57,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension")
+  (append '("ui" "read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -266,6 +267,7 @@
     "  /session          show the durable session identity and checkpoint\n"
     "  /reset            clear conversation state\n"
     "  /help             show this help\n"
+    "  /ui               inspect live UI; /ui undo or /ui reload\n"
     "  /quit             exit\n")))
 
 (define (show-generation runtime)
@@ -875,6 +877,14 @@
 
 (define (handle-command runtime tracer session line)
   (cond
+   ((or (string=? line "/ui") (string-prefix? "/ui " line))
+    (try-transition "UI" (lambda ()
+      (let* ((text (string-trim-both (substring line 3)))
+             (args (cond ((or (string-null? text) (string=? text "get")) (json-object))
+                         ((member text '("undo" "reload")) (json-object (cons "action" text)))
+                         (else (json-read text)))))
+        (format #t "~a~%" (json-write (ui-action! args))))))
+    'continue)
    ((member (car (string-tokenize line)) '("/settings" "/model" "/context" "/mode" "/effort" "/fast"))
     (try-transition "settings" (lambda () (handle-preference-command runtime line)))
     'continue)
@@ -994,7 +1004,7 @@
 (define (read-user-line prompt)
   (if (and control-port (string=? prompt "shift> "))
       (begin
-        (display prompt)
+        (unless (ui-connected?) (display prompt))
         (force-output)
         (emit-control! "ready")
         (let ((line (get-line (current-input-port))))
@@ -1022,6 +1032,7 @@
 (define (read-approval-key prompt)
   (display prompt)
   (force-output)
+  (ui-emit! "approval" prompt)
   (emit-control! "needs_approval")
   (if (not (isatty? (current-input-port)))
       (read-user-line "")
@@ -1529,6 +1540,7 @@
   (if print-mode? (current-error-port) (current-output-port)))
 
 (define (echo-tool-call! generation name arguments)
+  (ui-emit! "tool" (json-object (cons "name" name) (cons "summary" (tool-call-summary name arguments))))
   (when (setting-ref generation 'show-work)
     (format (tool-echo-port) "tool> ~a ~a~%" name (clip (tool-call-summary name arguments) 120))
     (force-output (tool-echo-port))))
@@ -1592,6 +1604,8 @@
                         (catch #t
                           (lambda ()
                             (cond
+                             ((string=? name "ui")
+                              (make-tool-result #t (json-write (ui-action! (tool-call-arguments call)))))
                              ((string=? name "live_eval")
                               (execute-live-eval
                                runtime generation (tool-call-arguments call)
@@ -1721,6 +1735,11 @@
           (let ((attributes (usage-attributes completion)))
             (record-run-usage! attributes)
             (set! turn-rounds (+ turn-rounds 1))
+            (ui-emit! "usage" (json-object
+              (cons "prompt" (or (assq-ref attributes 'llm.token_count.prompt) 0))
+              (cons "round" turn-rounds)
+              (cons "limit" (or (model-context-limit generation) json-null))
+              (cons "max_rounds" (setting-ref generation 'agent-max-tool-rounds))))
             (trace-end!
              span "OK"
              (append
@@ -2043,6 +2062,7 @@
 ;; --receipt FILE. A receipt that cannot be written never fails the turn.
 (define (deliver-receipt! runtime tracer receipt)
   (set! last-receipt receipt)
+  (ui-emit! "receipt" (receipt->json receipt))
   (when (setting-ref (runtime-current runtime) 'show-work)
     (let ((port (if print-mode? (current-error-port) (current-output-port))))
       (display (receipt->text receipt) port)
@@ -2149,7 +2169,13 @@
   (let ((history (if session (normalize-messages (session-history session)) '()))
         (turn-count (if session (session-next-turn session) 1))
         (lock (make-mutex)))
+    (define (publish-session!)
+      (ui-emit! "session" (json-object
+        (cons "model" (setting-ref (runtime-current runtime) 'agent-model))
+        (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
+        (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral")))))
     (define (process! line)
+      (publish-session!)
       (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
       (parameterize ((current-turn turn-count))
       (let ((action
@@ -2173,6 +2199,7 @@
            (let ((message (try-transition "undo" (lambda () (undo-last-turn! runtime)))))
              (when message (set! history (append history (list message)))))))
         (checkpoint! history turn-count)
+        (publish-session!)
         action)))
     (define (dispatch method argument)
       (if (eq? method 'cancel)
@@ -2204,6 +2231,8 @@
                   (when (not (string=? operation-status "ok")) (error "session operation failed" (get-output-string output)))
                   (get-output-string output)))
               (lambda () (unlock-mutex lock)))))))
+    (publish-session!)
+    (ui-emit! "history" (apply json-array (take-right history (min 50 (length history)))))
     (let ((stop-mcp!
             (if (and mcp-http? (builtin-enabled? 'mcp))
                 (catch #t
@@ -2216,7 +2245,7 @@
           (if mcp-stdio?
               ((builtin-ref 'mcp 'run-mcp-stdio) dispatch)
               (begin
-                (unless print-mode?
+                (unless (or print-mode? (ui-connected?))
                   (show-banner runtime watch? session)
                   (show-model (runtime-current runtime))
                   (when (and mcp-http? (builtin-enabled? 'mcp))
@@ -2281,7 +2310,7 @@
               (display "No durable sessions.\n")
               (for-each (lambda (name) (display name) (newline)) names)))
         (exit 0))
-      (when (and (not requested-session-name) (isatty? (current-input-port)) (not control-port) (not mcp-stdio?))
+      (when (and (not requested-session-name) (or (getenv "SHIFT_UI_EVENT_FD") (isatty? (current-input-port))) (or (getenv "SHIFT_UI_EVENT_FD") (not control-port)) (not mcp-stdio?))
         (set! requested-session-name "default") (set! session-mode 'auto))
       (let* ((session
               (and requested-session-name
@@ -2315,6 +2344,7 @@
         (unless runtime (exit 1))
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
+        (ui-init! state-directory (and session runtime-state-directory))
         (load-dotenv! (string-append (getcwd) "/.env"))
         (unless (try-transition "startup options" apply-cli-overrides!)
           (exit 2))
@@ -2355,6 +2385,7 @@
                      (repl runtime tracer watch? session checkpoint! initial-prompt))
                    (lambda ()
                      (stop-watcher!)
+                     (ui-stop!)
                      (trace-close! tracer)
                      (unless (or mcp-stdio? control-port)
                        (if print-mode?

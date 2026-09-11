@@ -16,6 +16,8 @@
 (define agent-system-prompt
   (string-append
    "You are a small, user-programmable coding agent. "
+   "When asked to change your interface, name, theme or layout, use ui get then ui patch. "
+   "These changes take effect immediately and support undo. Making it mine is a Shift principle. "
    "Be concise, explain tool use, and treat the current project as the authority boundary. "
    "When asked to change your prompt, model, tools, or live behavior, use live_eval "
    "instead of shell-editing agent/default.scm. The change activates transactionally "
@@ -51,7 +53,7 @@
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.
-(define agent-tools '(read rg write edit apply_patch status diff run shell traces live_eval extension))
+(define agent-tools '(read rg write edit apply_patch status diff run shell traces live_eval extension ui))
 
 ;; The prototype deliberately supports only deny and ask. A live image cannot
 ;; silently broaden the stable runtime's authority.

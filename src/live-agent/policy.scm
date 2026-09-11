@@ -19,6 +19,7 @@
             prefixes)))
 (define* (tool-decision mode name arguments #:optional (run-allow '()))
   (let ((read-only? (or (member name '("read" "rg" "traces" "status" "diff"))
+                        (and (string=? name "ui") (equal? (json-object-ref arguments "action" "get") "get"))
                         (and (string=? name "extension")
                              (equal? (json-object-ref arguments "action" #f) "list"))))
         (allowed-run? (and (string=? name "run")
@@ -26,6 +27,6 @@
     (case mode
       ((manual) 'ask)
       ((plan) (if read-only? 'allow 'deny))
-      ((accept) (if (or read-only? allowed-run? (member name '("write" "edit" "apply_patch"))) 'allow 'ask))
-      ((auto) (if (or read-only? allowed-run?) 'allow 'ask))
+      ((accept) (if (or read-only? allowed-run? (member name '("write" "edit" "apply_patch" "ui"))) 'allow 'ask))
+      ((auto) (if (or read-only? allowed-run? (string=? name "ui")) 'allow 'ask))
       (else 'deny))))

@@ -449,6 +449,13 @@
 
 (define (tool-schema name)
   (cond
+   ((string=? name "ui")
+    (function-tool "ui"
+      "Inspect or change your live terminal UI without restarting. Actions get, patch, undo, reload, save. Get returns valid keys, theme_path, config, revision. Patch accepts only UI preference keys; identity replaces the theme label, branding replace replaces shift. Themes acid, paddock, blueprint or a custom Scheme data pack. Placement left/right/top/bottom/modal; sidebar auto/on/off; density compact/comfortable. Colors are ANSI indices 0..255. Saving a valid theme_path edit hot-reloads it. UI preferences persist for this session; save promotes them to user or project scope. UI changes do not change tool permissions."
+      (json-object (cons "action" (string-parameter "get, patch, undo, reload, save"))
+                   (cons "patch" (json-object (cons "type" "object")
+                                              (cons "description" "UI keys returned by get, with replacement values")))
+                   (cons "scope" (string-parameter "user or project, for save"))) '("action")))
    ((string=? name "read")
     (function-tool
      "read"

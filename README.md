@@ -8,6 +8,17 @@ This is intentionally not a production coding agent yet. The first question is
 whether changing agent behavior *inside a running session* feels materially
 better than editing and restarting a conventional extension.
 
+## Principle: making it mine
+
+Shift should become the user's own instrument. Identity, appearance, layout, and
+behavior are editable parts of the live environment. Defaults provide a starting
+point; users can replace the wordmark with their own name, move panels, build a
+theme, or ask Shift to change its interface immediately. Changes should be
+inspectable, reversible, and retained at the scope the user chooses.
+
+The runtime supports live behavior changes and an opt-in terminal interface with
+hot-reloaded presentation packs; see [the TUI guide](docs/daily-driver.md#terminal-interface).
+
 ## Try the live loop
 
 Requirements: Guile 3.0, [ripgrep](https://github.com/BurntSushi/ripgrep), and
@@ -64,6 +75,33 @@ generation active, and is retried after the file changes again. `/reload` is
 still available explicitly; `/reload-clean` intentionally drops session patches.
 Pass `--no-watch` to disable source watching. Redirected/scripted input defaults
 to watch off; pass `--watch` to opt in there.
+
+## Terminal interface
+
+```sh
+./bin/shift --tui
+```
+
+The TUI uses Python 3's standard-library curses adapter around the same Guile
+session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the three
+themes, and Ctrl+C cancels the active turn. For example:
+
+```text
+/name thrashr888
+/brand replace
+/place bottom
+/theme acid
+/ui save user
+```
+
+Ask the default agent to change its interface and it can use the `ui` tool.
+Theme, placement, identity, colors, section order, and wordmarks are live data.
+Custom Scheme presentation packs reload when saved; invalid updates preserve the
+working view. No local model is required to try the interface:
+
+```sh
+./bin/shift --tui --session ui-demo --set 'agent-model="demo"'
+```
 
 ## Durable named sessions
 

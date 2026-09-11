@@ -1,8 +1,9 @@
 # Daily-driver foundation
 
 This is the first implementation slice of [the agreed plan](daily-driver-plan.md).
-The REPL remains; TUI, dynamic skills, cross-session trace recall, extension packs,
-and model-tested automatic approval are later work.
+The REPL remains. An opt-in TUI now shares its session loop. Dynamic skills,
+cross-session trace recall, extension packs, and model-tested automatic approval
+remain later work.
 
 ## Projects and settings
 
@@ -305,3 +306,178 @@ session's filesystem permissions; normal runtime defaults were left alone.
 
 The live test covers Claude standard service. OpenAI fast/effort fields and Claude
 fast capability checks are fixture-tested; premium fast service was not exercised.
+
+
+## Terminal interface
+
+Launch `bin/shift --tui` from your project. It requires Python 3 with curses and
+an interactive terminal. It uses the existing Guile session, tool permissions,
+streaming, receipts, and cancellation; it does not start a separate agent. The
+REPL and print modes remain available. `--tui` is opt-in and cannot be combined
+with print or MCP stdio. No additional model is loaded by the frontend.
+
+The host terminal controls the font. Layout is measured in cells, with Unicode
+width-aware wrapping and clipping. Wide views dock the inspector; narrow or short
+views use an overlay when explicitly opened. Auto avoids overlays. Left/right
+placement uses width and height; top/bottom uses height. The prompt stays outside
+all overlays. The live transcript is bounded to 3,000 lines; resumed sessions show
+the last 50 persisted messages, with complete history available through traces.
+
+| Input | Action |
+| --- | --- |
+| Ctrl+B | Toggle inspector without discarding the draft |
+| Ctrl+P | Show the command reference |
+| F2 | Cycle Acid Garage, Paddock, and Blueprint |
+| Ctrl+W | Fold/unfold tool work lines |
+| PageUp / PageDown | Scroll the transcript |
+| Ctrl+C | Cancel the current turn, or clear the idle draft |
+| Ctrl+D | Exit and restore the terminal |
+| Escape | Dismiss an overlay/reference, or decline an approval |
+| `/name thrashr888` | Set personal identity |
+| `/brand replace` | Replace the wordmark with your name (`subtitle` or `none` also available) |
+| `/place bottom` | Place the inspector left/right/top/bottom/modal |
+| `/sidebar auto` | Select auto/on/off visibility |
+| `/theme acid` | Select a built-in or user-owned theme |
+| `/density compact` | Reduce transcript whitespace (`comfortable` restores it) |
+| `/ui get` | Inspect current configuration |
+| `/ui undo` | Restore the previous working UI revision |
+| `/ui reload` | Reload the selected presentation pack |
+| `/ui save user` | Promote preferences to user scope (`project` also available) |
+
+UI commands use a separate inherited pipe and remain responsive while the agent
+runs or waits for approval. Approval input is separate from the saved draft;
+presentation overlays are hidden during approval so the tool preview stays
+visible. The agent's `ui` tool supports get/patch/undo/reload/save. Manual mode
+asks for tool approval; plan mode permits only get. Accept and auto modes allow
+validated UI changes. No UI key can change execution policy or tool authority.
+Tool results and traces record the applied UI revision/configuration.
+
+Preferences live in `ui.json` beside existing settings: user config, project
+`.shift/`, and named session directory, in that precedence order. Patches are
+saved to the current session (project for an explicitly ephemeral REPL). Identity
+and explicit placement survive theme changes. There is a bounded, process-local
+undo stack separate from agent generations; it resets on restart.
+
+Presentation packs are one Scheme association list under `themes/NAME.scm` in
+the installation, user config, or project `.shift/` (project wins). `ui get`
+reports the active path. Copy a bundled pack under a new name to make it yours.
+Valid saved changes activate within the next half-second without restarting the
+agent. Packs are data, not executable Scheme, and are bounded at 32 KiB. The
+renderer supports colors (ANSI 0–255), three-line cell wordmarks, borders,
+density, placement, and inspector section order (`session`, `context`, `files`,
+`checks`). Theme defaults yield to explicit preferences. For example:
+
+```text
+/ui {"action":"patch","patch":{"accent":154,"ascii":true,"sections":["files","checks"]}}
+```
+
+The three built-ins vary in composition as well as palette: Acid Garage has a
+block wordmark and right inspector; Paddock has paper colors, compact spacing and
+a left inspector; Blueprint uses a spaced wordmark, double rules and a bottom
+strip. ASCII and reduced-color terminal fallbacks are available. No process RAM
+estimate is displayed unless measured; the context panel uses provider usage.
+
+Validation includes geometry across 450 size/placement/visibility combinations,
+Unicode clipping, a real PTY input/resize/exit test, live theme saves and rejected
+reloads, preference persistence, agent-driven UI patches, and UI updates while an
+approval waits. A browser mock remains a design reference, not rendering proof.
+Arbitrary executable component renderers and custom widgets remain future work;
+this implementation hot-swaps validated presentation data through a fixed cell
+renderer. It renders the existing transcript, rather than a new rich diff editor.
+
+## TUI design direction (September 10, 2026)
+
+Original design direction; the implemented subset and remaining limits are
+described above. The interactive study is
+`output/design/shift-tui/live-prototype.html`. It uses a simulated session and a
+small demonstration phrase parser; it does not call a provider or mutate Shift.
+
+The conversation and composer are the primary surface. Tool activity folds into
+one work section, with inline diffs available even when the inspector is hidden.
+The inspector adds session identity, context usage, changed files, connections,
+and the latest test result. Avoid repeating the full transcript in that panel.
+
+Inspector preference is `auto`, `on`, or `off`. Start Auto at 120 terminal columns,
+with a minimum readable conversation width and a bounded inspector width; tune
+this breakpoint in the real terminal. Narrow Auto hides the inspector. Explicit
+On docks it when it fits and uses an opaque dismissible drawer otherwise. Off
+remains hidden across resize. Ctrl+B toggles; the command menu restores Auto.
+Resize, theme changes, and toggles preserve draft, cursor, focus, scroll anchor,
+and expanded work sections. A drawer must leave the composer accessible.
+
+Ship three distinct presentation packs, rather than three palette swaps:
+
+- **Acid Garage (default):** purple, acid lime, cyan, a pixel wordmark and racing
+  stripes; airy transcript with a right inspector.
+- **Paddock:** warm paper, racing red and dark green; compact timing tables,
+  heavier rules, italic branding, and a left inspector.
+- **Blueprint:** cobalt and white with yellow highlights; technical annotation
+  columns, dashed rules, restrained branding, and sparse framing.
+
+All three render the same semantic session data. User packs can replace layout,
+component renderers, spacing, borders, glyphs, role styles, grouping, inspector
+contents, and status placement, as well as colors. Character-cell dimensions,
+terminal-selected font, Unicode width, and reduced-color/ASCII fallbacks remain
+real terminal constraints. The browser study approximates these, not pixel parity.
+
+### Making it mine
+
+Identity belongs to the user, independently of the theme. `thrashr888` can appear
+beside the wordmark or replace `shift` entirely. Theme names belong in the picker,
+not in the user's session header. Preserve exact casing; allow custom wordmarks,
+role labels, and optional branding. Custom names are display text, not executable
+markup or terminal escape sequences. Clip or wrap them by display-cell width.
+
+Panel placement is independent of visibility and theme: left, right, top, bottom,
+or a dismissible overlay. Theme defaults are suggestions; explicit user placement
+wins when themes change. Model layouts as bounded horizontal/vertical splits,
+stacks, and overlays with minimum sizes and overflow rules. This permits further
+user-defined arrangements without promising arbitrary pixels in a terminal.
+
+Character-cell feasibility is exercised by
+`output/design/shift-tui/terminal-layout.py --check`: 300 combinations of terminal
+size, placement, and visibility. It can print actual ASCII layouts, including
+80×24, without a browser. This proves geometry only, not a production renderer.
+Docked panels must not overlap the session, and overlays must not cover the
+composer. Short terminals need height fallbacks as well as width breakpoints.
+Below the supported minimum, retain a compact transcript and prompt.
+
+The actual renderer must use terminal rows/columns, display-width-aware clipping,
+and capability-aware color and glyph output. Large wordmarks require multi-cell
+ASCII/block art; proportional font sizing, pixel padding, shadows, and arbitrary
+font families in the browser mock are not terminal features. Verify resize,
+wrapping, focus, overlays, Unicode, and color fallbacks in a PTY before adopting a
+layout as implemented. Keep an ASCII mode and do not depend on italic support.
+
+### A live, user-owned presentation
+
+Use the existing permanent-runtime / user-owned-image split. Keep terminal I/O,
+input dispatch, authoritative session events, approval decisions, and recovery in
+the host; make presentation composition a reloadable Scheme extension. Render
+functions consume a read-only view of session data and return a bounded cell tree.
+Changing how an approval is drawn must not change what is being approved.
+
+Data preferences follow the existing user → project → session precedence. Add
+UI preferences for theme, inspector policy, density, section order, glyph style,
+and status fields. Session edits apply immediately; explicitly saving to project
+or user scope makes them defaults there. Presentation code loads through a
+validated generation boundary; ordinary appearance preferences should not consume
+the agent code-patch budget. Track a separate UI revision and retain the previous
+working presentation. A render error keeps the last good UI and exposes recovery
+through a host-owned command path.
+
+Give Shift tools to inspect the current UI configuration and capabilities, apply
+a validated preference patch, and undo its last UI change. Requests such as
+“hide telemetry,” “put files on the left,” or “make this more compact” should use
+those tools and redraw immediately, without restarting or losing a running turn.
+Structural requests can edit the user-owned presentation extension and activate
+it atomically after validation. Record the changed keys or source, scope, and UI
+revision in the receipt. A UI revision may change during streaming while the
+provider turn stays pinned to its original agent generation.
+
+Implement in this order: semantic session view and terminal adapter; responsive
+conversation/composer/inspector; the three interchangeable presentation packs;
+validated UI preference tools and persistence; hot-swappable render extensions.
+Validation must cover live resize during streaming, draft/focus retention,
+invalid preference patches, renderer failures and recovery, theme switching,
+scope precedence, narrow layouts, and non-color-only status indicators.

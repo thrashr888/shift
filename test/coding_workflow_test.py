@@ -170,6 +170,50 @@ class CodingWorkflow(unittest.TestCase):
 
     edit_notes = tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"})
 
+    def test_agent_ui_patch_is_immediate_durable_and_does_not_change_permissions(self):
+        self.agent.write_text(self.agent.read_text().replace('status diff run))', 'status diff run ui))'))
+        plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
+                tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
+        code, out, err = self.print_mode("Make this mine", plan, "--mode", "accept")
+        self.assertEqual(code, 0, err)
+        state = json.loads(self.tool_results()[-1])
+        self.assertEqual(state["config"]["identity"], "thrashr888")
+        self.assertEqual(state["config"]["placement"], "left")
+        saved = json.loads((self.state("p") / "ui.json").read_text())
+        self.assertEqual(saved["branding"], "replace")
+        self.assertEqual(self.checkpoint("p")["generation_id"], 1)
+        self.assertIn('"identity":"thrashr888"', self.shift('/ui\n/quit\n', session="p"))
+
+    def test_tui_ui_changes_while_approval_waits_preserve_draft_and_policy(self):
+        from tui_test import tui
+        from unittest.mock import patch
+        Provider.plan = [tool_call("read", {"path":"notes.txt"}), answer("Read was declined.")]
+        with patch.dict(os.environ, self.env):
+            child = tui.Child(self.command()[1:], cwd=self.project)
+        model = tui.Model()
+        def wait_for(predicate):
+            end = time.monotonic() + 10
+            while time.monotonic() < end:
+                child.poll(model)
+                if predicate(): return
+                time.sleep(.02)
+            self.fail(str(list(model.lines)))
+        try:
+            wait_for(lambda:model.ready)
+            model.draft, model.cursor = "keep my next prompt", 7
+            child.send("Read the file"); model.ready=False
+            wait_for(lambda:model.approval)
+            self.assertEqual(model.pending_draft, ("keep my next prompt", 7))
+            child.ui({"action":"patch", "patch":{"identity":"racer"}})
+            wait_for(lambda:model.config["identity"]=="racer")
+            self.assertTrue(model.approval)
+            child.send("n")
+            wait_for(lambda:model.ready)
+            self.assertEqual((model.draft, model.cursor), ("keep my next prompt", 7))
+            self.assertIn("tool unavailable", self.tool_results()[-1])
+        finally:
+            child.close()
+
     def test_dirty_git_checkout_undo_reverts_only_shift_changes(self):
         (self.project / "theirs.txt").write_text("user work\n")
         self.git("init", "-q")
