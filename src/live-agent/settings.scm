@@ -4,7 +4,7 @@
   #:use-module (live-agent json)
   #:use-module (live-agent generation)
   #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
-            settings-show settings-object load-dotenv!))
+            settings-show settings-object setting-source load-dotenv!))
 
 ;; Data only: never evaluate persisted preferences as Scheme. Live image code
 ;; cannot access this module or change the process-owned execution mode.
@@ -139,11 +139,13 @@
                                                    (decode (string->symbol (car entry)) (cdr entry))))
                              (json-object-entries (settings-object generation))))
     path))
+(define (setting-source key)
+  (or (assq-ref sources key) 'default))
 (define (settings-show generation)
   (for-each
    (lambda (key)
      (format #t "~a ~a (~a)~%" key (setting-ref generation key)
-             (or (assq-ref sources key) 'default)))
+             (setting-source key)))
    (append bindings (map car defaults))))
 
 (define (load-dotenv! path)

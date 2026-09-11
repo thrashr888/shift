@@ -161,7 +161,9 @@ Homebrew one.
 
 Every mode except plan asks before a run. The answer `a` approves it and adds the
 exact argv to this session's allowlist; `/run allow cargo test` adds a prefix,
-`/run deny cargo test` removes it, and `/run list` shows them. Allowlisted prefixes
+`/run deny cargo test` removes it, and `/run list` shows them with their settings
+source (`user`, `project`, `session`, or `default`). Terminal changes are session
+preferences; lists replace lower-priority lists rather than merging them. Allowlisted prefixes
 run without asking in accept and auto, never in manual, and match exact leading
 elements only. `/settings save` promotes the list like any other preference. MCP
 callers cannot approve or extend it.

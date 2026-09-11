@@ -1410,8 +1410,11 @@
     (cond
      ((or (null? parts) (equal? parts '("list")))
       (if (null? current)
-          (display "Run allowlist is empty; answer a at a run prompt or use /run allow ARGV...\n")
-          (for-each (lambda (prefix) (format #t "allow ~a~%" (string-join prefix " "))) current)))
+          (format #t "Run allowlist is empty (~a); answer a at a run prompt or use /run allow ARGV...~%"
+                  (setting-source 'run-allow))
+          (for-each (lambda (prefix)
+                      (format #t "allow ~a (~a)~%" (string-join prefix " ")
+                              (setting-source 'run-allow))) current)))
      ((and (string=? (car parts) "allow") (pair? (cdr parts)))
       (unless (member (cdr parts) current)
         (settings-set! (list (cons 'run-allow (append current (list (cdr parts)))))))
