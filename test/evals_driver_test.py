@@ -34,7 +34,7 @@ receipt.write_text(json.dumps({'status':'ok','rounds':1,'tool_calls':{'edit':1},
 print('fixed')
 ''')
         agent.chmod(0o755)
-        (self.root / "Makefile").write_text("build:\n\t@true\n")
+        (self.root / "Makefile").write_text("build test:\n\t@true\n")
         (self.root / ".gitignore").write_text("evals/work/\nevals/results/\n.env\n")
         (self.root / "value.txt").write_text("committed")
         task = self.root / "evals/dogfood/example"
@@ -75,6 +75,43 @@ print('fixed')
         self.assertIn("untracked.txt", tracked)
         with self.assertRaises(FileExistsError):
             evals.dogfood(self.args)
+
+    def test_hidden_pass_with_regression_failure_is_not_resolved(self):
+        (self.root / "Makefile").write_text("build:\n\t@true\ntest:\n\t@false\n")
+        with patch.object(evals, "memory_snapshot", return_value={"pressure": 1}):
+            evals.dogfood(self.args)
+        record = json.loads((self.root / "evals/results/trial/results.jsonl").read_text())
+        self.assertEqual(record["grade_exit_code"], 0)
+        self.assertNotEqual(record["regression_exit_code"], 0)
+        self.assertFalse(record["resolved"])
+
+    def test_interrupt_preserves_patch_without_grading_or_next_task(self):
+        original = evals.logged_run
+        calls = []
+        def interrupt_model(command, repo, env, timeout, prefix):
+            calls.append(prefix.name)
+            if prefix.name == "model":
+                (repo / "value.txt").write_text("partial")
+                Path(str(prefix) + ".stdout.log").write_text("")
+                Path(str(prefix) + ".stderr.log").write_text("")
+                raise KeyboardInterrupt
+            return original(command, repo, env, timeout, prefix)
+        self.args.tasks = "example,second"
+        import shutil
+        shutil.copytree(self.root / "evals/dogfood/example", self.root / "evals/dogfood/second")
+        with patch.object(evals, "memory_snapshot", return_value={"pressure": 1}), \
+             patch.object(evals, "logged_run", side_effect=interrupt_model):
+            with self.assertRaises(SystemExit) as stopped:
+                evals.dogfood(self.args)
+        self.assertEqual(stopped.exception.code, 130)
+        output = self.root / "evals/results/trial"
+        record = json.loads((output / "results.jsonl").read_text())
+        self.assertEqual(record["failure_class"], "user_stop")
+        self.assertIsNone(record["resolved"])
+        self.assertIsNone(record["grade_exit_code"])
+        self.assertIn("+partial", (output / "patches/example.diff").read_text())
+        self.assertEqual(calls, ["baseline-build", "baseline", "model"])
+        self.assertFalse((self.root / "evals/work/dogfood/trial/second").exists())
 
     def test_pressure_prevents_starting_a_task(self):
         with patch.object(evals, "memory_snapshot", return_value={"pressure": 2}):

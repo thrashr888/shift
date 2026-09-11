@@ -101,6 +101,42 @@ output reserve. That fix is regression-tested; this batch has not been rerun
 with it. This rerun changes both provider and model, so it does not
 isolate the effect of retries or the finish nudge.
 
+## Dogfood assessment, September 10, 2026
+
+Two tasks were attempted with `ollama/qwen3.8:27b-mlx` against clean commit
+`35eb811`, locally, in `evals/results/dogfood-2-qwen`. One hidden-test pass
+from one graded attempt; the second attempt was stopped by the user and is
+ungraded. **Neither attempt delivered a completed, regression-clean patch.**
+
+| Task | Outcome | Rounds | Prompt tokens | Output tokens | Wall time |
+| --- | --- | ---: | ---: | ---: | ---: |
+| status-last-undo | Hidden test passed; token budget exhausted; final coding suite had 3 failures | 38 | 2,007,389 | 5,657 | 861.8 s |
+| run-list-source | User stopped; no edits or final receipt | — | — | — | — |
+
+All first-task prompt tokens were uncached. Its implementation correctly exposed
+undo chronology, but its tests mutated an existing shared fixture and included
+an incorrect expected turn. Local follow-up isolated that fixture and corrected
+the assertion. The allowlist source feature was implemented locally after the
+second attempt stopped; it is not a model success. Both external acceptance tests
+and the full regression suite validate the repaired tree. Original candidate
+patches and logs remain unchanged for assessment.
+
+Qwen's reported allocation grew from about 21 GB to 34 GB with a 131,072-token
+context. Sampled macOS pressure stayed normal, while swap jumped from about
+4.3 GB to 11.2 GB around the second task's start. The timing does not establish
+which process caused the increase. Context size and container limits do not cap
+the host Ollama allocation; pressure-only checks missed the swap increase.
+No more model runs are planned for this batch.
+
+The driver now saves a partial patch and an ungraded `user_stop` result on
+interruption, then exits without starting another workload. A hidden-test pass
+also requires `make test` to pass before future attempts count as resolved;
+`grade_exit_code` and `regression_exit_code` distinguish the two checks. These
+changes do not retroactively alter the original result. The two implemented
+tickets now serve as regression cases: their baseline checks intentionally refuse
+to launch another model against a tree where they already pass. New dogfood
+attempts need an unsolved ticket.
+
 ## Why now
 
 On September 8 Shift implemented one of its own RFC features in a single turn
@@ -132,17 +168,21 @@ run locally; this path does not use agentkernel.
 
 Results, patches, receipts, build/grader/model logs, and memory samples live under
 `evals/results/NAME/`. Existing run names are refused. Model output goes directly
-to disk; timeouts terminate the attempt's process group. On macOS, elevated
+to disk; timeouts terminate the attempt's process group. User interruption saves
+the partial patch without starting grading or another task. A hidden-test pass
+is followed by the candidate's full `make test` suite before declaring resolution. On macOS, elevated
 memory pressure prevents starting another task. Defaults are Qwen via Ollama,
 40 tool rounds, 2M uncached-plus-output tokens, a 131,072-token context window,
 an 8,192-token output reserve, a 1,800-second timeout, and a one-minute model
 keep-alive. These are recorded in the run configuration and do not change the
 SWE-bench defaults.
 
-- Cost: a few hundred thousand input tokens for the whole set with caching on.
+- Cost target: a few hundred thousand input tokens with caching. The first
+  uncached local-model task used 2M prompt tokens, exceeding that target.
 - Measures the loop, not the model: tool choice, stale handling, approval flow,
   round limits, and whether the model's summary matches the diff.
-- Runs in minutes, no Docker, no dataset download. This is the regression
+- No Docker or dataset download. The first local-model task took 14.4 minutes;
+  cheap repeatability remains unproven. This is the regression
   suite for the coding workflow.
 
 ### 2. SWE-bench Verified, a fixed 25-instance slice

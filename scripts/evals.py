@@ -516,18 +516,26 @@ def dogfood(args):
                    "--set", "output-reserve=8192", "--set", 'agent-keep-alive="1m"']
         log(f"dogfood {name}: baseline fails; running {args.model}")
         started = time.monotonic()
-        exit_code = logged_run(command, repo, env, args.timeout, logs / "model")
+        interrupted = False
+        try:
+            exit_code = logged_run(command, repo, env, args.timeout, logs / "model")
+        except KeyboardInterrupt:
+            # logged_run has reaped the attempt. Preserve evidence without
+            # launching a build, grader, or another model after a user stop.
+            interrupted, exit_code = True, 130
         wall = round(time.monotonic() - started, 1)
         patch = model_patch(repo)
         (run_dir / "patches" / f"{name}.diff").write_text(patch)
-        build_code = logged_run(["make", "build"], repo, env, 300, logs / "grade-build")
+        build_code = None if interrupted else logged_run(["make", "build"], repo, env, 300, logs / "grade-build")
         grade_code = logged_run(grader, repo, env, 120, logs / "grade") if build_code == 0 else None
+        regression_code = logged_run(["make", "test"], repo, env, 600, logs / "regression") if grade_code == 0 else None
         stderr = log_tail(logs / "model.stderr.log")
         record = {"instance_id": name, "model": args.model, "backend": "local", "exit_code": exit_code,
                   "wall_s": wall, "baseline_exit_code": baseline, "build_exit_code": build_code,
-                  "grade_exit_code": grade_code, "resolved": grade_code == 0,
+                  "grade_exit_code": grade_code, "regression_exit_code": regression_code,
+                  "resolved": None if interrupted else grade_code == 0 and regression_code == 0,
                   "patch_bytes": len(patch.encode()),
-                  "failure_class": "wall_timeout" if exit_code == 124 else classify(exit_code, stderr, patch),
+                  "failure_class": "user_stop" if interrupted else "wall_timeout" if exit_code == 124 else classify(exit_code, stderr, patch),
                   "answer_tail": log_tail(logs / "model.stdout.log", 600), "stderr_tail": stderr,
                   **collect(receipt)}
         with (run_dir / "results.jsonl").open("a") as handle:
@@ -535,6 +543,9 @@ def dogfood(args):
         with (run_dir / "resources.jsonl").open("a") as handle:
             handle.write(json.dumps({"task": name, "phase": "after", **memory_snapshot()}) + "\n")
         records.append(record)
+        if interrupted:
+            log(f"{name}: stopped; partial patch and result saved to {run_dir}")
+            raise SystemExit(130)
         log(f"  resolved={record['resolved']} · {record['failure_class']} · {record['rounds']} rounds · {wall}s")
     log(f"resolved {sum(r['resolved'] for r in records)}/{len(records)}; results: {run_dir}")
 
