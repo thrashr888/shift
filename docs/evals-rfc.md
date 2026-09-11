@@ -12,7 +12,8 @@ The receipt landed September 9, 2026; `scripts/evals.py` now reads each
 instance's `--receipt` file instead of reconstructing the turn from traces
 and the ledger. Provider retries landed September 10, 2026, along with a
 once-per-turn limit nudge (three rounds left or 80% of the budget) aimed at
-the five round-limit misses. The dogfood task set is not implemented.
+the five round-limit misses. The first two dogfood tasks and the local runner
+are implemented; the remaining three tasks have not been selected.
 
 Rerun of the two misses with the corrected budget, September 9, 2026
 (`evals/results/misses-2`): still 0 of 2. Sphinx-10435 patched
@@ -114,11 +115,29 @@ to the coding loop, not once a quarter.
 
 ### 1. Self-dogfood tasks
 
-Ten hand-written tasks against Shift's own repository, each a short ticket
-plus a hidden test file that the task must make pass. The driver checks out a
-fixed commit, runs Shift with the ticket, then runs the hidden test. Examples:
-the `undoable turns` line, a `/run list` source column, an `apply_patch`
-error message, a `status` line for the last undo.
+Hand-written tasks against Shift's own repository, each a short ticket plus
+a hidden test file that the task must make pass. The first two are
+`status-last-undo` (successful undo chronology and ledger replay) and
+`run-list-source` (settings precedence, terminal changes, and resume).
+
+`scripts/evals.py dogfood --tasks status-last-undo,run-list-source --run-id NAME`
+runs them sequentially. Each gets a fresh snapshot of the current working tree,
+including non-ignored uncommitted files, with `evals/`, `.env`, and Git history
+excluded. A fresh Git baseline captures the resulting patch. The host Shift
+runtime conducts the attempt; the candidate's own code is rebuilt and tested
+in its snapshot. Hidden tests run from outside the snapshot, before the model
+to establish failure and again afterwards to grade the patch. They are withheld
+from the model's checkout, not protected by an OS sandbox. Dogfood test commands
+run locally; this path does not use agentkernel.
+
+Results, patches, receipts, build/grader/model logs, and memory samples live under
+`evals/results/NAME/`. Existing run names are refused. Model output goes directly
+to disk; timeouts terminate the attempt's process group. On macOS, elevated
+memory pressure prevents starting another task. Defaults are Qwen via Ollama,
+40 tool rounds, 2M uncached-plus-output tokens, a 131,072-token context window,
+an 8,192-token output reserve, a 1,800-second timeout, and a one-minute model
+keep-alive. These are recorded in the run configuration and do not change the
+SWE-bench defaults.
 
 - Cost: a few hundred thousand input tokens for the whole set with caching on.
 - Measures the loop, not the model: tool choice, stale handling, approval flow,

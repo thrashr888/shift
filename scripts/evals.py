@@ -5,6 +5,7 @@
     scripts/evals.py slice                      write the seeded 25-instance slice
     scripts/evals.py run [--instances A,B] ...  run Shift in print mode per instance
     scripts/evals.py grade RUN_ID               grade a run with the official harness
+    scripts/evals.py dogfood [--tasks A,B]       attempt current-tree tickets and run hidden local tests
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -18,6 +19,7 @@ import os
 import collections
 import json
 import random
+import signal
 import shutil
 import subprocess
 import sys
@@ -382,6 +384,161 @@ def grade(args):
                 f"{data.get('resolved_ids', [])}")
 
 
+def dogfood_snapshot(destination):
+    """Copy the current working tree, without evals, .env, or Git history.
+    The fresh Git baseline is only a fixture for collecting the model patch."""
+    destination.mkdir(parents=True)
+    paths = sh(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT).stdout
+    for name in dict.fromkeys(paths.split("\0")):
+        if not name or name.split("/", 1)[0] in {"evals", ".git", ".shift", ".env"}:
+            continue
+        source, target = ROOT / name, destination / name
+        if not source.exists() and not source.is_symlink():
+            continue  # Preserve working-tree deletions.
+        if source.is_symlink() and not source.resolve().is_relative_to(ROOT):
+            raise RuntimeError(f"snapshot symlink escapes the project: {name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
+    sh(["git", "init", "-q"], cwd=destination)
+    sh(["git", "add", "-A"], cwd=destination)
+    sh(["git", "-c", "user.name=Shift eval fixture", "-c", "user.email=eval@localhost",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "Snapshot evaluation input"], cwd=destination)
+
+
+def logged_run(command, repo, env, timeout, prefix):
+    """Keep output on disk and reap this workload's process group on timeout."""
+    with Path(str(prefix) + ".stdout.log").open("w") as out, Path(str(prefix) + ".stderr.log").open("w") as err:
+        process = subprocess.Popen(command, cwd=repo, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=out, stderr=err, start_new_session=True)
+        def stop_group():
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            # A child may outlive the group leader or ignore SIGTERM.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_group()
+            return 124
+        except BaseException:
+            stop_group()
+            raise
+
+
+def log_tail(path, size=2000):
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - size))
+        return handle.read().decode(errors="replace")
+
+
+def memory_snapshot():
+    sample = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if sys.platform == "darwin":
+        pressure = sh(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], timeout=5)
+        sample["pressure"] = int(pressure.stdout.strip())
+        sample["swap"] = sh(["sysctl", "-n", "vm.swapusage"], timeout=5).stdout.strip()
+    ollama = shutil.which("ollama")
+    if ollama:
+        sample["ollama"] = sh([ollama, "ps"], timeout=10, check=False).stdout.strip()
+    return sample
+
+
+def dogfood(args):
+    tasks_root = EVALS / "dogfood"
+    names = args.tasks.split(",") if args.tasks else sorted(p.name for p in tasks_root.iterdir() if p.is_dir())
+    if not names or len(names) != len(set(names)):
+        raise ValueError("select at least one task, without duplicates")
+    for name in names:
+        if not name or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for c in name):
+            raise ValueError(f"invalid task name: {name}")
+        for file in ("task.md", "test.py"):
+            if not (tasks_root / name / file).is_file():
+                raise ValueError(f"missing {name}/{file}")
+    run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S") + "-dogfood"
+    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+        raise ValueError("run-id must be a directory name")
+    run_dir = RESULTS / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    config = {**vars(args), "base_commit": sh(["git", "rev-parse", "HEAD"], cwd=ROOT).stdout.strip(),
+              "source_status": sh(["git", "status", "--porcelain"], cwd=ROOT).stdout}
+    (run_dir / "config.json").write_text(json.dumps(config, indent=2))
+    for subdir in ("receipts", "patches", "logs"):
+        (run_dir / subdir).mkdir()
+    env = environment()
+    # Personal preferences must not change the eval's settings or allowlist.
+    env["XDG_CONFIG_HOME"] = str(run_dir / "empty-config")
+    env["SHIFT_TOOL_CEILING"] = "read,rg,write,edit,apply_patch,status,diff,run"
+    records = []
+    for name in names:
+        resource = memory_snapshot()
+        with (run_dir / "resources.jsonl").open("a") as handle:
+            handle.write(json.dumps({"task": name, "phase": "before", **resource}) + "\n")
+        if resource.get("pressure", 1) != 1:
+            raise RuntimeError("macOS memory pressure is elevated; no new task started")
+        repo = WORK / "dogfood" / run_id / name / "repo"
+        dogfood_snapshot(repo)
+        logs = run_dir / "logs" / name
+        logs.mkdir()
+        grader = [sys.executable, str(tasks_root / name / "test.py")]
+        if logged_run(["make", "build"], repo, env, 300, logs / "baseline-build"):
+            raise RuntimeError(f"{name}: baseline build failed; see {logs}")
+        baseline = logged_run(grader, repo, env, 120, logs / "baseline")
+        if baseline != 1:
+            raise RuntimeError(f"{name}: expected a failing baseline test (exit 1), got {baseline}; see {logs}")
+        resource = memory_snapshot()
+        with (run_dir / "resources.jsonl").open("a") as handle:
+            handle.write(json.dumps({"task": name, "phase": "before-model", **resource}) + "\n")
+        if resource.get("pressure", 1) != 1:
+            raise RuntimeError("macOS memory pressure is elevated; model attempt not started")
+        prompt = (tasks_root / name / "task.md").read_text() + (
+            "\n\nWork in this checkout. Implement the ticket, run focused existing tests, "
+            "then inspect status and diff and summarize. Do not commit. "
+            "The external grading tests are intentionally not in this checkout; do not look for them."
+        )
+        receipt = run_dir / "receipts" / f"{name}.json"
+        command = [str(ROOT / "bin/shift"), "--print", prompt, "--mode", "accept",
+                   "--model", args.model, "--session", name, "--no-watch", "--no-mcp",
+                   "--receipt", str(receipt), "--allow-run", "make build", "--allow-run", "make test",
+                   "--allow-run", "make check", "--allow-run", "guile",
+                   "--allow-run", "python3", "--set", f"agent-max-tool-rounds={args.rounds}",
+                   "--set", f"turn-token-budget={args.budget}", "--set", f"context-limit={args.context_limit}",
+                   "--set", "output-reserve=8192", "--set", 'agent-keep-alive="1m"']
+        log(f"dogfood {name}: baseline fails; running {args.model}")
+        started = time.monotonic()
+        exit_code = logged_run(command, repo, env, args.timeout, logs / "model")
+        wall = round(time.monotonic() - started, 1)
+        patch = model_patch(repo)
+        (run_dir / "patches" / f"{name}.diff").write_text(patch)
+        build_code = logged_run(["make", "build"], repo, env, 300, logs / "grade-build")
+        grade_code = logged_run(grader, repo, env, 120, logs / "grade") if build_code == 0 else None
+        stderr = log_tail(logs / "model.stderr.log")
+        record = {"instance_id": name, "model": args.model, "backend": "local", "exit_code": exit_code,
+                  "wall_s": wall, "baseline_exit_code": baseline, "build_exit_code": build_code,
+                  "grade_exit_code": grade_code, "resolved": grade_code == 0,
+                  "patch_bytes": len(patch.encode()),
+                  "failure_class": "wall_timeout" if exit_code == 124 else classify(exit_code, stderr, patch),
+                  "answer_tail": log_tail(logs / "model.stdout.log", 600), "stderr_tail": stderr,
+                  **collect(receipt)}
+        with (run_dir / "results.jsonl").open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+        with (run_dir / "resources.jsonl").open("a") as handle:
+            handle.write(json.dumps({"task": name, "phase": "after", **memory_snapshot()}) + "\n")
+        records.append(record)
+        log(f"  resolved={record['resolved']} · {record['failure_class']} · {record['rounds']} rounds · {wall}s")
+    log(f"resolved {sum(r['resolved'] for r in records)}/{len(records)}; results: {run_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -406,8 +563,17 @@ def main():
     grader.add_argument("run_id")
     grader.add_argument("--workers", type=int, default=2)
     grader.add_argument("--instances", help="comma-separated subset of the run's instances to grade again")
+    dogfooder = commands.add_parser("dogfood", help="run hidden local tests against fresh current-tree snapshots")
+    dogfooder.add_argument("--tasks", help="comma-separated task directory names")
+    dogfooder.add_argument("--model", default="ollama/qwen3.8:27b-mlx")
+    dogfooder.add_argument("--rounds", type=int, default=40)
+    dogfooder.add_argument("--budget", type=int, default=2000000)
+    dogfooder.add_argument("--context-limit", type=int, default=131072)
+    dogfooder.add_argument("--timeout", type=int, default=1800)
+    dogfooder.add_argument("--run-id")
     args = parser.parse_args()
-    {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade}[args.command](args)
+    {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
+     "dogfood": dogfood}[args.command](args)
 
 
 if __name__ == "__main__":
