@@ -193,7 +193,6 @@ def layout(cols, rows, config):
     horizontal=place in ('top','bottom')
     qdos=config.get('theme')=='qdos'
     top=5 if horizontal or qdos else 7
-    if config.get('theme')=='apex' and not horizontal:top=4+max(1,min(3,len(config.get('wordmark',[]))))
     body = Rect(0, top, cols, rows-top-5)
     session = Rect(body.x, body.y, body.w, body.h)
     fits = cols >= (72 if qdos else 96) and body.h >= (8 if qdos else 10) if not horizontal else cols >= 72 and body.h >= 12
@@ -257,7 +256,7 @@ class Model:
         self.current_turn = None
         self.streaming_role = None
         self.line_roles={}
-        self.themes=['acid','apex','afterhours','paddock','blueprint']
+        self.themes=['acid','paddock','blueprint','qdos']
         self.approval_preview=''
         self.command_request=0
         self.command_pending=None
@@ -343,7 +342,8 @@ class Model:
         elif kind == 'session-command-result':
             if value.get('request_id')==self.command_pending:
                 self.command_pending=None
-                self.notice=clean(value.get('message','Mode changed') if value.get('ok') else value.get('error','Mode change rejected'))
+                message=value.get('message','Mode changed') if value.get('ok') else value.get('error','Mode change rejected')
+                self.notice=' · '.join(clean(part).strip() for part in str(message).splitlines() if part.strip())
         elif kind == 'history':
             for message in value:
                 if message.get('role') in ('user','assistant') and isinstance(message.get('content'),str):
@@ -834,8 +834,11 @@ class Terminal:
         m=self.model
         badge=' '+m.session.get('mode','manual').upper()+' '
         state=m.status()
-        details=str(m.session.get('name','default'))+' | '+str(m.session.get('model','starting'))
+        name=str(m.session.get('name','default'))
+        details=name+' | '+str(m.session.get('model','starting'))
         room=max(0,width-len(badge)-len(state)-4)
+        # A truncated model name misleads; the Session tab keeps the full value.
+        if sum(cell_width(ch) for ch in details)>room:details=name
         self.put(y,x,details,room,1)
         self.button(y,x+room+2,badge,len(badge),('mode',None),9)
         self.put(y,x+room+len(badge)+3,state,len(state),3 if state=='WORKING' else 4,True)
@@ -847,7 +850,7 @@ class Terminal:
         build='loaded '+m.source_identity['loaded']['label']
         if cols>=60:self.put(0,max(0,cols-len(build)-2),build,min(len(build),cols-2),4)
         horizontal=c['placement'] in ('top','bottom')
-        strip_y=2+max(1,min(3,len(c.get('wordmark',[])))) if c['theme']=='apex' else 5
+        strip_y=5
         brand=c['identity'] if c['branding']=='replace' else 'shift'
         title=brand+' ///' if c['branding']!='none' else c['identity']
         wordmark=c.get('wordmark',['shift ///'])
@@ -979,7 +982,7 @@ class Terminal:
                 rows.append([('  '+label.ljust(7),3,True),(subject,1,False)]+stats+
                              [(' '*padding+tail,4 if not result or result.get('ok') else 11,False)])
                 if result and not result.get('ok'):
-                    rows.extend([[(line,11,False)] for line in wrap('    '+str(result.get('summary','Tool failed')),width)])
+                    rows.extend([[('    '+line,11,False)] for line in wrap(str(result.get('summary','Tool failed')),max(1,width-4),words=True)])
         if inline_diff and group.get('diff'):
             count=len([line for line in group['diff'].splitlines() if line.startswith(('+','-')) and not line.startswith(('+++','---'))])
             rows.extend([[('',1,False)],[(arrow(m.show_diff)+' OUTPUT DIFF  ',3,True),(str(count)+' changed lines',4,False)]])
@@ -1176,7 +1179,8 @@ class Terminal:
             source=positions[start][0]
             previous=next((lines[j] for j in range(start-1,-1,-1) if positions[j][0]==source and positions[j][1]==-1),None)
             role=m.line_roles.get(source)
-            sticky=previous or ([(role.upper(),3 if role=='user' else 2,True)] if role else None)
+            label={'user':'USER','assistant':'SHIFT','thinking':'THINKING'}.get(role,str(role).upper())
+            sticky=previous or ([(label,3 if role=='user' else 2,True)] if role else None)
         if sticky:self.spans(session.y,session.x+2,sticky,session.w-4)
         for i,parts in enumerate(lines[start:min(end,start+height-(1 if sticky else 0))]):
             self.spans(session.y+i+(1 if sticky else 0),session.x+2,parts,session.w-4)
@@ -1229,12 +1233,19 @@ class Terminal:
             self.hit(input_y,cols-hint_width+24,8,('theme',None))
         tab_hint='Tab pane  ' if panel and (mode=='overlay' or c['placement'] not in ('top','bottom')) else ''
         if tab_hint and m.panel_tab!='work':tab_hint+='PgUp/PgDn pane  '
-        footer=m.notice if m.approval else '^B sidebar  ^P commands  S-Tab mode  '+tab_hint+'^W work  ^O diff  ^C cancel  ^D quit'
+        def fit(prefix,hints):
+            # Drop the least essential hints until the row fits the width.
+            for drop in ('PgUp/PgDn pane','^O diff','^W work','Tab pane','S-Tab mode','^B sidebar'):
+                if len(prefix+'  '.join(hints))<=cols:break
+                hints=[hint for hint in hints if hint!=drop]
+            return prefix+'  '.join(hints)
+        hints=['^B sidebar','^P commands','S-Tab mode']+tab_hint.split('  ')[:-1]+['^W work','^O diff','^C cancel','^D quit']
+        footer=m.notice if m.approval else fit('',hints)
         if cols<60:footer='Enter reply  Esc no  ^C cancel' if m.approval else '^P help  ^B panel  ^C cancel  ^D quit'
         if cols<36:
             footer='Esc no  ^C stop' if m.approval else '^C stop  ^D quit' if not m.ready else '^P help  ^D quit'
             if m.scroll and not m.approval:footer='PgDn latest  ^D quit'
-        elif m.scroll:footer=('up '+str(m.scroll)+' | ^G latest | ^D quit') if cols<60 else 'scroll '+str(m.scroll)+' | ^G latest | '+footer
+        elif m.scroll:footer=('up '+str(m.scroll)+' | ^G latest | ^D quit') if cols<60 else fit('scroll '+str(m.scroll)+' | ^G latest | ',hints)
         elif transcript_start>0 and not m.approval and not compact:footer='Latest | ^G latest | ^D quit' if cols<60 else 'Latest (earlier above) | ^G latest | ^P commands | ^D quit'
         self.put(rows-1,0,footer,cols,4)
         for label,action in (('^B sidebar',('sidebar',None)),('^B panel',('sidebar',None)),('^P commands',('commands',None)),('^P help',('commands',None)),('S-Tab mode',('mode',None))):

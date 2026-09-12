@@ -271,7 +271,60 @@ class StructuredViews(unittest.TestCase):
     def text(self,terminal):
         return '\n'.join(terminal.screen.line(y) for y in range(terminal.screen.size[0]))
 
-    def test_active_apex_has_ordered_work_and_real_diff_pane(self):
+    def test_sticky_role_header_uses_transcript_labels(self):
+        terminal=self.active()
+        m=terminal.model
+        m.event({'type':'transcript','value':{'role':'assistant','text':'\n'.join('Paragraph '+str(i)+' '+'word '*30 for i in range(40))}})
+        m.scroll=8;terminal.draw()
+        session,_,_=tui.layout(128,40,m.config)
+        top=terminal.screen.line(session.y)
+        self.assertIn('SHIFT',top);self.assertNotIn('ASSISTANT',self.text(terminal))
+
+    def test_failed_tool_summary_wraps_with_hanging_indent(self):
+        terminal=self.active(placement='bottom',cols=80,rows=30)
+        m=terminal.model
+        m.event({'type':'tool','value':{'turn':1,'id':3,'name':'read','summary':'notes.txt','at':'17:16'}})
+        m.event({'type':'tool-result','value':{'turn':1,'id':3,'ok':False,
+                 'summary':'tool unavailable in this turn: read. The active image, execution mode, or approval denied it. Continue without it.'}})
+        terminal.draw()
+        rows=[terminal.screen.line(y) for y in range(30) if 'Continue without it' in terminal.screen.line(y) or 'tool unavailable' in terminal.screen.line(y)]
+        self.assertEqual(len(rows),2,rows)
+        self.assertTrue(all(row.startswith('      ') for row in rows),rows)
+        self.assertNotIn(' it. Continue',rows[0])
+
+    def test_multiline_command_result_becomes_one_notice_line(self):
+        m=tui.Model();m.command_pending=3
+        m.event({'type':'session-command-result','value':{'request_id':3,'ok':True,
+                 'message':'Mode: auto\nAuto is conservative: read-only tools run.'}})
+        self.assertEqual(m.notice,'Mode: auto · Auto is conservative: read-only tools run.')
+        self.assertIsNone(m.command_pending)
+
+    def test_footer_hints_fit_eighty_columns_in_qdos(self):
+        terminal=self.active(placement='left',cols=80,rows=25)
+        terminal.model.config['theme']='qdos';terminal.draw()
+        footer=terminal.screen.line(24).rstrip()
+        self.assertTrue(footer.endswith('^D quit'),footer)
+        self.assertIn('^P commands',footer);self.assertIn('^C cancel',footer)
+        for i in range(60):terminal.model.lines.append('line '+str(i))
+        terminal.model.scroll=3;terminal.draw()
+        footer=terminal.screen.line(24).rstrip()
+        self.assertTrue(footer.startswith('scroll 3 | ^G latest'),footer)
+        self.assertTrue(footer.endswith('^D quit'),footer)
+
+    def test_header_drops_model_before_clipping_it_mid_word(self):
+        terminal=self.active(placement='bottom',cols=80,rows=25)
+        m=terminal.model
+        m.config.update(theme='acid',wordmark=[' ▄▄ █   ▀  █▀  █ ','▀▄  █▀▄ █ ▀█▀ ▀█▀ ///','▄▄▀ █ █ █  █   ▀▄'])
+        m.session['model']='offline-fixture-with-a-long-name'
+        terminal.draw()
+        header='\n'.join(terminal.screen.line(y) for y in range(5))
+        self.assertIn('main',header)
+        self.assertNotIn('offline-f',header)
+        terminal.screen.size=(40,128);terminal.draw()
+        header='\n'.join(terminal.screen.line(y) for y in range(5))
+        self.assertIn('main | offline-fixture-with-a-long-name',header)
+
+    def test_active_acid_has_ordered_work_and_real_diff_pane(self):
         terminal=self.active()
         text=self.text(terminal)
         session,panel,mode=tui.layout(128,40,terminal.model.config)
@@ -284,7 +337,7 @@ class StructuredViews(unittest.TestCase):
         self.assertNotIn('PASS',text)
         self.assertIn('MODEL MEM N/A',text)
 
-    def test_afterhours_groups_toggle_and_survive_resize(self):
+    def test_bottom_placement_groups_toggle_and_survive_resize(self):
         terminal=self.active('bottom')
         m=terminal.model
         session,panel,_=tui.layout(128,40,m.config)
@@ -680,7 +733,7 @@ class Interaction(unittest.TestCase):
         self.t.key('\n');self.t.child.send.assert_not_called()
 
     def test_theme_registry_cycles_bare_f2_and_pending_approval_without_answers(self):
-        self.m.themes=['acid','apex','custom'];self.m.config['theme']='custom'
+        self.m.themes=['acid','paddock','custom'];self.m.config['theme']='custom'
         for state in ('ready','working','needs_approval'):
             self.m.control(state)
             self.assertTrue(self.t.local('/theme'))

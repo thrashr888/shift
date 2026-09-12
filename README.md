@@ -104,10 +104,10 @@ make
 
 The TUI uses Python 3's standard-library curses adapter around the same Guile
 session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the
-themes, and Ctrl+C cancels the active turn. `/theme apex` selects the split
-transcript/output layout; `/theme afterhours` selects a full-width transcript and
-bottom telemetry. Tab switches side-pane views; Ctrl+W/Ctrl+O fold real work/diffs.
-Both use a lowercase pixel wordmark and deep-purple RGB palette on capable
+themes, and Ctrl+C cancels the active turn. Acid keeps a split transcript/output
+layout; `/place bottom` gives any theme a full-width transcript with bottom
+telemetry. Tab switches side-pane views; Ctrl+W/Ctrl+O fold real work/diffs.
+Acid uses a lowercase pixel wordmark and deep-purple RGB palette on capable
 terminals, with indexed-color/ASCII/monochrome fallbacks. For example:
 
 ```text

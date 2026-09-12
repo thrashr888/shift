@@ -326,14 +326,13 @@ the frontend. For a no-model demo, run:
 The host terminal controls the font. Layout is measured in cells, with Unicode
 width-aware clipping and word-aware prose wrapping. Fenced/indented code and diffs
 preserve whitespace; basic headings, bold and inline-code markers are simplified
-without introducing a full Markdown renderer. **Apex** (also the default Acid composition)
-uses a lowercase pixel wordmark, a separate session/model/mode strip, and a
-two-thirds transcript beside a one-third output pane. Apex uses a readable compact
-text mark; Acid retains its taller pixel garage branding. **Afterhours** integrates
-session/model/mode into the brand header, keeps the transcript full width, and
-places a three-row telemetry band above the composer. `/theme apex` and
-`/theme afterhours` select these presets. Explicit `/place` preferences still
-win: left/right use the Apex arrangement, top/bottom the Afterhours arrangement.
+without introducing a full Markdown renderer. **Acid** uses a lowercase pixel
+wordmark, a separate session/model/mode strip, and a two-thirds transcript beside
+a one-third output pane. **Paddock** docks that pane on the left. **Blueprint**
+keeps the transcript full width and places a three-row telemetry band above the
+composer. Explicit `/place` preferences still win under any theme: left/right use
+the side-pane arrangement, top/bottom the full-width transcript with a telemetry
+band, and a multi-line wordmark then shares its header rows with session details.
 Side panes dock from 96 columns when height permits; telemetry bands from 72.
 Narrow or short views use an overlay only when explicitly opened. Auto avoids
 overlays. Thin cyan separators and a restrained, unlabeled composer frame keep
@@ -344,6 +343,10 @@ left information pane fits at 80x25. It adapts the
 [QDOS design language](https://github.com/thrashr888/QDOS/blob/master/spec/SPEC.md),
 not DOS filesystem commands. Existing placement, identity and color overrides
 still take precedence.
+When the session/model strip is too narrow for both, the model name is dropped
+rather than cut mid-word; the Session tab keeps the full value. Footer hints drop
+their least essential items (pane paging, diff/work folds, then mode and sidebar)
+before the row would overflow, so 80-column QDOS keeps `^D quit` visible.
 Below 40 columns or 18 rows, a compact transcript, status and input replace the
 larger frame. The prompt stays outside all overlays. The live transcript is bounded to 3,000 lines; resumed sessions show
 the last 50 persisted messages, with complete history available through traces.
@@ -361,13 +364,16 @@ An empty session invites a task rather than inventing activity. Ordered backend
 events supply `USER` and `SHIFT` role blocks and grouped `READ`, `EDIT`, and `RUN`
 work rows. Tool completion is not a fabricated test pass. Real committed ledger
 diffs supply the highlighted added/removed lines and file counts; unapproved
-previews never appear as committed changes. Afterhours shows these diffs inline.
+previews never appear as committed changes. Top/bottom placements show these diffs inline.
 The side pane's Work, Diff and Session tabs show output/files/telemetry, the
 unified diff, or session/receipt details. Ctrl+W and Ctrl+O fold work and diff
 groups; the selection and fold state survive redraw and resize. PageUp/PageDown
 scroll the selected Diff or Session pane; in Work they scroll the transcript.
 Live diff previews are bounded to 200 lines/32 KiB; complete filenames and
 diffstats remain available even when the preview is truncated.
+A scrolled transcript pins the current block's role label (`USER`, `SHIFT`) on its
+first row; failed tool results wrap by word under their work row with a hanging
+indent.
 The session's `show-work=false` setting suppresses new automatic work groups in
 the transcript without discarding inspector events or receipts. `/work on`
 does not reveal groups that were hidden when created; Ctrl+W folds visible groups.
@@ -426,6 +432,8 @@ the cached identity. No inference request is made for these measurements.
 UI commands use a separate inherited pipe and remain responsive while the agent
 runs or waits for approval, including typed `/theme`, `/name`, `/motion` and
 `/ui` commands. These do not answer, approve or decline the waiting request.
+Multi-line command results (such as the auto-mode explanation) collapse into one
+notice line separated by `·`.
 Other session commands cannot run until approval is resolved. Invalid UI commands
 leave the request pending and show the error beside the input. Approval input is separate from the saved draft;
 presentation overlays are hidden during approval so the tool preview stays
@@ -497,7 +505,7 @@ density, placement, and inspector section order (`session`, `context`, `files`,
 /ui {"action":"patch","patch":{"accent":154,"ascii":true,"sections":["files","checks"]}}
 ```
 
-Acid, Apex and Afterhours use a deep purple `#170626` canvas, lime, cyan and
+Acid uses a deep purple `#170626` canvas, lime, cyan and
 lavender hierarchy. Paddock keeps paper colors and compact spacing; Blueprint
 keeps its spaced wordmark, double composer border and bottom strip. Explicit
 user color overrides are never replaced by theme defaults.

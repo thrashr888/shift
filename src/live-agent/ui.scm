@@ -95,9 +95,11 @@
     (cons "secondary" "#45f6ff") (cons "muted" "#ae7deb") (cons "panel" "#1e0c32")
     (cons "positive" "#64fff2") (cons "negative" "#ff6588")
     (cons "added_background" "#074e4a") (cons "removed_background" "#45152f")))
+;; Packs and ui.json are UTF-8 data files; the process locale must not change
+;; how a wordmark or identity is measured and validated.
 (define (bounded-read path)
   (when (> (stat:size (stat path)) 32768) (error "UI file exceeds 32 KiB" path))
-  (call-with-input-file path get-string-all))
+  (call-with-input-file path get-string-all #:encoding "UTF-8"))
 (define (load-preferences dir)
   (let ((path (and dir (string-append dir "/ui.json"))))
     (if (and path (file-exists? path)) (validate! (json-read (bounded-read path))) (json-object))))
@@ -145,7 +147,7 @@
                                (and (string-suffix? ".scm" file)
                                     (valid-entry? (cons "theme" (substring file 0 (- (string-length file) 4))))
                                     (eq? 'regular (stat:type (stat (string-append dir "/" file))))))) '()))) dirs)))
-         (builtins (filter (lambda (name) (member name names)) '("acid" "apex" "afterhours" "paddock" "blueprint" "qdos"))))
+         (builtins (filter (lambda (name) (member name names)) '("acid" "paddock" "blueprint" "qdos"))))
     (append builtins (sort (filter (lambda (name) (not (member name builtins))) names) string<?))))
 (define (state-unlocked)
   (json-object (cons "revision" revision) (cons "config" presentation)
@@ -191,13 +193,19 @@
 (define (inherited-port name mode)
   (let ((fd (getenv name)))
     (and fd (let ((p (fdopen (string->number fd) mode)))
-              (fcntl p F_SETFD FD_CLOEXEC) p))))
+              (fcntl p F_SETFD FD_CLOEXEC)
+              ;; The curses frontend always speaks UTF-8 JSON on these pipes.
+              (set-port-encoding! p "UTF-8") p))))
 (define (ui-init! project session)
   (set! project-dir project) (set! session-dir session)
   (set! user-dir (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift"))
   (set! undo-stack '()) (set! revision 0)
   (set! event-port (inherited-port "SHIFT_UI_EVENT_FD" "w"))
   (set! command-port (inherited-port "SHIFT_UI_COMMAND_FD" "r"))
+  (when event-port
+    ;; Typed prompts and transcript output cross the same UTF-8 frontend pipes.
+    (for-each (lambda (port) (set-port-encoding! port "UTF-8"))
+              (list (current-input-port) (current-output-port) (current-error-port))))
   (set! preferences
     (apply merge-objects
       (map (lambda (dir)

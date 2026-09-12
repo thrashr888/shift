@@ -40,6 +40,7 @@
   (let ((fd (getenv "SHIFT_CONTROL_FD")))
     (and fd (let ((port (fdopen (string->number fd) "w")))
               (fcntl port F_SETFD FD_CLOEXEC)
+              (set-port-encoding! port "UTF-8")
               port))))
 (define operation-status "ok")
 (define operation-error #f)
