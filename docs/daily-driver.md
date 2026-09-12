@@ -1,7 +1,7 @@
 # Daily-driver foundation
 
 This is the first implementation slice of [the agreed plan](daily-driver-plan.md).
-The REPL remains. An opt-in TUI now shares its session loop. Dynamic skills,
+The terminal UI is the interactive default and shares the scripted session loop. Dynamic skills,
 cross-session trace recall, extension packs, and model-tested automatic approval
 remain later work.
 
@@ -310,26 +310,103 @@ fast capability checks are fixture-tested; premium fast service was not exercise
 
 ## Terminal interface
 
-Launch `bin/shift --tui` from your project. It requires Python 3 with curses and
+Launch `bin/shift` from your project, or `make` in the Shift checkout (the optional
+`SHIFT_ARGS` make variable forwards CLI options). It requires Python 3 with curses and
 an interactive terminal. It uses the existing Guile session, tool permissions,
-streaming, receipts, and cancellation; it does not start a separate agent. The
-REPL and print modes remain available. `--tui` is opt-in and cannot be combined
-with print or MCP stdio. No additional model is loaded by the frontend.
+streaming, receipts, and cancellation; it does not start a separate agent.
+`--tui` remains a compatibility alias, not a required flag. There is no separate
+interactive REPL mode. Redirected/scripted input, `--print`, MCP, help, and session
+maintenance still use their non-screen paths. No additional model is loaded by
+the frontend. For a no-model demo, run:
+
+```sh
+./bin/shift --session ui-demo --set 'agent-model="demo"'
+```
 
 The host terminal controls the font. Layout is measured in cells, with Unicode
-width-aware wrapping and clipping. Wide views dock the inspector; narrow or short
-views use an overlay when explicitly opened. Auto avoids overlays. Left/right
-placement uses width and height; top/bottom uses height. The prompt stays outside
-all overlays. The live transcript is bounded to 3,000 lines; resumed sessions show
+width-aware clipping and word-aware prose wrapping. Fenced/indented code and diffs
+preserve whitespace; basic headings, bold and inline-code markers are simplified
+without introducing a full Markdown renderer. **Apex** (also the default Acid composition)
+uses a lowercase pixel wordmark, a separate session/model/mode strip, and a
+two-thirds transcript beside a one-third output pane. Apex uses a readable compact
+text mark; Acid retains its taller pixel garage branding. **Afterhours** integrates
+session/model/mode into the brand header, keeps the transcript full width, and
+places a three-row telemetry band above the composer. `/theme apex` and
+`/theme afterhours` select these presets. Explicit `/place` preferences still
+win: left/right use the Apex arrangement, top/bottom the Afterhours arrangement.
+Side panes dock from 96 columns when height permits; telemetry bands from 72.
+Narrow or short views use an overlay only when explicitly opened. Auto avoids
+overlays. Thin cyan separators and a restrained, unlabeled composer frame keep
+navigation separate from the conversation.
+**QDOS** uses a black canvas, compact clickable command menu, green contextual
+help, white double rules, cyan metadata and yellow-on-red selection. Its default
+left information pane fits at 80x25. It adapts the
+[QDOS design language](https://github.com/thrashr888/QDOS/blob/master/spec/SPEC.md),
+not DOS filesystem commands. Existing placement, identity and color overrides
+still take precedence.
+Below 40 columns or 18 rows, a compact transcript, status and input replace the
+larger frame. The prompt stays outside all overlays. The live transcript is bounded to 3,000 lines; resumed sessions show
 the last 50 persisted messages, with complete history available through traces.
+PageUp clamps at the oldest retained content; incoming output and resize preserve
+the scroll anchor. Composer scrolling accounts for whole wide characters.
+Wheel offsets clamp to the rendered viewport for every event, so reversing at
+the oldest content moves immediately rather than paying off hidden overscroll.
+Both SGR and legacy X10 packets are decoded, including wheel-down on older
+macOS ncurses without button-five support. Word wrapping is linear in text length.
+Up/Down browses the project's saved session-command history and restores the
+unfinished draft and cursor when returning to the newest entry. Local presentation
+commands remain in the current frontend's history; approval replies are not added.
+
+An empty session invites a task rather than inventing activity. Ordered backend
+events supply `USER` and `SHIFT` role blocks and grouped `READ`, `EDIT`, and `RUN`
+work rows. Tool completion is not a fabricated test pass. Real committed ledger
+diffs supply the highlighted added/removed lines and file counts; unapproved
+previews never appear as committed changes. Afterhours shows these diffs inline.
+The side pane's Work, Diff and Session tabs show output/files/telemetry, the
+unified diff, or session/receipt details. Ctrl+W and Ctrl+O fold work and diff
+groups; the selection and fold state survive redraw and resize. PageUp/PageDown
+scroll the selected Diff or Session pane; in Work they scroll the transcript.
+Live diff previews are bounded to 200 lines/32 KiB; complete filenames and
+diffstats remain available even when the preview is truncated.
+The session's `show-work=false` setting suppresses new automatic work groups in
+the transcript without discarding inspector events or receipts. `/work on`
+does not reveal groups that were hidden when created; Ctrl+W folds visible groups.
+
+Cell-height segmented context and round bars use reported usage (or explicitly
+`~`-marked local estimates) and known limits, rounded to the nearest segment and clamped to the bar's
+range. Compact counts such as `24k / 131k` reserve space for the bar; the Session
+tab retains exact values and provenance. Startup and resume publish the effective
+max-rounds setting and round `0` before any provider request; UI edits retain the
+latest snapshot. Missing denominators show `?` and a `/context limit N` hint rather
+than a meaningless empty usage bar. The current-turn
+pane resets on the next turn without deleting earlier transcript groups.
+
+For a local Ollama endpoint, bounded metadata-only `/api/ps` requests can supply
+the loaded model's `context_length` and `size_vram`. An explicit context limit
+wins; architecture maximums and downloaded weight size are never substituted.
+`MODEL MEM` means the provider's **GPU/model allocation**, not host RAM or proven
+physical residency. It shows GiB without an invented capacity bar; exact bytes
+and the provider label appear in Session. Missing metadata shows `N/A` with a
+reason (not loaded, unsupported, unavailable, or demo). Remote endpoints and demo
+models are not probed. Discovery uses a one-second timeout, bounded response and
+five-second cache, outside rendering; provider/model/endpoint changes invalidate
+the cached identity. No inference request is made for these measurements.
 
 | Input | Action |
 | --- | --- |
 | Ctrl+B | Toggle inspector without discarding the draft |
-| Ctrl+P | Show the command reference |
-| F2 | Cycle Acid Garage, Paddock, and Blueprint |
-| Ctrl+W | Fold/unfold tool work lines |
+| Ctrl+P or click its hint | Open searchable command completion; Escape restores the draft |
+| `/`, then type | Filter command names and supported argument choices |
+| Tab / Up / Down in suggestions | Complete the selection / move selection; Enter on a selected completion deliberately submits |
+| F2 or bare `/theme` | Cycle installed built-ins, then discovered custom theme packs |
+| Tab outside suggestions | Select Work, Diff or Session in a side pane/overlay |
+| Shift+Tab or click mode badge | Cycle manual -> plan -> accept -> auto -> manual when idle |
+| Click sidebar hint / Work, Diff, Session | Toggle inspector / select pane without submitting the draft |
+| Wheel / trackpad | Scroll the pane under the pointer; navigate suggestions over a popup |
+| Ctrl+W | Fold/unfold tool work groups |
+| Ctrl+O | Fold/unfold committed diffs |
 | PageUp / PageDown | Scroll the transcript |
+| Ctrl+G | Jump to the latest transcript without changing the draft |
 | Ctrl+C | Cancel the current turn, or clear the idle draft |
 | Ctrl+D | Exit and restore the terminal |
 | Escape | Dismiss an overlay/reference, or decline an approval |
@@ -339,22 +416,71 @@ the last 50 persisted messages, with complete history available through traces.
 | `/sidebar auto` | Select auto/on/off visibility |
 | `/theme acid` | Select a built-in or user-owned theme |
 | `/density compact` | Reduce transcript whitespace (`comfortable` restores it) |
+| `/motion off` | Disable the working mark animation (`on` restores it) |
 | `/ui get` | Inspect current configuration |
 | `/ui undo` | Restore the previous working UI revision |
 | `/ui reload` | Reload the selected presentation pack |
+| `/ui code-reload` | Validate and reload compatible local TUI presentation code |
 | `/ui save user` | Promote preferences to user scope (`project` also available) |
 
 UI commands use a separate inherited pipe and remain responsive while the agent
-runs or waits for approval. Approval input is separate from the saved draft;
+runs or waits for approval, including typed `/theme`, `/name`, `/motion` and
+`/ui` commands. These do not answer, approve or decline the waiting request.
+Other session commands cannot run until approval is resolved. Invalid UI commands
+leave the request pending and show the error beside the input. Approval input is separate from the saved draft;
 presentation overlays are hidden during approval so the tool preview stays
-visible. The agent's `ui` tool supports get/patch/undo/reload/save. Manual mode
+visible. Pending previews are separately framed and scrollable; completed approval
+questions, tool JSON and legacy prompt chatter are not duplicated in the transcript.
+Command completion never answers an approval; Escape first dismisses completion.
+The agent's `ui` tool supports get/patch/undo/reload/save. Manual mode
 asks for tool approval; plan mode permits only get. Accept and auto modes allow
-validated UI changes. No UI key can change execution policy or tool authority.
+validated UI changes. Mode switching is an explicit user-only `/mode` operation,
+not a presentation preference or agent UI action. Busy turns and pending approvals
+reject mode changes visibly without changing their decision or consuming input.
+The draft and cursor survive mode clicks and Shift+Tab.
 Tool results and traces record the applied UI revision/configuration.
+
+Rules use individual wide-character cells on UTF-8 terminals, ACS on legacy
+terminals with a graphics character set, and ASCII only when requested or required.
+This separates connected chrome from semantic prose/diff hyphens. Meters use
+full `█`/`░` cells through the same wide-cell path; ASCII/legacy fallback uses
+`#`/`.` rather than uncommon partial-block glyphs.
+Terminal-cell captures do not prove native font rendering. Mouse
+tracking is enabled while curses owns the terminal and restored on exit; if a
+terminal reserves a modified click for text selection, its own convention wins.
+
+#### Reloading presentation code
+
+After one restart to install this support, `--watch` (the interactive default)
+checks trusted local `scripts/tui.py` changes twice per second, with a stable-revision
+debounce. `--no-watch` disables automatic code reload; `/ui code-reload` remains
+explicitly available. `/ui reload` still reloads the selected Scheme theme pack.
+This does not load model-provided Python or arbitrary paths.
+
+The running host validates a separate candidate module, checks its interface and
+renders against a detached state copy before swapping presentation methods on the
+curses thread. The Guile process, active turn, approvals, draft/cursor/history,
+retained events, scroll anchor and pane state stay in place; requests are not
+replayed. Syntax/import/render validation failures keep the working UI and show
+an error. A failed unchanged revision is not continually retried.
+
+Only compatible presentation/input method and layout-helper edits reload. Imports,
+host lifecycle, model/event protocol, initialization/state-schema, backend changes
+and changes to the reload controller itself require restart. This is not an
+in-place reload of live globals, nor a backend restart disguised as hot reload.
+Older already-running TUI processes cannot acquire this bootstrap without the
+initial restart.
+
+The header shows the loaded Shift installation's short commit and `+dirty` when
+its tracked or unignored source files differ. It is not the working project's SHA.
+The Session pane and `/ui get` include full commit, process-start identity and the
+loaded presentation-source fingerprint. Identity is sampled at startup and a
+successful presentation reload, not every frame; later disk edits are not
+misrepresented as already loaded. Archives or missing Git show `source unavailable`.
 
 Preferences live in `ui.json` beside existing settings: user config, project
 `.shift/`, and named session directory, in that precedence order. Patches are
-saved to the current session (project for an explicitly ephemeral REPL). Identity
+saved to the current session (project for an explicitly ephemeral session). Identity
 and explicit placement survive theme changes. There is a bounded, process-local
 undo stack separate from agent generations; it resets on restart.
 
@@ -363,7 +489,7 @@ the installation, user config, or project `.shift/` (project wins). `ui get`
 reports the active path. Copy a bundled pack under a new name to make it yours.
 Valid saved changes activate within the next half-second without restarting the
 agent. Packs are data, not executable Scheme, and are bounded at 32 KiB. The
-renderer supports colors (ANSI 0–255), three-line cell wordmarks, borders,
+renderer supports colors (ANSI 0–255 or `"#RRGGBB"`), three-line cell wordmarks, borders,
 density, placement, and inspector section order (`session`, `context`, `files`,
 `checks`). Theme defaults yield to explicit preferences. For example:
 
@@ -371,16 +497,41 @@ density, placement, and inspector section order (`session`, `context`, `files`,
 /ui {"action":"patch","patch":{"accent":154,"ascii":true,"sections":["files","checks"]}}
 ```
 
-The three built-ins vary in composition as well as palette: Acid Garage has a
-block wordmark and right inspector; Paddock has paper colors, compact spacing and
-a left inspector; Blueprint uses a spaced wordmark, double rules and a bottom
-strip. ASCII and reduced-color terminal fallbacks are available. No process RAM
-estimate is displayed unless measured; the context panel uses provider usage.
+Acid, Apex and Afterhours use a deep purple `#170626` canvas, lime, cyan and
+lavender hierarchy. Paddock keeps paper colors and compact spacing; Blueprint
+keeps its spaced wordmark, double composer border and bottom strip. Explicit
+user color overrides are never replaced by theme defaults.
+
+RGB themes use direct RGB when curses reports direct-color support. A
+programmable 256-color terminal instead receives dedicated palette entries,
+without repurposing any explicitly selected ANSI indices; their original values
+are restored on theme change and exit. This is palette programming, not a claim
+of direct-color support. A fixed 256-color terminal gets nearest indexed colors;
+eight-color dark backgrounds fall back to black, not harsh magenta. Monochrome
+uses no color-pair attributes, and `ascii` supplies text-only marks and bars.
+The frontend does not force a different `TERM`. Terminal capabilities and fonts
+still control the final appearance; curses cannot reproduce the mocks' font
+rasterization, antialiasing or gradients.
+
+The `///` mark cycles one bold slash against two dim slashes at four
+steps per second only while the session is `WORKING`. A trailing mark beside a
+multi-line wordmark uses cell-based strokes at the wordmark's height; custom
+single-line identities and ASCII keep literal `///`. Animation never changes the
+mark's footprint, and timer updates repaint just those cells without moving the composer
+cursor. Startup, idle, approval waiting, and cancellation are static; completion
+or errors return to the ready view. Hidden/clipped marks and custom art without
+`///` are not animated. ASCII and monochrome use the same bold/dim cells.
+`/motion off` persists with other presentation preferences and leaves the
+`WORKING` text visible; it is also available as the boolean `"motion": false` in
+UI patches and theme packs. There is no automatic OS reduced-motion detection in
+curses. No other UI animation is enabled.
 
 Validation includes geometry across 450 size/placement/visibility combinations,
-Unicode clipping, a real PTY input/resize/exit test, live theme saves and rejected
-reloads, preference persistence, agent-driven UI patches, and UI updates while an
-approval waits. A browser mock remains a design reference, not rendering proof.
+Unicode clipping and composer cursor positions, overscroll bounds, real PTY
+input/resize/exit and default-launch tests, live theme saves and rejected reloads,
+preference persistence, agent-driven UI patches, frontend keyboard routing while
+an approval waits, and busy/motion-off/completion/error/cancellation behavior.
+A browser mock remains a design reference, not rendering proof.
 Arbitrary executable component renderers and custom widgets remain future work;
 this implementation hot-swaps validated presentation data through a fixed cell
 renderer. It renders the existing transcript, rather than a new rich diff editor.

@@ -185,7 +185,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn('"identity":"thrashr888"', self.shift('/ui\n/quit\n', session="p"))
 
     def test_tui_ui_changes_while_approval_waits_preserve_draft_and_policy(self):
-        from tui_test import tui
+        from tui_test import tui, terminal_view
         from unittest.mock import patch
         Provider.plan = [tool_call("read", {"path":"notes.txt"}), answer("Read was declined.")]
         with patch.dict(os.environ, self.env):
@@ -204,13 +204,207 @@ class CodingWorkflow(unittest.TestCase):
             child.send("Read the file"); model.ready=False
             wait_for(lambda:model.approval)
             self.assertEqual(model.pending_draft, ("keep my next prompt", 7))
-            child.ui({"action":"patch", "patch":{"identity":"racer"}})
+            wait_for(lambda:bool(model.approval_prompt))
+            wait_for(lambda:bool(model.approval_preview))
+            approval_prompt=model.approval_prompt
+            child.ui({'action':'session-command','command':'/mode auto','request_id':41})
+            model.command_pending=41
+            wait_for(lambda:model.command_pending is None)
+            self.assertIn('busy',model.notice)
+            self.assertEqual(model.session['mode'],'manual')
+            self.assertTrue(model.approval)
+            terminal=terminal_view(child=child);terminal.model=model
+            source=Path(__file__).resolve().parents[1]/'scripts/tui.py'
+            with tempfile.TemporaryDirectory(prefix='shift-live-reload-') as reload_tmp:
+                candidate=Path(reload_tmp)/'tui.py'
+                code=source.read_text();candidate.write_text(code)
+                reloader=tui.Reloader(candidate,watch=False)
+                pid=child.process.pid
+                pending=model.pending_draft
+                candidate.write_text(code.replace("self.box(r,'PENDING TOOL: PgUp/PgDn')","self.box(r,'LIVE PENDING TOOL')"))
+                reloader.request()
+                self.assertTrue(reloader.check(terminal))
+                self.assertIn('reloaded',model.notice)
+                self.assertEqual(child.process.pid,pid)
+                self.assertEqual(model.pending_draft,pending)
+                self.assertEqual(model.approval_prompt,approval_prompt)
+                self.assertEqual(len(Provider.plan),1)
+            self.assertIsNone(terminal.mark_phase(0))
+            for key in '/name racer\n':terminal.key(key)
             wait_for(lambda:model.config["identity"]=="racer")
             self.assertTrue(model.approval)
-            child.send("n")
+            self.assertEqual(model.approval_prompt,approval_prompt)
+            self.assertEqual(model.pending_draft,("keep my next prompt",7))
+            self.assertEqual(len(Provider.plan),1)
+            for key in '/theme afterhours\n':terminal.key(key)
+            wait_for(lambda:model.config["theme"]=="afterhours")
+            for key in ('\t','\x17','\x0f'):terminal.key(key)
+            self.assertTrue(model.approval)
+            self.assertTrue(all(not group['diff'] for group in model.groups.values()))
+            self.assertEqual(len(Provider.plan),1)
+            for key in '/ui {"action":"patch","patch":{"accent":154}}\n':terminal.key(key)
+            wait_for(lambda:model.config["accent"]==154)
+            for key in '/ui {invalid}\n':terminal.key(key)
+            self.assertIn('rejected',model.notice)
+            self.assertTrue(model.approval)
+            terminal.key('\x15')
+            for key in '/mode auto\n':terminal.key(key)
+            self.assertIn('Finish approval',model.notice)
+            self.assertTrue(model.approval)
+            self.assertEqual(model.session['mode'],'manual')
+            self.assertEqual(len(Provider.plan),1)
+            terminal.menu=False
+            terminal.close_completion()
+            terminal.key('\x1b')
             wait_for(lambda:model.ready)
             self.assertEqual((model.draft, model.cursor), ("keep my next prompt", 7))
             self.assertIn("tool unavailable", self.tool_results()[-1])
+            self.assertEqual(model.approval_preview,'')
+            self.assertNotIn('Tool requests:', '\n'.join(model.lines))
+            self.assertNotIn('Approve tool?', '\n'.join(model.lines))
+            terminal.key(tui.curses.KEY_BTAB)
+            wait_for(lambda:model.session['mode']=='plan' and model.command_pending is None)
+            self.assertEqual((model.draft,model.cursor),("keep my next prompt",7))
+            self.assertEqual(len(Provider.plan),0)
+        finally:
+            child.close()
+
+    def test_tui_working_state_completes_errors_and_cancels(self):
+        from tui_test import tui, terminal_view
+        from unittest.mock import patch
+        started=threading.Event();release=threading.Event()
+        def delayed():
+            started.set()
+            release.wait(5)
+            return answer("finished")
+        with patch.dict(os.environ,self.env):
+            child=tui.Child(self.command()[1:],cwd=self.project)
+        terminal=terminal_view(child=child);model=terminal.model
+        def wait_for(predicate):
+            end=time.monotonic()+10
+            while time.monotonic()<end:
+                child.poll(model)
+                if predicate():return
+                time.sleep(.02)
+            self.fail(str(list(model.lines)))
+        try:
+            wait_for(lambda:model.ready)
+            for outcome in ('complete','error','cancel'):
+                with self.subTest(outcome=outcome):
+                    started.clear();release.clear()
+                    Provider.plan=[PROVIDER_ERROR if outcome=='error' else delayed]
+                    for key in 'hello\n':terminal.key(key)
+                    self.assertEqual(terminal.mark_phase(0),0)
+                    if outcome!='error':
+                        wait_for(started.is_set)
+                        self.assertEqual(model.status(),'WORKING')
+                        if outcome=='cancel':
+                            terminal.key('\x03')
+                            self.assertIsNone(terminal.mark_phase(.25))
+                        release.set()
+                    wait_for(lambda:model.ready)
+                    self.assertEqual(model.status(),'READY')
+                    self.assertIsNone(terminal.mark_phase(.5))
+                    if outcome=='cancel':
+                        self.assertTrue(any('cancel' in line.lower() for line in model.lines))
+        finally:
+            release.set()
+            child.close()
+
+    def test_tui_structured_work_diff_and_transcript_are_real_ordered_events(self):
+        from tui_test import tui, terminal_view
+        from unittest.mock import patch
+        class RecordingModel(tui.Model):
+            def __init__(self):
+                super().__init__()
+                self.events=[]
+            def event(self,event):
+                self.events.append(event)
+                super().event(event)
+        intro="data: "+json.dumps({"choices":[{"index":0,"delta":{"content":"I will read, edit and check the file."}}]})+"\n\n"
+        Provider.plan=[
+            intro+tool_call("read",{"path":"notes.txt"}),
+            self.edit_notes,
+            tool_call("run",{"argv":["python3","-c","from pathlib import Path; assert '9443' in Path('notes.txt').read_text()"]}),
+            answer("The source was updated and checked.",usage={"prompt_tokens":1234,"completion_tokens":12}),
+        ]
+        with patch.dict(os.environ,self.env):
+            child=tui.Child(self.command()[1:]+['--mode','accept','--allow-run','python3'],cwd=self.project)
+        model=RecordingModel()
+        terminal=terminal_view(40,128,child);terminal.model=model
+        def wait_for(predicate):
+            end=time.monotonic()+15
+            while time.monotonic()<end:
+                child.poll(model)
+                if predicate():return
+                time.sleep(.02)
+            self.fail(str(model.events[-12:]))
+        try:
+            wait_for(lambda:model.ready)
+            for key in 'Update and check the port\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.receipt.get('status')=='ok')
+            group=terminal.active_group()
+            self.assertEqual([tool['name'] for tool in group['tools']],['read','edit','run'])
+            self.assertEqual(len({tool['id'] for tool in group['tools']}),3)
+            self.assertTrue(all(tool['result']['ok'] for tool in group['tools']))
+            self.assertIn('-alpha port 8080',group['diff'])
+            self.assertIn('+alpha port 9443',group['diff'])
+            self.assertEqual((self.project/'notes.txt').read_text(),'alpha port 9443\n')
+            self.assertEqual(model.receipt['runs'][0]['exit_code'],0)
+            self.assertEqual(model.usage['prompt'],1234)
+            user=[event['value']['text'] for event in model.events if event['type']=='transcript' and event['value']['role']=='user']
+            self.assertEqual(user,['Update and check the port'])
+            transcript='\n'.join(model.lines)+model.partial
+            self.assertEqual(transcript.count('I will read, edit and check the file.'),1)
+            self.assertEqual(transcript.count('The source was updated and checked.'),1)
+            self.assertNotIn('tool> ',transcript)
+            terminal.draw()
+            rendered='\n'.join(terminal.screen.line(y) for y in range(40))
+            self.assertIn('READ',rendered);self.assertIn('EDIT',rendered);self.assertIn('RUN',rendered)
+            self.assertNotIn('PASS',rendered)
+        finally:
+            child.close()
+
+    def test_tui_show_work_setting_hides_new_groups_without_losing_events(self):
+        from tui_test import tui, terminal_view
+        from unittest.mock import patch
+        Provider.plan=[tool_call('read',{'path':'notes.txt'}),answer('quiet answer'),
+                       tool_call('read',{'path':'notes.txt'}),answer('visible answer'),
+                       tool_call('read',{'path':'notes.txt'}),answer('quiet again')]
+        with patch.dict(os.environ,self.env):
+            child=tui.Child(self.command()[1:]+['--mode','accept','--set','show-work=false'],cwd=self.project)
+        terminal=terminal_view(40,128,child);model=terminal.model
+        def wait_for(predicate):
+            end=time.monotonic()+10
+            while time.monotonic()<end:
+                child.poll(model)
+                if predicate():return
+                time.sleep(.02)
+            self.fail(str(model.session)+' '+str(list(model.lines)))
+        try:
+            wait_for(lambda:model.ready)
+            self.assertIs(model.session.get('show_work'),False)
+            for key in 'read quietly\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.receipt.get('turn')==1)
+            first=terminal.active_group()
+            self.assertFalse(first['visible'])
+            self.assertEqual(first['tools'][0]['name'],'read')
+            self.assertTrue(first['tools'][0]['result']['ok'])
+            for key in '/work on\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.session.get('show_work') is True)
+            for key in 'read visibly\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.receipt.get('turn')==2)
+            second=terminal.active_group()
+            self.assertTrue(second['visible'])
+            self.assertFalse(first['visible'])
+            for key in '/work off\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.session.get('show_work') is False)
+            for key in 'read quietly again\n':terminal.key(key)
+            wait_for(lambda:model.ready and model.receipt.get('turn')==3)
+            self.assertFalse(terminal.active_group()['visible'])
+            self.assertFalse(first['visible'])
+            self.assertTrue(second['visible'])
+            self.assertTrue(all(len(group['tools'])==1 for group in model.groups.values()))
         finally:
             child.close()
 

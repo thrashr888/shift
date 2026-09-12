@@ -22,6 +22,7 @@
   #:use-module (live-agent extensions)
   #:use-module (live-agent generation)
   #:use-module (live-agent provider)
+  #:use-module (live-agent provider-metadata)
   #:use-module (live-agent prompt)
   #:use-module (live-agent receipt)
   #:use-module (live-agent recovery)
@@ -131,7 +132,9 @@
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift --list-sessions [--state-dir PATH]\n"
-    "       shift session-fork PARENT CHILD\n")))
+    "       shift session-fork PARENT CHILD\n"
+    "\nInteractive terminals open curses (--tui is a compatibility alias).\n"
+    "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
 
 (define (parse-arguments args)
   (let loop ((rest args) (agent #f) (state-dir #f) (watch? (isatty? (current-input-port)))
@@ -141,6 +144,9 @@
      ((null? rest)
       (values agent state-dir watch? session-name session-mode list?
               initial-prompt fork-parent fork-child))
+     ((string=? (car rest) "--tui")
+      (loop (cdr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
      ((and (pair? (cdr rest)) (string=? (car rest) "--agent"))
       (loop (cddr rest) (cadr rest) state-dir watch?
             session-name session-mode list? initial-prompt fork-parent fork-child))
@@ -747,12 +753,55 @@
     (format #t "~a ~a · saved for this session~%" label display-value)))
 
 (define last-usage (json-object))
+(define last-ui-usage #f)
+(define last-ui-metadata #f)
+(define last-ui-identity #f)
+(define (sync-ui-identity! generation)
+  (let ((identity (map (lambda (key) (setting-ref generation key))
+                      '(agent-provider agent-model agent-base-url))))
+    (unless (equal? identity last-ui-identity)
+      (set! last-ui-identity identity)
+      (set! last-ui-usage #f)
+      (set! last-ui-metadata #f))))
+(define (session-prompt-estimate generation history)
+  (catch #t
+    (lambda ()
+      (estimate-input-tokens
+        (cons (make-message "system" (generation-ref generation 'agent-system-prompt)) history)
+        (filter within-process-tool-ceiling?
+                (map tool-name (generation-ref generation 'agent-tools)))))
+    (lambda _ #f)))
+(define* (emit-usage-snapshot! generation estimate #:optional (raw #f) (round 0))
+  (sync-ui-identity! generation)
+  (let ((metadata (or last-ui-metadata
+                      (provider-configured-metadata
+                        (setting-ref generation 'agent-provider)
+                        (setting-ref generation 'agent-model)
+                        (setting-ref generation 'context-limit))))
+        (max-rounds (setting-ref generation 'agent-max-tool-rounds)))
+    (set! last-ui-usage
+      (if raw (provider-usage-event raw estimate round max-rounds metadata)
+          (provider-session-usage-event last-ui-usage estimate max-rounds metadata)))
+    (ui-emit! "usage" last-ui-usage)))
+(define (emit-provider-metadata! generation)
+  (sync-ui-identity! generation)
+  (let ((metadata (provider-metadata!
+                   (setting-ref generation 'agent-provider)
+                   (setting-ref generation 'agent-model)
+                   (setting-ref generation 'agent-base-url)
+                   (setting-ref generation 'context-limit))))
+    (set! last-ui-metadata metadata)
+    (ui-emit! "provider-metadata" metadata)
+    metadata))
 (define last-estimate 0)
 (define run-prompt-tokens 0)
 (define run-completion-tokens 0)
 (define run-usage-reported? #f)
 
 (define (reset-run-usage!)
+  (set! last-ui-identity #f)
+  (set! last-ui-usage #f)
+  (set! last-ui-metadata #f)
   (set! run-prompt-tokens 0)
   (set! run-completion-tokens 0)
   (set! run-usage-reported? #f))
@@ -1002,21 +1051,25 @@
   (if (symbol? value) (symbol->string value) value))
 
 (define (read-user-line prompt)
-  (if (and control-port (string=? prompt "shift> "))
-      (begin
-        (unless (ui-connected?) (display prompt))
-        (force-output)
-        (emit-control! "ready")
-        (let ((line (get-line (current-input-port))))
-          (set! operation-status "ok")
-          (set! operation-error #f)
-          (set! operation-span #f)
-          line))
-      (if (isatty? (current-input-port))
-          (let ((line (readline prompt)))
-            (when (string=? prompt "shift> ") (input-remember! line))
-            line)
-          (get-line (current-input-port)))))
+  (let ((line
+         (if (and control-port (string=? prompt "shift> "))
+             (begin
+               (unless (ui-connected?) (display prompt))
+               (force-output)
+               (emit-control! "ready")
+               (let ((line (get-line (current-input-port))))
+                 (set! operation-status "ok")
+                 (set! operation-error #f)
+                 (set! operation-span #f)
+                 line))
+             (if (isatty? (current-input-port))
+                 (readline prompt)
+                 (get-line (current-input-port))))))
+    (when (and (string=? prompt "shift> ")
+               (or (ui-connected?)
+                   (and (not control-port) (isatty? (current-input-port)))))
+      (input-remember! line))
+    line))
 
 (define (terminal-settings)
   (catch #t
@@ -1030,32 +1083,45 @@
     (lambda _ #f)))
 
 (define (read-approval-key prompt)
-  (display prompt)
-  (force-output)
+  (unless (ui-connected?) (display prompt) (force-output))
   (ui-emit! "approval" prompt)
   (emit-control! "needs_approval")
-  (if (not (isatty? (current-input-port)))
-      (read-user-line "")
-      (let ((saved (terminal-settings)))
-        (if (not saved)
-            (read-user-line "")
-            (let ((status
-                   (system* "/bin/stty" "-icanon" "min" "1" "time" "0"
-                            "-echo")))
-              (if (not (= (status:exit-val status) 0))
-                  (read-user-line "")
-                  (let ((answer
-                         (dynamic-wind
-                           (lambda () #t)
-                           (lambda () (read-char (current-input-port)))
-                           (lambda () (system* "/bin/stty" saved)))))
-                    (unless (eof-object? answer) (write-char answer))
-                    (newline)
-                    answer)))))))
+  (dynamic-wind
+    (lambda () #t)
+    (lambda ()
+     (let ((answer
+         (if (not (isatty? (current-input-port)))
+             (read-user-line "")
+             (let ((saved (terminal-settings)))
+               (if (not saved)
+                   (read-user-line "")
+                   (let ((status
+                          (system* "/bin/stty" "-icanon" "min" "1" "time" "0"
+                                   "-echo")))
+                     (if (not (= (status:exit-val status) 0))
+                         (read-user-line "")
+                         (let ((answer
+                                (dynamic-wind
+                                  (lambda () #t)
+                                  (lambda () (read-char (current-input-port)))
+                                  (lambda () (system* "/bin/stty" saved)))))
+                           (unless (eof-object? answer) (write-char answer))
+                           (newline)
+                           answer))))))))
+    (when (and (ui-connected?) (not (eof-object? answer)))
+      (emit-control! "working"))
+       answer))
+    (lambda () (ui-emit! "approval-end" #t))))
+
+(define (approval-preview! text)
+  (if (ui-connected?)
+      (ui-emit! "approval-preview" (if (> (string-length text) 32768)
+                                      (string-append (substring text 0 32768) "\nPreview truncated.")
+                                      text))
+      (begin (display text) (force-output))))
 
 (define (confirm-shell command)
-  (format #t "\nShell requests:\n  ~a~%" command)
-  (force-output)
+  (approval-preview! (format #f "\nShell requests:\n  ~a~%" command))
   (let ((answer (read-approval-key "Approve this command? [y/N] ")))
     (cond
      ((char? answer) (char-ci=? answer #\y))
@@ -1129,12 +1195,19 @@
                      "An interrupted ~a tool call was explicitly retried. Result: ~a. The original model continuation was lost; verify before relying on it."
                      name output)))))))
 
+(define* (emit-ui-transcript! role text #:optional (stream? #f) (end? #f))
+  (when (ui-connected?)
+    (ui-emit! "transcript"
+              (json-object (cons "role" role) (cons "text" text)
+                           (cons "stream" stream?) (cons "end" end?)))))
+
 (define (record-input! runtime generation turn-count line)
   (runtime-record!
    runtime 'user-input
    `((generation . ,(generation-id generation))
      (turn . ,turn-count)
-     (text . ,line))))
+     (text . ,line)))
+  (emit-ui-transcript! "user" line))
 
 (define (record-output! runtime generation turn-count reply)
   (runtime-record!
@@ -1146,8 +1219,9 @@
 (define (demo-turn! runtime generation history line turn-count)
   (let ((reply (generation-call generation 'agent-demo-response line)))
     (record-output! runtime generation turn-count reply)
-    (display reply)
-    (newline)
+    (if (ui-connected?)
+        (emit-ui-transcript! "assistant" reply)
+        (begin (display reply) (newline)))
     (list
      (append history
              (list (make-message "user" line)
@@ -1372,9 +1446,9 @@
                      ((allow) #t)
                      ((ask) (and (interactive-approval?)
                        (begin
-                         (if preview
-                             (format #t "\n~a" preview)
-                             (format #t "\nTool requests: ~a\n~a\n" name (json-write arguments)))
+                         (approval-preview! (if preview
+                             (format #f "\n~a" preview)
+                             (format #f "Tool requests: ~a\n~a\n" name (json-write arguments))))
                          (let ((letter (approval-letter
                                         (read-approval-key
                                          (if run? "Approve run? [y/N/a] " "Approve tool? [y/N] ")))))
@@ -1539,16 +1613,82 @@
 (define (tool-echo-port)
   (if print-mode? (current-error-port) (current-output-port)))
 
-(define (echo-tool-call! generation name arguments)
-  (ui-emit! "tool" (json-object (cons "name" name) (cons "summary" (tool-call-summary name arguments))))
-  (when (setting-ref generation 'show-work)
+(define next-ui-tool-id 0)
+
+(define (echo-tool-call! generation id name arguments)
+  (ui-emit! "tool"
+            (json-object (cons "id" id) (cons "turn" (current-turn))
+                         (cons "name" name)
+                         (cons "summary" (tool-call-summary name arguments))
+                         (cons "at" (strftime "%H:%M" (localtime (current-time))))))
+  (when (and (not (ui-connected?)) (setting-ref generation 'show-work))
     (format (tool-echo-port) "tool> ~a ~a~%" name (clip (tool-call-summary name arguments) 120))
     (force-output (tool-echo-port))))
 
-(define (echo-tool-result! generation ok? output)
-  (when (setting-ref generation 'show-work)
+(define (emit-ui-tool-result! id name ok? output)
+  (ui-emit! "tool-result"
+            (json-object (cons "id" id) (cons "turn" (current-turn))
+                         (cons "name" name) (cons "ok" ok?)
+                         (cons "summary" (clip output 200)))))
+
+(define (echo-tool-result! generation id name ok? output)
+  (emit-ui-tool-result! id name ok? output)
+  (when (and (not (ui-connected?)) (setting-ref generation 'show-work))
     (format (tool-echo-port) "      ~a ~a~%" (if ok? "✓" "✗") (clip output 120))
     (force-output (tool-echo-port))))
+
+;; Only committed ledger images enter this snapshot, never approval previews or
+;; a later read of the working tree. Limit the event without splitting UTF-8.
+(define (bounded-ui-diff text)
+  (let loop ((index 0) (lines 0) (bytes 0))
+    (cond
+     ((= index (string-length text)) (cons text #f))
+     ((>= lines 200) (cons (substring text 0 index) #t))
+     (else
+      (let* ((character (string-ref text index))
+             (code (char->integer character))
+             (width (cond ((<= code #x7f) 1) ((<= code #x7ff) 2)
+                          ((<= code #xffff) 3) (else 4))))
+        (if (> (+ bytes width) 32768)
+            (cons (substring text 0 index) #t)
+            (loop (+ index 1) (+ lines (if (char=? character #\newline) 1 0))
+                  (+ bytes width))))))))
+
+(define (emit-ui-diff! turn)
+  (when (and (ui-connected?) ledger)
+    (catch #t
+      (lambda ()
+        (define (image hash)
+          (and hash (or (ledger-read-blob ledger hash)
+                        (error "committed diff image is unavailable" hash))))
+        (define (publish text truncated? files)
+          (ui-emit! "diff" (json-object (cons "turn" turn) (cons "text" text)
+                                       (cons "truncated" truncated?)
+                                       (cons "files" (apply json-array (reverse files))))))
+        (let loop ((groups (filter (lambda (group) (not (equal? (cadr group) (caddr group))))
+                                   (ledger-turn-groups ledger turn)))
+                   (text "") (truncated? #f) (files '()))
+          (if (null? groups)
+              (publish text truncated? files)
+              (let* ((group (car groups))
+                     (path (car group))
+                     (diff (unified-diff (image (cadr group)) (image (caddr group))
+                                         (string-append "a/" path)
+                                         (string-append "b/" path)))
+                     (stat (diffstat diff))
+                     (bounded (if truncated? (cons text #t)
+                                  (bounded-ui-diff (string-append text diff)))))
+                (loop (cdr groups) (car bounded) (cdr bounded)
+                      (cons (json-object (cons "path" path)
+                                         (cons "added" (car stat))
+                                         (cons "removed" (cdr stat)))
+                            files))))))
+      (lambda (key . arguments)
+        (if (cancelled? key)
+            (apply throw key arguments)
+            (ui-emit! "ui-error"
+                      (string-append "Committed diff unavailable: "
+                                     (caught-error-detail key arguments))))))))
 
 (define (execute-tool-calls runtime tracer parent generation provider calls
                             messages enabled-tools)
@@ -1557,13 +1697,15 @@
         result
         (let* ((call (car remaining))
                (name (tool-call-name call))
+               (ui-id (begin (set! next-ui-tool-id (+ next-ui-tool-id 1))
+                             next-ui-tool-id))
                (enabled? (if (member name enabled-tools) #t #f)))
           (runtime-record!
            runtime 'tool-call
            `((generation . ,(generation-id generation))
              (tool . ,name)
              (arguments . ,(json-write (tool-call-arguments call)))))
-          (echo-tool-call! generation name (tool-call-arguments call))
+          (echo-tool-call! generation ui-id name (tool-call-arguments call))
           (count-turn-tool-call! name)
           (let* ((span
                   (trace-start!
@@ -1573,7 +1715,7 @@
                      (input.value . ,(json-write (tool-call-arguments call))))
                    parent))
                  (outcome
-                  (catch 'turn-cancelled
+                  (catch #t
                     (lambda ()
                       (cond
                        ((not enabled?) (unavailable-result name))
@@ -1632,14 +1774,23 @@
                                 (make-tool-result
                                  #f (format #f "tool failed (~a): ~s" key arguments))))))))
                     (lambda (key . arguments)
+                      (emit-ui-tool-result!
+                       ui-id name #f
+                       (if (cancelled? key)
+                           "Tool interrupted; recovery record retained."
+                           (caught-error-detail key arguments)))
                       (trace-end!
-                       span "CANCELLED"
-                       `((error.message . "tool interrupted; recovery record retained")))
+                       span (if (cancelled? key) "CANCELLED" "ERROR")
+                       `((error.message . ,(if (cancelled? key)
+                                             "tool interrupted; recovery record retained"
+                                             (caught-error-detail key arguments)))))
                       (apply throw key arguments))))
                  (ok? (tool-result-success? outcome))
                  (output (tool-result-output outcome)))
             (when ok? (record-observations! outcome))
-            (echo-tool-result! generation ok? output)
+            (echo-tool-result! generation ui-id name ok? output)
+            (when (and ok? (member name mutation-tool-names))
+              (emit-ui-diff! (current-turn)))
             (trace-end! span (if ok? "OK" "ERROR")
                         `((output.value . ,output)
                           ,@(change-attributes outcome)))
@@ -1682,6 +1833,7 @@
           parent))
         (thinking-started? #f)
         (content-started? #f)
+        (ui-stream-role #f)
         (retries '()))
     ;; Each retry is shown as work and recorded on the span; the pause
     ;; itself happens in the transport.
@@ -1695,20 +1847,32 @@
       (if (null? retries) '()
           `((llm.retries . ,(length retries))
             (llm.retry_log . ,(string-join (reverse retries) ",")))))
+    (define (finish-ui-stream!)
+      (when ui-stream-role
+        (emit-ui-transcript! ui-stream-role "" #t #t)
+        (set! ui-stream-role #f)))
+    (define (ui-chunk! role chunk)
+      (unless (equal? ui-stream-role role)
+        (finish-ui-stream!)
+        (set! ui-stream-role role))
+      (emit-ui-transcript! role chunk #t))
     (define (on-thinking chunk)
       (unless print-mode?
         (unless thinking-started?
           (set! thinking-started? #t)
-          (display "thinking> "))
-        (display chunk)
-        (force-output)))
+          (unless (ui-connected?) (display "thinking> ")))
+        (if (ui-connected?)
+            (ui-chunk! "thinking" chunk)
+            (begin (display chunk) (force-output)))))
     (define (on-content chunk)
       (unless content-started?
         (set! content-started? #t)
-        (when thinking-started? (newline))
-        (unless print-mode? (display "assistant> ")))
-      (display chunk)
-      (force-output))
+        (unless (ui-connected?)
+          (when thinking-started? (newline))
+          (unless print-mode? (display "assistant> "))))
+      (if (ui-connected?)
+          (ui-chunk! "assistant" chunk)
+          (begin (display chunk) (force-output))))
     (catch #t
       (lambda ()
         (let ((completion
@@ -1721,9 +1885,18 @@
                   stream? thinking keep-alive prompt-cache-key
                   on-content on-thinking
                   effort fast? reserve))))
-          (when (or thinking-started? content-started?)
-            (newline)
-            (force-output))
+          (if (ui-connected?)
+              (begin
+                (finish-ui-stream!)
+                (unless (or print-mode? thinking-started?
+                            (string-null? (or (completion-thinking completion) "")))
+                  (emit-ui-transcript! "thinking" (completion-thinking completion)))
+                (unless (or content-started?
+                            (string-null? (or (completion-content completion) "")))
+                  (emit-ui-transcript! "assistant" (completion-content completion))))
+              (when (or thinking-started? content-started?)
+                (newline)
+                (force-output)))
           (set! last-usage
             (let ((raw (completion-usage completion)))
               (let ((value (json-object-ref raw "usage"
@@ -1735,11 +1908,10 @@
           (let ((attributes (usage-attributes completion)))
             (record-run-usage! attributes)
             (set! turn-rounds (+ turn-rounds 1))
-            (ui-emit! "usage" (json-object
-              (cons "prompt" (or (assq-ref attributes 'llm.token_count.prompt) 0))
-              (cons "round" turn-rounds)
-              (cons "limit" (or (model-context-limit generation) json-null))
-              (cons "max_rounds" (setting-ref generation 'agent-max-tool-rounds))))
+            (when (ui-connected?)
+              (emit-provider-metadata! generation)
+              (emit-usage-snapshot! generation last-estimate
+                                    (completion-usage completion) turn-rounds))
             (trace-end!
              span "OK"
              (append
@@ -1749,9 +1921,11 @@
               attributes)))
           (cons completion content-started?)))
       (lambda (key . arguments)
-        (when (or thinking-started? content-started?)
-          (newline)
-          (force-output))
+        (if (ui-connected?)
+            (finish-ui-stream!)
+            (when (or thinking-started? content-started?)
+              (newline)
+              (force-output)))
         (trace-end! span (if (cancelled? key) "CANCELLED" "ERROR")
                     `((error.type . ,(symbol->string key))
                       (error.message . ,(format #f "~s" arguments))
@@ -1827,6 +2001,8 @@
       (define raw-estimate (estimate-input-tokens messages enabled-tools))
       (set! last-estimate
         (calibrate-input-estimate raw-estimate previous-estimate previous-prompt))
+      (when (ui-connected?)
+        (emit-usage-snapshot! generation last-estimate (json-object) turn-rounds))
       (when (context-over-budget? last-estimate (model-context-limit generation)
                                   (setting-ref generation 'output-reserve))
         (let* ((prefix (compaction-prefix history 4))
@@ -1863,7 +2039,7 @@
         (if (null? calls)
             (let ((reply (or (completion-content completion) "")))
               (record-output! runtime generation turn-count reply)
-              (unless content-streamed?
+              (unless (or (ui-connected?) content-streamed?)
                 (unless (or print-mode? (string-null? (or (completion-thinking completion) "")))
                   (format #t "thinking> ~a~%" (completion-thinking completion)))
                 (format #t "~a~a~%" (if print-mode? "" "assistant> ") reply))
@@ -2062,8 +2238,9 @@
 ;; --receipt FILE. A receipt that cannot be written never fails the turn.
 (define (deliver-receipt! runtime tracer receipt)
   (set! last-receipt receipt)
+  (emit-ui-diff! (assq-ref receipt 'turn))
   (ui-emit! "receipt" (receipt->json receipt))
-  (when (setting-ref (runtime-current runtime) 'show-work)
+  (when (and (not (ui-connected?)) (setting-ref (runtime-current runtime) 'show-work))
     (let ((port (if print-mode? (current-error-port) (current-output-port))))
       (display (receipt->text receipt) port)
       (force-output port)))
@@ -2094,6 +2271,12 @@
 
 (define (perform-turn! runtime tracer history line turn-count)
   (reset-turn-usage!)
+  (ui-emit! "turn-start" (json-object (cons "turn" turn-count)))
+  (when (ui-connected?)
+    (let ((generation (runtime-current runtime)))
+      (emit-usage-snapshot! generation
+        (session-prompt-estimate generation (append history (list (make-message "user" line))))
+        (json-object) 0)))
   (let* ((generation (runtime-current runtime))
          (started (get-internal-real-time))
          (span
@@ -2151,6 +2334,14 @@
   (let loop ((remaining args) (out '()))
     (cond
       ((null? remaining) (reverse out))
+      ((member (car remaining)
+               '("--agent" "--state-dir" "--session" "--new-session" "--resume"
+                 "--mode" "--model" "--allow-run" "--set" "--receipt"
+                 "--print" "-p" "--fork-session"))
+       (let* ((arity (if (string=? (car remaining) "--fork-session") 2 1))
+              (count (min (+ arity 1) (length remaining))))
+         (loop (drop remaining count)
+               (append (reverse (take remaining count)) out))))
       ((string=? (car remaining) "--mcp")
        (set! mcp-stdio? #t) (set! mcp-http? #f) (loop (cdr remaining) out))
       ((string=? (car remaining) "--no-mcp")
@@ -2170,25 +2361,57 @@
         (turn-count (if session (session-next-turn session) 1))
         (lock (make-mutex)))
     (define (publish-session!)
+      (when (ui-connected?)
+        (let ((generation (runtime-current runtime)))
+          (sync-ui-identity! generation)
+          (unless last-ui-usage
+            ;; Effective local settings are available before discovery, even
+            ;; when the provider is offline or this is a resumed session.
+            (emit-usage-snapshot! generation (session-prompt-estimate generation history)))
+          (emit-provider-metadata! generation)
+          (emit-usage-snapshot! generation #f)))
       (ui-emit! "session" (json-object
         (cons "model" (setting-ref (runtime-current runtime) 'agent-model))
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
+        (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
         (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral")))))
+    (define (register-host!)
+      (ui-host-handler!
+        (lambda (command)
+          (unless (member command '("/mode manual" "/mode plan" "/mode accept" "/mode auto"))
+            (error "only explicit /mode manual|plan|accept|auto is supported"))
+          (unless (try-mutex lock) (error "Session busy; finish the turn or pending approval before changing mode"))
+          (dynamic-wind
+            (lambda () #t)
+            (lambda ()
+              (let ((out (open-output-string)))
+                (parameterize ((current-output-port out))
+                  (handle-preference-command runtime command))
+                (checkpoint! history turn-count)
+                (publish-session!)
+                (string-trim-both (get-output-string out))))
+            (lambda () (unlock-mutex lock))))))
     (define (process! line)
       (publish-session!)
       (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
+      (when (and (ui-connected?) (not (string-null? (string-trim-both line))))
+        (emit-control! "working"))
       (parameterize ((current-turn turn-count))
       (let ((action
              (cond
                ((string-null? (string-trim-both line)) 'continue)
-               ((string-prefix? "/" line) (handle-command runtime tracer session line))
+               ((string-prefix? "/" line)
+                (emit-ui-transcript! "user" line)
+                (handle-command runtime tracer session line))
                (else
                  (let ((result (perform-turn! runtime tracer history line turn-count)))
                    (when result
                      (set! history (compact-history! runtime tracer (cadr result) #f))
                      (set! turn-count (+ turn-count 1)))) 'continue))))
         (case action
-          ((reset) (set! history '()) (set! turn-count 1) (display "Conversation state cleared.\n"))
+          ((reset) (set! history '()) (set! turn-count 1)
+                   (set! last-ui-usage #f)
+                   (display "Conversation state cleared.\n"))
           ((compact) (set! history (compact-history! runtime tracer history #t)))
           ((recover-retry)
            (let ((message (try-transition "tool recovery" (lambda () (retry-interrupted-tool! runtime tracer)))))
@@ -2231,6 +2454,7 @@
                   (when (not (string=? operation-status "ok")) (error "session operation failed" (get-output-string output)))
                   (get-output-string output)))
               (lambda () (unlock-mutex lock)))))))
+    (register-host!)
     (publish-session!)
     (ui-emit! "history" (apply json-array (take-right history (min 50 (length history)))))
     (let ((stop-mcp!
@@ -2272,7 +2496,7 @@
                                        (lambda () (unlock-mutex lock)))))
                          (unless (eq? action 'quit) (loop))))
                       (else (display "Session busy with an MCP operation.\n") (loop)))))))))
-        (lambda () (stop-mcp!))))))
+        (lambda () (ui-host-handler! #f) (stop-mcp!))))))
 
 (define (main args)
   (reset-run-usage!)
@@ -2349,6 +2573,8 @@
         (unless (try-transition "startup options" apply-cli-overrides!)
           (exit 2))
         (input-init! state-directory)
+        (when (ui-connected?)
+          (ui-emit! "input-history" (apply json-array (input-history))))
         (install-cancellation-handler!)
         (let ((checkpoint-history
                (if session (normalize-messages (session-history session)) '()))

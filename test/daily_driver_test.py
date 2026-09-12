@@ -1,13 +1,16 @@
 """Daily-driver contracts against the real CLI, PTY and in-process MCP server."""
 
 import json
+import fcntl
 import os
 from pathlib import Path
 import pty
 import select
 import socket
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import unittest
 import urllib.error
@@ -200,8 +203,17 @@ class DailyDriver(unittest.TestCase):
                 process.communicate()
 
     def test_up_down_history_survives_restart(self):
-        def run(keys):
+        checkpoint=self.project/".shift/sessions/terminal/session.json"
+        def messages():
+            if not checkpoint.exists():return []
+            return json.loads(checkpoint.read_text())["history"]
+
+        def prompts():
+            return [m["content"] for m in messages() if m.get("role")=="user"]
+
+        def run(keys, expected):
             master, slave = pty.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack("HHHH",24,80,0,0))
             process = subprocess.Popen(
                 [
                     BIN,
@@ -216,51 +228,42 @@ class DailyDriver(unittest.TestCase):
                 stdout=slave,
                 stderr=slave,
                 cwd=self.project,
-                env=self.env,
+                env={**self.env,"TERM":"xterm-256color"},
+                start_new_session=True,
             )
-            os.close(slave)
             output = b""
 
-            def until_prompt():
+            def until(predicate):
                 nonlocal output
-                chunk = b""
-                deadline = time.monotonic() + 5
-                while b"shift> " not in chunk:
+                deadline = time.monotonic() + 10
+                while not predicate():
                     self.assertLess(
                         time.monotonic(), deadline, output.decode(errors="replace")
                     )
                     if select.select([master], [], [], 0.1)[0]:
                         data = os.read(master, 65536)
                         output += data
-                        chunk += data
 
             try:
-                until_prompt()
-                for key in keys:
+                until(lambda:b"READY" in output)
+                self.assertIn(b"\x1b[?1049h",output)
+                for key, want in zip(keys,expected):
+                    start=len(output)
                     os.write(master, key)
-                    until_prompt()
+                    until(lambda:b"READY" in output[start:] and prompts()==want and any(m.get("role")=="assistant" and m.get("content")=="[mcp-test] "+want[-1] for m in messages()))
                 os.write(master, b"/quit\n")
-                deadline = time.monotonic() + 5
-                while process.poll() is None:
-                    self.assertLess(
-                        time.monotonic(), deadline, output.decode(errors="replace")
-                    )
-                    if select.select([master], [], [], 0.05)[0]:
-                        data = os.read(master, 65536)
-                        output += data
+                until(lambda:process.poll() is not None)
                 self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
             finally:
                 if process.poll() is None:
                     process.kill()
-                    process.wait()
                 os.close(master)
-            return output.decode(errors="replace")
-
-        output = run([b"first prompt\n", b"second prompt\n", b"draft\x1b[A\x1b[B\n"])
-        self.assertIn("[mcp-test] draft", output)
+                os.close(slave)
+                process.wait(timeout=5)
+        run([b"first prompt\n",b"second prompt\n",b"draft\x1bOA\x1bOB\n"],
+            [["first prompt"],["first prompt","second prompt"],["first prompt","second prompt","draft"]])
         # The last submitted command was /quit; two up arrows select draft.
-        output = run([b"\x1b[A\x1b[A\n"])
-        self.assertIn("[mcp-test] draft", output)
+        run([b"\x1bOA\x1bOA\n"],[["first prompt","second prompt","draft","draft"]])
         saved = list(
             map(
                 json.loads,

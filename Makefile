@@ -9,8 +9,10 @@ BUILTIN_SOURCES = $(wildcard extensions/shift/*.scm)
 COMPILED = $(patsubst src/live-agent/%.scm,build/live-agent/%.go,$(CORE_SOURCES)) \
            $(patsubst extensions/shift/%.scm,build/shift/%.go,$(BUILTIN_SOURCES))
 
+SHIFT_ARGS ?=
+
 run:
-	./bin/shift
+	./bin/shift $(SHIFT_ARGS)
 
 dogfood:
 	./bin/shift --session dogfood
@@ -50,7 +52,7 @@ build/shift/%.go: extensions/shift/%.scm
 	@GUILE_AUTO_COMPILE=0 guild compile $(LOAD_PATHS) -o $@ $< >/dev/null
 
 test: build
-	@set -e; for suite in sha256 changes patch receipt coding default-agent json provider tools extensions runtime session trace prompt compaction recovery context daily ui; do \
+	@set -e; for suite in sha256 changes patch receipt coding default-agent json provider provider-metadata provider-telemetry tools extensions runtime session trace prompt compaction recovery context daily ui; do \
 	  GUILE_AUTO_COMPILE=0 guile $(GUILE_PATHS) test/run.scm test/$$suite.scm; \
 	done
 	python3 test/session_bridge_test.py
@@ -60,5 +62,8 @@ test: build
 	python3 test/coding_workflow_test.py
 	python3 test/evals_driver_test.py
 	python3 test/tui_test.py
+	python3 test/tui_scroll_test.py
+	python3 test/provider_metadata_test.py
+	python3 test/tui_launch_test.py
 
 check: test

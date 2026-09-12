@@ -3,11 +3,44 @@ set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export SHIFT_INSTALL_ROOT="$project_root"
-for argument do
-  if [ "$argument" = "--tui" ]; then
-    exec python3 "$project_root/scripts/tui.py" "$@"
+# Classify options without mistaking their values for launch modes. The curses
+# child re-enters this launcher with pipes; never wrap that backend in curses.
+launch_tui=no
+explicit_tui=no
+backend_only=no
+classify_launch() {
+  if [ "${1-}" = "session-fork" ]; then
+    backend_only=yes
+    return
   fi
-done
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tui) explicit_tui=yes ;;
+      --print|-p|--mcp|--list-sessions|--fork-session|-h|--help)
+        backend_only=yes
+        return ;;
+      --agent|--state-dir|--session|--new-session|--resume|--mode|--model|--allow-run|--set|--receipt|--mcp-port)
+        if [ "$#" -lt 2 ]; then
+          backend_only=yes
+          return
+        fi
+        shift ;;
+      --watch|--no-watch|--no-mcp) ;;
+      -*) backend_only=yes; return ;;
+    esac
+    shift
+  done
+}
+classify_launch "$@"
+if [ "$backend_only" = no ] && [ -z "${SHIFT_CONTROL_FD-}" ] &&
+   [ -z "${SHIFT_UI_EVENT_FD-}" ] && [ -z "${SHIFT_UI_COMMAND_FD-}" ]; then
+  if [ "$explicit_tui" = yes ] || { [ -t 0 ] && [ -t 1 ]; }; then
+    launch_tui=yes
+  fi
+fi
+if [ "$launch_tui" = yes ]; then
+  exec python3 "$project_root/scripts/tui.py" "$@"
+fi
 working_root=$(pwd -P)
 export SHIFT_PROJECT_ROOT="$working_root"
 # Compatibility for older extensions and trace bridge processes.

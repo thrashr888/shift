@@ -23,12 +23,12 @@ point; users can replace the wordmark with their own name, move panels, build a
 theme, or ask Shift to change its interface immediately. Changes should be
 inspectable, reversible, and retained at the scope the user chooses.
 
-The runtime supports live behavior changes and an opt-in terminal interface with
+The runtime supports live behavior changes and a default curses terminal interface with
 hot-reloaded presentation packs; see [the TUI guide](docs/daily-driver.md#terminal-interface).
 
 ## Try the live loop
 
-Requirements: Guile 3.0, [ripgrep](https://github.com/BurntSushi/ripgrep), and
+Requirements: Guile 3.0, Python 3 with curses, [ripgrep](https://github.com/BurntSushi/ripgrep), and
 [Ollama](https://docs.ollama.com/). The checked-in image defaults to the locally
 installed, tool-capable `qwen3.8:27b-mlx` model at Ollama's native
 `http://127.0.0.1:11434/api/chat` endpoint.
@@ -44,7 +44,18 @@ In a terminal the process remains interactive after the answer; with redirected
 stdin it exits naturally at end-of-file. The initial turn uses the same tools,
 streaming, tracing, approvals, and durable checkpoint path as a typed prompt.
 
-Boot is deliberately compact:
+Interactive terminals open the curses interface automatically; `--tui` remains
+a compatibility alias. There is no public `--repl` mode. Use `--print`/`-p` for
+one answer, or redirect/pipeline input for the scriptable Guile command loop:
+
+```sh
+./bin/shift -p "Summarize this project."
+printf '/show\n/quit\n' | ./bin/shift
+./bin/shift < demo/context-selection/session.txt
+```
+
+Help, session listing/forking, and MCP stdio (`--mcp`) bypass curses. Redirected
+stdout also stays plain text. Scripted boot is deliberately compact:
 
 ```text
 shift λ
@@ -86,12 +97,18 @@ to watch off; pass `--watch` to opt in there.
 ## Terminal interface
 
 ```sh
-./bin/shift --tui
+./bin/shift
+make
+./bin/shift --tui  # compatibility alias
 ```
 
 The TUI uses Python 3's standard-library curses adapter around the same Guile
-session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the three
-themes, and Ctrl+C cancels the active turn. For example:
+session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the
+themes, and Ctrl+C cancels the active turn. `/theme apex` selects the split
+transcript/output layout; `/theme afterhours` selects a full-width transcript and
+bottom telemetry. Tab switches side-pane views; Ctrl+W/Ctrl+O fold real work/diffs.
+Both use a lowercase pixel wordmark and deep-purple RGB palette on capable
+terminals, with indexed-color/ASCII/monochrome fallbacks. For example:
 
 ```text
 /name thrashr888
@@ -107,7 +124,7 @@ Custom Scheme presentation packs reload when saved; invalid updates preserve the
 working view. No local model is required to try the interface:
 
 ```sh
-./bin/shift --tui --session ui-demo --set 'agent-model="demo"'
+./bin/shift --session ui-demo --set 'agent-model="demo"'
 ```
 
 ## Durable named sessions
@@ -193,8 +210,10 @@ approval modes, context budgets, and the live localhost MCP endpoint.
 
 Ollama, OpenAI-compatible transport, Claude, tracing, the MCP server, and the coding
 tools (`status`, `diff`, `apply_patch`, `run`) are shipped as trusted built-ins under `extensions/shift/`. They are enabled automatically;
-there is no per-session load command. Provider modules load only when selected,
-and interactive sessions start MCP at `http://127.0.0.1:7331/mcp` in the same process.
+there is no per-session load command. Provider modules load only when selected.
+The curses adapter leaves HTTP MCP off by default; pass `--mcp-port 7331` to
+enable `http://127.0.0.1:7331/mcp` in the same Guile process. Use `--mcp` for
+the plain JSON-RPC stdio transport instead of the terminal interface.
 
 To keep a smaller process, set an explicit built-in allowlist before launch:
 
@@ -345,7 +364,7 @@ process, filesystem, network, dynamic-loading, or ambient evaluation authority.
 
 ## Attach to the live session
 
-Start `./bin/shift`, then connect an HTTP MCP client to
+Start `./bin/shift --mcp-port 7331`, then connect an HTTP MCP client to
 `http://127.0.0.1:7331/mcp`. The endpoint shares the terminal's process, settings,
 conversation, generation, and approval policy. It dies with the session.
 Use `--mcp-port PORT` for another port or `--no-mcp` to disable it.
