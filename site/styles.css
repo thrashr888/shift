@@ -11,6 +11,7 @@
 }
 :root[data-theme="paddock"] { color-scheme: light; --bg: #f4f0e5; --fg: #20211c; --accent: #b82d18; --muted: #636657; --line: #b8baa8; --panel: #e7e5d8; }
 :root[data-theme="blueprint"] { --bg: #092b92; --fg: #f1f5ff; --accent: #fff275; --muted: #b6cdfa; --line: #567ac6; --panel: #12389b; }
+:root[data-theme="qdos"] { --bg: #000; --fg: #fff; --accent: #66b7b3; --muted: #fff; --line: #fff; --panel: #000; --help: #67cc4d; --selected-bg: #9d1f14; --selected-fg: #e8da59; }
 * { box-sizing: border-box; }
 html { scroll-padding-top: 2rem; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.65 system-ui, sans-serif; }
@@ -50,6 +51,7 @@ pre:focus-visible { outline-offset: -2px; }
 .appearance-controls form > label { display: block; margin-bottom: .375rem; }
 .appearance-controls input { min-width: 0; width: 100%; }
 .appearance-notice { font-size: .6875rem; margin: .75rem 0 0; color: var(--muted); min-height: 1.65em; }
+.qdos-help { display: none; }
 nav { display: flex; gap: 2rem; align-items: center; }
 nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 .hero { padding-top: 4.5rem; }
@@ -268,6 +270,69 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
   .site-header nav { gap: .75rem; }
   .site-header nav a { font-size: .6875rem; white-space: nowrap; }
   h1 { font-size: clamp(2.75rem, 14vw, 3.5rem); }
+}
+/* QDOS uses its documented six-color palette, with real web controls and links. */
+:root[data-theme="qdos"] body { font-family: var(--mono); line-height: 1.5; }
+:root[data-theme="qdos"] .site-header { min-height: 64px; border-bottom: 3px double var(--line); }
+:root[data-theme="qdos"] .site-header .wordmark { font-size: 1.25rem; }
+:root[data-theme="qdos"] nav { gap: .5rem; }
+:root[data-theme="qdos"] nav a { padding: .75rem .375rem; }
+:root[data-theme="qdos"] .appearance { padding-block: 1rem; border-bottom: 3px double var(--line); }
+:root[data-theme="qdos"] .appearance-intro { margin-bottom: .75rem; }
+:root[data-theme="qdos"] .appearance-intro h2 { font-size: .875rem; }
+:root[data-theme="qdos"] .appearance-intro h2,
+:root[data-theme="qdos"] .section-heading h2,
+:root[data-theme="qdos"] .principles h3,
+:root[data-theme="qdos"] .quickstart h3 { color: var(--accent); }
+:root[data-theme="qdos"] .appearance-intro p,
+:root[data-theme="qdos"] .appearance-notice,
+:root[data-theme="qdos"] .demo-notice,
+:root[data-theme="qdos"] .command-note { color: var(--help); }
+:root[data-theme="qdos"] .qdos-help { display: block; color: var(--help); font-size: .6875rem; margin: .75rem 0 0; }
+:root[data-theme="qdos"] select,
+:root[data-theme="qdos"] .primary,
+:root[data-theme="qdos"] .mode,
+:root[data-theme="qdos"] #simulate[aria-pressed="true"],
+:root[data-theme="qdos"] nav a:hover,
+:root[data-theme="qdos"] nav a:focus-visible,
+:root[data-theme="qdos"] button:focus-visible,
+:root[data-theme="qdos"] input:focus-visible { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--line); }
+:root[data-theme="qdos"] .hero { padding-top: 2rem; }
+:root[data-theme="qdos"] h1 { font-size: clamp(2rem, 4vw, 4rem); line-height: 1.1; }
+:root[data-theme="qdos"] h1 span { color: var(--fg); }
+:root[data-theme="qdos"] .hero-grid { align-items: start; }
+:root[data-theme="qdos"] .hero-baseline { margin-top: 1.5rem; }
+:root[data-theme="qdos"] .playground { padding-top: 2rem; }
+:root[data-theme="qdos"] .section-heading { margin-bottom: 1rem; }
+:root[data-theme="qdos"] h2 { font-size: clamp(1.5rem, 2.5vw, 2rem); }
+:root[data-theme="qdos"] .demo-shell,
+:root[data-theme="qdos"] .terminal,
+:root[data-theme="qdos"] .principles,
+:root[data-theme="qdos"] .reality-note { border: 3px double var(--line); }
+:root[data-theme="qdos"] .demo-label { color: var(--accent); padding: .5rem 1rem; }
+:root[data-theme="qdos"] .demo-controls { padding-block: .75rem; }
+:root[data-theme="qdos"] .terminal-header { padding-block: .75rem; border-bottom-color: var(--line); }
+:root[data-theme="qdos"] .terminal-wordmark { font-size: 1.5rem; }
+:root[data-theme="qdos"] .terminal-theme { color: var(--accent); }
+:root[data-theme="qdos"] .transcript { padding-block: 1rem; }
+:root[data-theme="qdos"] .message { margin-bottom: 1rem; }
+:root[data-theme="qdos"] .message:last-child { margin-bottom: 0; }
+:root[data-theme="qdos"] .inspector section + section { border-left: 1px solid var(--line); padding-left: 1rem; }
+:root[data-theme="qdos"] .terminal[data-placement="right"] .inspector section + section { border-left: 0; padding-left: 0; }
+:root[data-theme="qdos"] .terminal-prompt { color: var(--help); }
+:root[data-theme="qdos"] .live-section,
+:root[data-theme="qdos"] .start-section { margin-top: 2.5rem; padding-top: 1.5rem; }
+:root[data-theme="qdos"] .principles { margin-top: 1.5rem; }
+:root[data-theme="qdos"] .principles article { padding: 1rem; }
+:root[data-theme="qdos"] .index { margin-bottom: 1rem; }
+:root[data-theme="qdos"] .quickstart pre,
+:root[data-theme="qdos"] .live-example pre { border: 1px solid var(--line); padding: 1rem; }
+:root[data-theme="qdos"] .site-footer { margin-top: 2rem; padding-block: 1rem; gap: 1rem; }
+@media (max-width: 760px) {
+  :root[data-theme="qdos"] .site-header { flex-wrap: wrap; padding-block: .5rem; gap: .5rem; }
+  :root[data-theme="qdos"] .site-header nav { width: 100%; }
+  :root[data-theme="qdos"] .hero-grid { gap: 1.5rem; }
+  :root[data-theme="qdos"] .inspector section + section { border-left: 0; border-top: 1px solid var(--line); padding: .75rem 0 0; }
 }
 @media (forced-colors: active) {
   .primary, .mode { border: 1px solid ButtonText; }

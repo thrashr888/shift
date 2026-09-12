@@ -8,6 +8,13 @@ Acid Garage keeps the original neutral shell and purple terminal; Paddock and
 Blueprint apply their existing palettes throughout. Controls, focus rings, text,
 cards, and the browser theme color use the same theme selection.
 
+QDOS follows the [QDOS specification](https://github.com/thrashr888/QDOS/blob/master/spec/SPEC.md):
+black canvas, white text/frames, cyan panel labels (`#66b7b3`), green contextual
+help (`#67cc4d`), and yellow-on-red selections (`#e8da59` / `#9d1f14`).
+Compact monospace menus, double frames, and denser sections suggest its DOS
+layout without a fixed 80-column screen or fake DOS commands. Links and form
+controls remain native and keyboard-accessible; the menu wraps on narrow screens.
+
 Applying a display name updates the header, hero identity, footer, browser title,
 and simulated terminal branding. Actual Shift product references, source credits,
 repository/docs links, executable names, and copyable commands never change.
