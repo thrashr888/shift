@@ -114,7 +114,7 @@
           </div>
         </div>
       </div>
-      <p class="caption">A browser interpretation of Shift’s opt-in curses TUI, not a terminal emulator. The <span class="mono">///</span> mark cycles only while simulated work is active. Reduced-motion preferences are respected.</p>
+      <p class="caption">A browser interpretation of Shift’s curses TUI, which opens by default in an interactive terminal; this is not a terminal emulator. The <span class="mono">///</span> mark cycles only while simulated work is active. Reduced-motion preferences are respected.</p>
     </section>
 
     <section class="themes-section wrap" id="ghostty" aria-labelledby="ghostty-title">
@@ -163,9 +163,9 @@ printf 'theme = shift-acid\n' &gt;&gt; ~/.config/ghostty/config</code></pre>
         <p>Use macOS or Linux with <strong>Git, Make, Guile 3.0, ripgrep, and Python 3 with curses</strong>, in an interactive terminal. No API key or local model needed for this demo.</p>
         <pre aria-label="Clone Shift and launch its no-model terminal demo"><code>git clone https://github.com/thrashr888/shift.git
 cd shift
-./bin/shift --tui --session ui-demo \
+./bin/shift --session ui-demo \
   --set 'agent-model="demo"'</code></pre>
-        <details class="provider-details"><summary>Ready for a real model?</summary><p>The checked-in image defaults to Ollama with <code>qwen3.8:27b-mlx</code>. You’ll need Ollama running and a compatible, tool-capable model installed, or credentials for a supported remote provider. Model availability and hardware requirements vary.</p><p>Run <code>./bin/shift --tui</code> for the terminal interface. To keep the saved demo separate, use <code>./bin/shift --tui --session first-run</code>; the demo session retains its demo-model setting.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Provider setup and model selection <span aria-hidden="true">↗</span></a></details>
+        <details class="provider-details"><summary>Ready for a real model?</summary><p>The checked-in image defaults to Ollama with <code>qwen3.8:27b-mlx</code>. You’ll need Ollama running and a compatible, tool-capable model installed, or credentials for a supported remote provider. Model availability and hardware requirements vary.</p><p>Run <code>./bin/shift</code> in an interactive terminal for the interface (<code>--tui</code> remains an alias). To keep the saved demo separate, use <code>./bin/shift --session first-run</code>; the demo session retains its demo-model setting.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Provider setup and model selection <span aria-hidden="true">↗</span></a></details>
         <a class="guide-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">Read the terminal guide <span aria-hidden="true">↗</span></a>
       </div>
     </section>

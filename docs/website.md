@@ -70,9 +70,9 @@ The public site is hosted at <https://thrashr888.github.io/shift/> using GitHub
 Pages with GitHub Actions as its source. Deployments are manual, not triggered
 by pushes or pull requests.
 
-The quickstart follows the launcher published on `main`, which currently
-requires `--tui`. Unpublished default-TUI development work is not a prerequisite
-for this website release; update this copy only when that launcher is released.
+The quickstart uses the launcher on `main`, which opens the curses interface by
+default in an interactive terminal; `--tui` remains a compatibility alias. Keep
+the site copy in step with the published launcher.
 
 After explicit approval to publish:
 

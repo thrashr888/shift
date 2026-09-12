@@ -552,7 +552,9 @@ renderer. It renders the existing transcript, rather than a new rich diff editor
 ## TUI design direction (September 10, 2026)
 
 Original design direction; the implemented subset and remaining limits are
-described above. The interactive study is
+described above. Apex and Afterhours packs were added from later mocks and
+removed on September 11, 2026 because they only rearranged Acid's panes, which
+`/place` already does; QDOS was added as a fourth, structurally distinct pack. The interactive study is
 `output/design/shift-tui/live-prototype.html`. It uses a simulated session and a
 small demonstration phrase parser; it does not call a provider or mutate Shift.
 
