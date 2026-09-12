@@ -8,9 +8,11 @@ import os
 import re
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import termios
 import unicodedata
@@ -85,6 +87,32 @@ def watch_enabled(args):
         if args[index] in ('--watch','--no-watch'):watch=args[index]=='--watch'
         index+=VALUE_OPTIONS.get(args[index],0)+1
     return watch
+
+
+def rep_free_terminfo(term, version=None):
+    """ncurses before 6.1 answers a terminal's `rep` capability with only the low
+    byte of a multibyte cell, so `─` runs vanish and `═` becomes repeated `P`s on
+    terminals such as Ghostty. Compile a private terminfo copy without `rep`
+    rather than changing TERM; return its directory, or None when unneeded."""
+    version=curses.ncurses_version if version is None else version
+    if not term or tuple(version[:2])>=(6,1) or not (shutil.which('infocmp') and shutil.which('tic')):
+        return None
+    try:
+        source=subprocess.run(['infocmp','-1',term],capture_output=True,text=True,timeout=5,check=True).stdout
+    except (OSError,subprocess.SubprocessError):
+        return None
+    lines=source.splitlines()
+    if not any(line.strip().startswith('rep=') for line in lines):
+        return None
+    directory=tempfile.mkdtemp(prefix='shift-terminfo-')
+    path=Path(directory)/'terminfo.src'
+    path.write_text('\n'.join(line for line in lines if not line.strip().startswith('rep='))+'\n')
+    try:
+        subprocess.run(['tic','-x','-o',directory,str(path)],capture_output=True,timeout=10,check=True)
+    except (OSError,subprocess.SubprocessError):
+        shutil.rmtree(directory,ignore_errors=True)
+        return None
+    return directory
 
 
 ANSI_COLORS = ((0,0,0),(205,0,0),(0,205,0),(205,205,0),
@@ -1091,6 +1119,7 @@ class Terminal:
             line('Loaded: '+m.source_identity['loaded']['label'])
             line('Process: '+m.source_identity['process']['label'])
             line('TUI: '+m.source_identity['presentation'])
+            if m.source_identity.get('terminfo'):line('Terminfo: '+m.source_identity['terminfo'],4)
             for part in wrap(m.source_identity['loaded'].get('commit') or 'Commit unavailable',max(1,width)):
                 line(part)
         elif m.panel_tab=='diff':
@@ -1406,6 +1435,9 @@ def main():
     signal.signal(signal.SIGTERM,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     child=Child(args)
     model=None
+    # Only the curses process sees the private terminfo; tools keep the real one.
+    terminfo=rep_free_terminfo(os.environ.get('TERM',''))
+    if terminfo:os.environ['TERMINFO']=terminfo
     try:
         def run(screen):
             nonlocal model
@@ -1425,6 +1457,7 @@ def main():
             source=identity(ROOT)
             terminal.reloader=Reloader(__file__,child.watch)
             model.source_identity={'process':source.copy(),'loaded':source.copy(),'presentation':terminal.reloader.seen.hex()[:12]}
+            if terminfo:model.source_identity['terminfo']='private copy without rep (ncurses %d.%d)'%tuple(curses.ncurses_version[:2])
             try:return terminal.run()
             finally:
                 terminal.stop_mouse()
@@ -1434,6 +1467,7 @@ def main():
         return 130
     finally:
         child.close()
+        if terminfo:shutil.rmtree(terminfo,ignore_errors=True)
         termios.tcsetattr(sys.stdin.fileno(),termios.TCSANOW,saved_terminal)
         if model and child.process.returncode not in (0,-signal.SIGTERM,-signal.SIGKILL):
             print('\n'.join(list(model.lines)[-12:]),file=sys.stderr)

@@ -450,7 +450,13 @@ Tool results and traces record the applied UI revision/configuration.
 
 Rules use individual wide-character cells on UTF-8 terminals, ACS on legacy
 terminals with a graphics character set, and ASCII only when requested or required.
-This separates connected chrome from semantic prose/diff hyphens. Meters use
+This separates connected chrome from semantic prose/diff hyphens. Terminals whose
+terminfo advertises `rep` (Ghostty, kitty) expose a bug in ncurses before 6.1,
+including the macOS system library Python links: repeated wide cells are sent as
+their low byte plus a repeat sequence, so rules vanish and `═` shows as `P`. When
+that ncurses is in use, startup compiles a private terminfo copy without `rep`
+for the curses process only; TERM stays unchanged and the Session tab notes it.
+Meters use
 full `█`/`░` cells through the same wide-cell path; ASCII/legacy fallback uses
 `#`/`.` rather than uncommon partial-block glyphs.
 Terminal-cell captures do not prove native font rendering. Mouse

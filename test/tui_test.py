@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import select
 import shlex
+import shutil
 import signal
 import struct
 import subprocess
@@ -1103,6 +1104,53 @@ class PTY(unittest.TestCase):
             finally:
                 if process.poll() is None:process.kill();process.wait()
                 os.close(master);os.close(slave)
+
+
+class TerminfoRepeat(unittest.TestCase):
+    """Terminals that advertise rep (Ghostty, kitty) must still get whole glyphs from ncurses 6.0."""
+    def setUp(self):
+        if not (shutil.which('tic') and shutil.which('infocmp')):self.skipTest('tic/infocmp unavailable')
+        self.temp=tempfile.TemporaryDirectory(prefix='shift-rep-terminfo-');self.addCleanup(self.temp.cleanup)
+        source=subprocess.run(['infocmp','-1','xterm-256color'],capture_output=True,text=True,check=True).stdout
+        lines=[line for line in source.splitlines() if not line.startswith('#')]
+        lines[0]='shift-rep-test|xterm-256color with rep,'
+        lines.insert(1,'\trep=%p1%c\\E[%p2%{1}%-%db,')
+        src=Path(self.temp.name)/'rep.src';src.write_text('\n'.join(lines)+'\n')
+        subprocess.run(['tic','-x','-o',self.temp.name,str(src)],capture_output=True,check=True)
+        self.env={**os.environ,'TERM':'shift-rep-test','TERMINFO':self.temp.name}
+
+    def test_private_terminfo_drops_rep_only_when_needed(self):
+        with patch.dict(os.environ,self.env):
+            self.assertIsNone(tui.rep_free_terminfo('shift-rep-test',(6,1)))
+            self.assertIsNone(tui.rep_free_terminfo('xterm-256color',(6,0)))
+            directory=tui.rep_free_terminfo('shift-rep-test',(6,0))
+        self.assertIsNotNone(directory);self.addCleanup(shutil.rmtree,directory,True)
+        copy=subprocess.run(['infocmp','-A',directory,'-1','shift-rep-test'],capture_output=True,text=True,check=True).stdout
+        self.assertNotIn('rep=',copy);self.assertIn('cup=',copy)
+
+    def test_pty_rules_are_whole_glyphs_on_a_rep_terminal(self):
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
+        process=subprocess.Popen([sys.executable,str(ROOT/'scripts/tui.py'),'--agent',str(ROOT/'test/session-agent.scm'),
+            '--no-watch','--state-dir',self.temp.name+'/state','--session','rep'],
+            stdin=slave,stdout=slave,stderr=slave,start_new_session=True,env={**self.env,'XDG_CONFIG_HOME':self.temp.name+'/config'})
+        data=b''
+        try:
+            deadline=time.monotonic()+20
+            while b'READY' not in data:
+                self.assertLess(time.monotonic(),deadline,data.decode(errors='replace'))
+                if select.select([master],[],[],.05)[0]:data+=os.read(master,65536)
+                self.assertIsNone(process.poll(),data.decode(errors='replace'))
+            self.assertNotRegex(data,rb'\x1b\[\d+b')
+            self.assertGreaterEqual(data.count('─'.encode()),100)
+            os.write(master,b'\x04')
+            while process.poll() is None:
+                self.assertLess(time.monotonic(),deadline)
+                if select.select([master],[],[],.05)[0]:data+=os.read(master,65536)
+            self.assertEqual(process.returncode,0,data.decode(errors='replace'))
+        finally:
+            if process.poll() is None:os.killpg(process.pid,signal.SIGTERM)
+            os.close(master);os.close(slave);process.wait(timeout=5)
 
 
 class Arguments(unittest.TestCase):
