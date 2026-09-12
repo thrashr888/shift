@@ -29,6 +29,18 @@ Reloading clears customization; there is no storage, tracking, or backend.
 Colors come from the existing live interface study;
 the source prototype and terminal implementation are not part of the website.
 
+## Ghostty themes
+
+`site/ghostty/shift-NAME` is a Ghostty theme for each bundled Shift pack, listed
+in the site's "Take the colors with you" section with download links and an
+install snippet. `scripts/ghostty_themes.py` generates them from `themes/*.scm`:
+background, foreground, cursor, selection and the pack's semantic colors are
+pack values, and the remaining ANSI slots are complementary picks declared in
+the generator. Run it after changing a pack; `--check` (also run by
+`check_site.py` and `test/ghostty_theme_test.py`) fails when the published
+files drift. Users copy a file into `~/.config/ghostty/themes/` and set
+`theme = shift-NAME`. The site's card swatches repeat the file's colors.
+
 ## Check and preview
 
 ```sh

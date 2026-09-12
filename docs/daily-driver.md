@@ -496,7 +496,12 @@ Presentation packs are one Scheme association list under `themes/NAME.scm` in
 the installation, user config, or project `.shift/` (project wins). `ui get`
 reports the active path. Copy a bundled pack under a new name to make it yours.
 Valid saved changes activate within the next half-second without restarting the
-agent. Packs are data, not executable Scheme, and are bounded at 32 KiB. The
+agent. `scripts/ghostty_themes.py` turns each bundled pack into a Ghostty theme
+under `site/ghostty/` so the surrounding terminal can match; regenerate after
+editing a bundled pack. Packs are data, not executable Scheme, and are bounded at 32 KiB. Packs, `ui.json`
+and the frontend pipes are read and written as UTF-8 regardless of the process
+locale, so a `C`/POSIX locale neither rejects the block-glyph wordmarks nor
+miscounts their width. The
 renderer supports colors (ANSI 0–255 or `"#RRGGBB"`), three-line cell wordmarks, borders,
 density, placement, and inspector section order (`session`, `context`, `files`,
 `checks`). Theme defaults yield to explicit preferences. For example:

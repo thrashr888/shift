@@ -150,6 +150,23 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
 #simulate { min-width: 160px; display: flex; gap: .75rem; justify-content: space-between; }
 #simulate[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .caption { font-size: .75rem; color: var(--muted); margin: 1rem 0 0; max-width: 94ch; }
+/* Ghostty theme downloads: swatches show the generated file's own colors. */
+.themes-section { padding-top: 3.5rem; }
+.theme-downloads { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.theme-card { border: 1px solid var(--line); background: var(--panel); padding: 1.25rem; display: grid; gap: .5rem; align-content: start; }
+.swatches { display: flex; height: 14px; border: 1px solid var(--line); }
+.swatches i { flex: 1; display: block; }
+.theme-card h3 { font-size: 1rem; margin-top: .25rem; }
+.theme-card p { font-size: .8125rem; color: var(--muted); margin: 0; }
+.theme-card a { font-size: .875rem; padding-block: .5rem; }
+.theme-card[data-swatch="acid"] .s1 { background: #170626; } .theme-card[data-swatch="acid"] .s2 { background: #f4edff; } .theme-card[data-swatch="acid"] .s3 { background: #b6ff00; } .theme-card[data-swatch="acid"] .s4 { background: #45f6ff; } .theme-card[data-swatch="acid"] .s5 { background: #ae7deb; }
+.theme-card[data-swatch="paddock"] .s1 { background: #ffffd7; } .theme-card[data-swatch="paddock"] .s2 { background: #262626; } .theme-card[data-swatch="paddock"] .s3 { background: #d70000; } .theme-card[data-swatch="paddock"] .s4 { background: #005f00; } .theme-card[data-swatch="paddock"] .s5 { background: #585858; }
+.theme-card[data-swatch="blueprint"] .s1 { background: #000087; } .theme-card[data-swatch="blueprint"] .s2 { background: #eeeeee; } .theme-card[data-swatch="blueprint"] .s3 { background: #ffffaf; } .theme-card[data-swatch="blueprint"] .s4 { background: #afd7ff; } .theme-card[data-swatch="blueprint"] .s5 { background: #0000af; }
+.theme-card[data-swatch="qdos"] .s1 { background: #000000; } .theme-card[data-swatch="qdos"] .s2 { background: #ffffff; } .theme-card[data-swatch="qdos"] .s3 { background: #e8da59; } .theme-card[data-swatch="qdos"] .s4 { background: #66b7b3; } .theme-card[data-swatch="qdos"] .s5 { background: #67cc4d; }
+.install-example { border: 1px solid var(--line); background: var(--panel); padding: 1.25rem 1.5rem; display: grid; grid-template-columns: 1fr 1.6fr; gap: 2rem; align-items: center; }
+.install-example .eyebrow { display: block; margin-bottom: .5rem; }
+.install-example p { color: var(--muted); font-size: .875rem; margin: 0; }
+:root[data-theme="qdos"] .theme-card, :root[data-theme="qdos"] .install-example { border: 3px double var(--line); }
 .live-section { margin-top: 6rem; padding-top: 3rem; border-top: 1px solid var(--line); }
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 3rem; border-block: 1px solid var(--line); }
 .principles article { padding: 2rem; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
@@ -334,6 +351,11 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
   :root[data-theme="qdos"] .hero-grid { gap: 1.5rem; }
   :root[data-theme="qdos"] .inspector section + section { border-left: 0; border-top: 1px solid var(--line); padding: .75rem 0 0; }
 }
+@media (max-width: 760px) {
+  .theme-downloads { grid-template-columns: 1fr 1fr; }
+  .install-example { grid-template-columns: 1fr; gap: 1rem; }
+}
+@media (max-width: 480px) { .theme-downloads { grid-template-columns: 1fr; } }
 @media (forced-colors: active) {
   .primary, .mode { border: 1px solid ButtonText; }
   .status-dot { background: CanvasText; }

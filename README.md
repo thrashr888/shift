@@ -127,6 +127,10 @@ working view. No local model is required to try the interface:
 ./bin/shift --session ui-demo --set 'agent-model="demo"'
 ```
 
+Matching [Ghostty](https://github.com/ghostty-org/ghostty) terminal themes are
+generated from the same packs into `site/ghostty/` and published on the website;
+see [the website guide](docs/website.md#ghostty-themes).
+
 ## Durable named sessions
 
 Use a named session when the conversation and live behavior should survive a

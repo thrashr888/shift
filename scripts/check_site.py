@@ -4,13 +4,16 @@
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
-PUBLIC_FILES = {"index.html", "styles.css", "showcase.js", "favicon.svg"}
+GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
+PUBLIC_FILES = {"index.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES
+PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
 
 class Page(HTMLParser):
@@ -53,7 +56,7 @@ def check():
             f"unexpected={files - PUBLIC_FILES}"
         )
     for path in entries:
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink() or not (path.is_file() or str(path.relative_to(SITE)) in PUBLIC_DIRS):
             errors.append(f"Unreviewed directory or symlink: {path.relative_to(SITE)}")
     if errors:
         return errors
@@ -94,6 +97,11 @@ def check():
         errors.append("CSS must not load unreviewed assets.")
     if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts["showcase.js"]):
         errors.append("The local-only simulation must not make network requests.")
+    generated = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/ghostty_themes.py"), "--check"], capture_output=True, text=True
+    )
+    if generated.returncode != 0:
+        errors.append(generated.stderr.strip() or "Ghostty themes are out of date.")
     return errors
 
 
@@ -103,4 +111,4 @@ if __name__ == "__main__":
         for failure in failures:
             print(f"site: {failure}", file=sys.stderr)
         sys.exit(1)
-    print("Site checks passed: four public files, relative assets, valid anchors, local-only demo.")
+    print("Site checks passed: allowlisted public files, relative assets, valid anchors, local-only demo, current Ghostty themes.")

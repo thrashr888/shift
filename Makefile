@@ -65,5 +65,6 @@ test: build
 	python3 test/tui_scroll_test.py
 	python3 test/provider_metadata_test.py
 	python3 test/tui_launch_test.py
+	python3 test/ghostty_theme_test.py
 
 check: test
