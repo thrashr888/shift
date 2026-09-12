@@ -49,16 +49,32 @@ COMMANDS = {
 }
 
 
-def suggestions(draft, themes, palette=False):
+def suggestions(draft, themes, palette=False, models=()):
     query=draft.strip()
     if not query.startswith('/'):
         return [(name,description) for name,description in COMMANDS.items()
                 if palette and query.casefold() in (name+' '+description).casefold()]
     name,separator,value=draft.partition(' ')
     if separator:
-        choices=themes if name=='/theme' else ENUMS.get(name,())
+        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else ENUMS.get(name,())
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
+
+def run_entry(result, tool=None):
+    # The run tool's first line reads "run CMD · exit N · Ns · N lines · log PATH";
+    # the rest is the command's combined output.
+    text=str(result.get('output',''))
+    head,_,body=text.partition('\n')
+    match=re.match(r'run (.*) · (.*?) · ([\d.]+)s · (\d+) lines · log (.+)$',head)
+    command=match[1] if match else str((tool or {}).get('summary',''))
+    status=match[2] if match else ('ok' if result.get('ok') else 'failed')
+    if body.startswith('files changed since you last read them: '):
+        body=body.partition('\n')[2]
+    return {'turn':result.get('turn'),'id':result.get('id'),'ok':bool(result.get('ok')),'command':command,
+            'status':status,'seconds':match[3] if match else '',
+            'log':match[5] if match else '','lines':[clean(line) for line in body.split('\n')] if body else [],
+            'truncated':bool(result.get('truncated')),'at':str((tool or {}).get('at',''))}
+
 
 VALUE_OPTIONS = {'--agent':1, '--state-dir':1, '--session':1, '--new-session':1,
                  '--resume':1, '--mode':1, '--model':1, '--allow-run':1,
@@ -285,11 +301,14 @@ class Model:
         self.streaming_role = None
         self.line_roles={}
         self.themes=['acid','paddock','blueprint','qdos']
+        self.models={'provider':None,'items':[],'error':None,'requested':False}
+        self.runs=deque(maxlen=50)
         self.approval_preview=''
         self.command_request=0
         self.command_pending=None
+        self.command_pending_text=None
         self.panel_tab = 'work'
-        self.panel_scroll = {'diff':0,'session':0}
+        self.panel_scroll = {'diff':0,'session':0,'model':0,'log':0}
         self.show_diff = True
         self.notice = 'Starting Guile session…'
         self.scroll = 0
@@ -369,9 +388,15 @@ class Model:
             self.approval_prompt=''
         elif kind == 'session-command-result':
             if value.get('request_id')==self.command_pending:
-                self.command_pending=None
-                message=value.get('message','Mode changed') if value.get('ok') else value.get('error','Mode change rejected')
+                command,self.command_pending,self.command_pending_text=self.command_pending_text,None,None
+                message=value.get('message','Command applied') if value.get('ok') else value.get('error','Command rejected')
                 self.notice=' · '.join(clean(part).strip() for part in str(message).splitlines() if part.strip())
+                if command=='/model list' and not value.get('ok'):
+                    self.models.update(error=self.notice,requested=False)
+        elif kind == 'models':
+            self.models={'provider':value.get('provider'),'items':[str(item) for item in value.get('models',[])],
+                         'error':None,'requested':False}
+            self.panel_scroll['model']=0
         elif kind == 'history':
             for message in value:
                 if message.get('role') in ('user','assistant') and isinstance(message.get('content'),str):
@@ -406,11 +431,16 @@ class Model:
             self.group(value.get('turn',self.current_turn))['tools'].append(dict(value))
         elif kind == 'tool-result':
             group=self.groups.get(value.get('turn',self.current_turn))
+            tool=None
             if group:
                 for tool in group['tools']:
                     if tool.get('id')==value.get('id'):
                         tool.update(result=value)
                         break
+                else:tool=None
+            if isinstance(value.get('output'),str):
+                self.runs.append(run_entry(value,tool))
+                self.panel_scroll['log']=10**9
         elif kind == 'diff':
             if not value.get('text') and value.get('turn',self.current_turn) not in self.groups:
                 return
@@ -555,32 +585,54 @@ class Terminal:
         theme=themes[(themes.index(current)+1)%len(themes)] if current in themes else themes[0]
         self.child.ui({'action':'patch','patch':{'theme':theme}})
 
-    def request_mode(self,mode=None):
+    def request_command(self,command,pending,subject='mode'):
+        # Session commands ride the UI pipe so a busy or approving session can
+        # refuse them without consuming the prompt; the host validates them.
         m=self.model
         if m.approval or not m.ready:
-            m.notice='Finish approval before changing mode.' if m.approval else 'Turn running; change mode when ready.'
+            m.notice=('Finish approval before changing '+subject+'.') if m.approval else ('Turn running; change '+subject+' when ready.')
             return False
         if m.command_pending is not None:
-            m.notice='Mode change pending';return
+            m.notice='Session command pending';return False
+        m.command_request+=1;m.command_pending=m.command_request;m.command_pending_text=command
+        self.child.ui({'action':'session-command','command':command,'request_id':m.command_request})
+        m.notice=pending+' (pending)'
+        return True
+
+    def request_mode(self,mode=None):
+        m=self.model
         if mode is None:
             current=m.session.get('mode','manual')
             mode=MODES[(MODES.index(current)+1)%len(MODES)] if current in MODES else MODES[0]
         if mode not in MODES:raise ValueError('use /mode manual|plan|accept|auto')
-        m.command_request+=1;m.command_pending=m.command_request
-        self.child.ui({'action':'session-command','command':'/mode '+mode,'request_id':m.command_request})
-        m.notice='Changing mode to '+mode+' (pending)'
-        return True
+        return self.request_command('/mode '+mode,'Changing mode to '+mode)
+
+    def request_model(self,name):
+        if '/' not in name or any(ch.isspace() for ch in name):raise ValueError('use /model PROVIDER/MODEL')
+        return self.request_command('/model '+name,'Selecting '+name,'model')
+
+    def request_model_list(self):
+        # Entering the Model tab lists once per provider; errors wait for a
+        # deliberate retry instead of polling the provider.
+        m=self.model
+        current=m.session.get('provider')
+        if m.models['requested'] or m.models['error'] or (m.models['items'] and m.models['provider']==current):
+            return False
+        if m.approval or not m.ready or m.command_pending is not None:
+            return False
+        m.models['requested']=True
+        return self.request_command('/model list','Listing models','model')
 
     def completion(self):
         m=self.model
         active=(self.menu or m.draft.startswith('/')) and self.completion_dismissed!=m.draft
         name,separator,_=m.draft.partition(' ')
-        if separator and name not in ENUMS and name!='/theme' and not self.menu:active=False
-        query=(self.menu,m.draft,tuple(m.themes))
+        if separator and name not in ENUMS and name not in ('/theme','/model') and not self.menu:active=False
+        query=(self.menu,m.draft,tuple(m.themes),tuple(m.models['items']))
         if query!=self.completion_query:
             self.completion_index=0
             self.completion_query=query
-        self.completion_choices=suggestions(m.draft,m.themes,self.menu) if active else []
+        self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items']) if active else []
         self.completion_index=min(self.completion_index,max(0,len(self.completion_choices)-1))
         return active
 
@@ -639,7 +691,12 @@ class Terminal:
                 elif kind=='sidebar':self.key('\x02')
                 elif kind=='commands':self.open_palette()
                 elif kind=='theme':self.cycle_theme()
-                elif kind=='tab':self.model.panel_tab=value
+                elif kind=='tab':
+                    self.model.panel_tab=value
+                    if value=='model':self.request_model_list()
+                elif kind=='model':
+                    try:self.request_model(value)
+                    except ValueError as error:self.model.notice=str(error)
                 elif kind=='complete':self.accept_completion(value)
                 return
 
@@ -809,7 +866,7 @@ class Terminal:
 
     def tabs(self):
         sections=self.model.config['sections']
-        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])
+        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])+['model','log']
 
     def telemetry(self):
         m=self.model
@@ -916,10 +973,12 @@ class Terminal:
             self.put(strip_y+1,0,self.rule(cols),cols,3)
             if panel and mode=='docked':
                 x=panel.x+2
-                for tab in self.tabs():
-                    text=' '+tab.upper()+' '
+                tabs=self.tabs()
+                roomy=sum(len(tab)+4 for tab in tabs)-2<=panel.w-2
+                for tab in tabs:
+                    text=(' '+tab.upper()+' ') if roomy else tab.upper()
                     self.button(strip_y,x,text,len(text),('tab',tab),12 if m.panel_tab==tab else 4,m.panel_tab==tab)
-                    x+=len(text)+2
+                    x+=len(text)+(2 if roomy else 1)
         if c['branding']=='subtitle':
             x=logo_width+6 if large else 2
             self.put(1 if large else 2,x,c['identity'],cols-x-2,4)
@@ -1010,11 +1069,29 @@ class Terminal:
                 rows.append([('  '+label.ljust(7),3,True),(subject,1,False)]+stats+
                              [(' '*padding+tail,4 if not result or result.get('ok') else 11,False)])
                 if result and not result.get('ok'):
-                    rows.extend([[('    '+line,11,False)] for line in wrap(str(result.get('summary','Tool failed')),max(1,width-4),words=True)])
+                    failure=str(result.get('summary','Tool failed'))
+                    if isinstance(result.get('output'),str):
+                        # A failed run is summarized by its status and last line; the Log tab has the rest.
+                        run=run_entry(result,tool)
+                        last=next((line for line in reversed(run['lines']) if line.strip()),'')
+                        failure=run['status']+(' · '+last if last else '')+' · Log tab'
+                    rows.extend([[('    '+line,11,False)] for line in wrap(failure,max(1,width-4),words=True)])
         if inline_diff and group.get('diff'):
             count=len([line for line in group['diff'].splitlines() if line.startswith(('+','-')) and not line.startswith(('+++','---'))])
             rows.extend([[('',1,False)],[(arrow(m.show_diff)+' OUTPUT DIFF  ',3,True),(str(count)+' changed lines',4,False)]])
             if m.show_diff:rows.extend(self.framed_diff(group,width))
+        if inline_diff:
+            for tool in group['tools']:
+                result=tool.get('result') or {}
+                if not isinstance(result.get('output'),str):continue
+                run=run_entry(result,tool)
+                rows.extend([[('',1,False)],[(arrow(m.show_diff)+' RUN OUTPUT  ',3,True),(run['status']+' · '+run['command'],4,False)]])
+                if m.show_diff:
+                    shown=run['lines'][:20]
+                    for text in shown:
+                        for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
+                    if len(run['lines'])>20 or run['truncated']:
+                        rows.append([('  +'+str(len(run['lines'])-len(shown))+' more lines in the Log tab'+(' and the full log' if run['truncated'] else ''),4,False)])
         rows.extend([[(self.rule(width),4,False)],[('',1,False)]])
         return [parts for parts in rows if any(part[0] for part in parts)] if m.config['density']=='compact' else rows
 
@@ -1085,13 +1162,42 @@ class Terminal:
             self.put(panel.y-1,x,'+' if c.get('ascii') else '╦' if double else '┬',1,3)
             for y in range(panel.y,panel.y+panel.h):self.put(y,x,'|' if c.get('ascii') else vertical,1,3)
         width=panel.w-4;group=self.active_group()
-        rows=[]
+        rows=[];actions={}
         def title(text):
             rows.append([(text,3,True)])
         def line(text,tone=1):
             rows.append([(text,tone,False)])
-        if m.panel_tab=='session':
-            title('SESSION');line(str(m.session.get('name','default')));line(str(m.session.get('model','starting')))
+        if m.panel_tab=='model':
+            current=str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting'))
+            title('MODEL');line(current);line('')
+            if m.models['error']:
+                for part in wrap('Model list unavailable: '+m.models['error'],width,words=True):line(part,11)
+                line('Tab here again or /model list to retry',4)
+            elif not m.models['items']:
+                line('Listing models from '+str(m.session.get('provider','the provider'))+'…' if m.models['requested'] else 'Tab here again or /model list to list',4)
+            else:
+                for name in m.models['items']:
+                    selected=name==current
+                    rows.append([(('▶ ' if selected else '  ') if self.unicode and not c.get('ascii') else ('> ' if selected else '  '),2,True),
+                                 (name,2 if selected else 1,selected)])
+                    if not selected:actions[len(rows)-1]=('model',name)
+                line('');line('Click a model or /model NAME (Tab completes)',4)
+        elif m.panel_tab=='log':
+            title('LOG · bash runs')
+            if not m.runs:line('No bash runs yet',4)
+            for run in m.runs:
+                line('')
+                # Status first: commands can be long and would push it off the row.
+                rows.append([('['+str(run['turn'])+'] ',4,False),(run['status'],2 if run['ok'] else 11,True),
+                             ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
+                for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
+                for text in run['lines']:
+                    for part in wrap(text,width):line(part)
+                if run['truncated']:
+                    for part in wrap('… output truncated; full log: '+run['log'],width,words=True):line(part,4)
+        elif m.panel_tab=='session':
+            title('SESSION');line(str(m.session.get('name','default')))
+            line(str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting')))
             line('Mode: '+m.session.get('mode','manual'));line('Turn: '+str(m.session.get('turn','unknown')))
             line('');title('LATEST RECEIPT')
             if m.receipt:
@@ -1171,6 +1277,7 @@ class Terminal:
         m.panel_scroll[m.panel_tab]=start
         for i,parts in enumerate(rows[start:start+height]):
             self.spans(panel.y+1+i,panel.x+2,parts,width)
+            if start+i in actions:self.hit(panel.y+1+i,panel.x+2,width,actions[start+i])
         if len(rows)>height:
             self.put(panel.y+panel.h-1,panel.x+2,f'wheel {start+1}-{min(len(rows),start+height)}/{len(rows)} | Tab',width,4)
 
@@ -1349,6 +1456,7 @@ class Terminal:
             if panel and (mode=='overlay' or m.config['placement'] not in ('top','bottom')):
                 tabs=self.tabs()
                 m.panel_tab=tabs[(tabs.index(m.panel_tab)+1)%len(tabs)] if m.panel_tab in tabs else tabs[0]
+                if m.panel_tab=='model':self.request_model_list()
         elif key=='\x1b':
             if m.approval:self.child.send('n');m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None;self.menu=False
             elif self.menu:self.menu=False
@@ -1359,6 +1467,10 @@ class Terminal:
             line=m.draft
             if line.startswith('/mode ') and (m.approval or not m.ready):
                 self.request_mode(line[6:]);return True
+            if line.startswith('/model ') and line[7:].strip() and (m.approval or not m.ready):
+                try:self.request_model(line[7:].strip())
+                except ValueError as error:m.notice=str(error)
+                return True
             try:handled=self.local(line) if line.strip() else False
             except (ValueError,KeyError) as e:m.notice='UI command rejected: '+str(e);return True
             if handled:

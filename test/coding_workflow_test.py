@@ -84,6 +84,19 @@ class Provider(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(step.encode())
 
+    def do_GET(self):
+        # The OpenAI-compatible model list the Model tab asks for; no inference.
+        if self.path.rstrip("/").endswith("/models"):
+            body = json.dumps({"data": [{"id": "fake"}, {"id": "offline-fixture"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
+
     def log_message(self, *args):
         pass
 
@@ -269,6 +282,46 @@ class CodingWorkflow(unittest.TestCase):
         finally:
             child.close()
 
+    def test_tui_model_tab_lists_and_selects_through_the_host_route(self):
+        from tui_test import tui, terminal_view
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env):
+            child = tui.Child(self.command()[1:] + ['--mode', 'accept'], cwd=self.project)
+        model = tui.Model()
+        terminal = terminal_view(40, 128, child); terminal.model = model
+        def wait_for(predicate):
+            end = time.monotonic() + 15
+            while time.monotonic() < end:
+                child.poll(model)
+                if predicate(): return
+                time.sleep(.02)
+            self.fail(str(list(model.lines)) + ' ' + model.notice)
+        try:
+            wait_for(lambda: model.ready)
+            self.assertEqual(model.session["provider"], "openai")
+            for _ in range(3): terminal.key('\t')
+            self.assertEqual(model.panel_tab, 'model')
+            wait_for(lambda: model.models["items"] == ["openai/fake", "openai/offline-fixture"] and model.command_pending is None)
+            self.assertIn("2 models available", model.notice)
+            terminal.draw()
+            row = next(r for r, a in terminal.hits if a == ('model', 'openai/offline-fixture'))
+            terminal.pointer(row.x + 3, row.y, 'press')
+            wait_for(lambda: model.session.get("model") == "offline-fixture" and model.command_pending is None)
+            self.assertIn("openai/offline-fixture", model.notice)
+            terminal.draw()
+            rendered = '\n'.join(terminal.screen.line(y) for y in range(40))
+            self.assertIn('▶ openai/offline-fixture', rendered)
+            self.assertIn('w | offline-fixture', rendered)
+            child.ui({'action': 'session-command', 'command': '/model openai/x y', 'request_id': 99}); model.command_pending = 99
+            wait_for(lambda: model.command_pending is None)
+            self.assertIn("only /mode", model.notice)
+            self.assertEqual(model.session.get("model"), "offline-fixture")
+            Provider.plan = [answer("still here")]
+            for key in 'hello\n': terminal.key(key)
+            wait_for(lambda: model.ready and any('still here' in line for line in model.lines))
+        finally:
+            child.close()
+
     def test_tui_working_state_completes_errors_and_cancels(self):
         from tui_test import tui, terminal_view
         from unittest.mock import patch
@@ -325,7 +378,7 @@ class CodingWorkflow(unittest.TestCase):
         Provider.plan=[
             intro+tool_call("read",{"path":"notes.txt"}),
             self.edit_notes,
-            tool_call("run",{"argv":["python3","-c","from pathlib import Path; assert '9443' in Path('notes.txt').read_text()"]}),
+            tool_call("run",{"argv":["python3","-c","from pathlib import Path; assert '9443' in Path('notes.txt').read_text(); print('port check ok')"]}),
             answer("The source was updated and checked.",usage={"prompt_tokens":1234,"completion_tokens":12}),
         ]
         with patch.dict(os.environ,self.env):
@@ -362,6 +415,13 @@ class CodingWorkflow(unittest.TestCase):
             rendered='\n'.join(terminal.screen.line(y) for y in range(40))
             self.assertIn('READ',rendered);self.assertIn('EDIT',rendered);self.assertIn('RUN',rendered)
             self.assertNotIn('PASS',rendered)
+            run=next(event['value'] for event in model.events if event['type']=='tool-result' and event['value']['name']=='run')
+            self.assertIn('port check ok',run['output']);self.assertFalse(run['truncated'])
+            self.assertEqual(len(model.runs),1)
+            model.panel_tab='log';terminal.draw()
+            rendered='\n'.join(terminal.screen.line(y) for y in range(40))
+            self.assertIn('port check ok',rendered);self.assertIn('exit 0',rendered)
+            self.assertIn('python3 -c',rendered)
         finally:
             child.close()
 

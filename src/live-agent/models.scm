@@ -30,7 +30,10 @@
       (display "Saved effort is unavailable for this model.\n"))
     (when (and (setting-ref generation 'fast) (not fast?))
       (display "Saved fast mode is unavailable for this model.\n"))))
-(define (model-select! value)
+;; Switching models within the current provider keeps its endpoint and key
+;; source (a local OpenAI-compatible server stays local); changing provider
+;; restores that provider's defaults.
+(define* (model-select! value #:optional (current-provider #f))
   (let ((slash (string-index value #\/)))
     (unless slash (error "use /model PROVIDER/MODEL, e.g. claude/claude-sonnet-4-6"))
     (let ((provider (string->symbol (substring value 0 slash)))
@@ -38,12 +41,14 @@
       (unless (and (memq provider '(claude ollama openai)) (builtin-enabled? provider))
         (error "provider is unavailable" provider))
       (settings-set!
-       (list (cons 'agent-provider provider) (cons 'agent-model model) (cons 'context-limit #f)
-             (cons 'agent-base-url (case provider
-               ((claude) "https://api.anthropic.com/v1") ((openai) "https://api.openai.com/v1")
-               (else "http://127.0.0.1:11434")))
-             (cons 'agent-api-key-environment (case provider
-               ((claude) "CLAUDE_API_KEY") ((openai) "OPENAI_API_KEY") (else #f))))))))
+       (append
+        (list (cons 'agent-provider provider) (cons 'agent-model model) (cons 'context-limit #f))
+        (if (eq? provider current-provider) '()
+            (list (cons 'agent-base-url (case provider
+                    ((claude) "https://api.anthropic.com/v1") ((openai) "https://api.openai.com/v1")
+                    (else "http://127.0.0.1:11434")))
+                  (cons 'agent-api-key-environment (case provider
+                    ((claude) "CLAUDE_API_KEY") ((openai) "OPENAI_API_KEY") (else #f))))))))))
 (define* (model-list! generation #:optional (display? #t))
   (let* ((provider (setting-ref generation 'agent-provider))
          (base (without-trailing-slash (setting-ref generation 'agent-base-url)))
@@ -57,10 +62,11 @@
                (string-append "x-api-key: " key "\nanthropic-version: 2023-06-01\n")))
            (curl-get-json (string-append base (if (eq? provider 'ollama) "/api/tags" "/models")) key)))
          (models (json-array-items (json-object-ref (json-read root) (if (eq? provider 'ollama) "models" "data")))))
-    (for-each (lambda (model)
+    (map (lambda (model)
       (let ((id (json-object-ref model (if (eq? provider 'ollama) "name" "id"))))
         (set! metadata (acons (cons provider id) model metadata))
-        (when display? (format #t "~a/~a~%" provider id)))) models)))
+        (when display? (format #t "~a/~a~%" provider id))
+        (format #f "~a/~a" provider id))) models)))
 (define (model-context-limit generation)
   (let ((identity (cons (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model))))
     (when (and (eq? (car identity) 'claude) (not (assoc identity metadata)))

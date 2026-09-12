@@ -365,8 +365,26 @@ events supply `USER` and `SHIFT` role blocks and grouped `READ`, `EDIT`, and `RU
 work rows. Tool completion is not a fabricated test pass. Real committed ledger
 diffs supply the highlighted added/removed lines and file counts; unapproved
 previews never appear as committed changes. Top/bottom placements show these diffs inline.
-The side pane's Work, Diff and Session tabs show output/files/telemetry, the
-unified diff, or session/receipt details. Ctrl+W and Ctrl+O fold work and diff
+The side pane's Work, Diff, Session, Model and Log tabs show output/files/telemetry,
+the unified diff, session/receipt details, the provider's model list, and bash run
+output. Tab labels drop their padding when the pane is narrow.
+
+**Model.** Entering the tab asks the session for `/model list` once per provider:
+Ollama's `/api/tags` or the provider's `/models` endpoint, a metadata request with
+no inference. Rows are clickable; the current `provider/model` carries a marker and
+the strip badge updates when the host confirms. `/model NAME` at the prompt
+Tab-completes the listed names. Requests ride the same host route as `/mode`, so a
+running turn or pending approval refuses them without consuming input, and the
+agent's `ui` tool cannot use it. A failed listing stays visible with its reason
+until you re-enter the tab or type `/model list`. Choosing another model of the
+current provider keeps its endpoint and key source, so a local OpenAI-compatible
+server stays selected; choosing another provider restores that provider's defaults.
+
+**Log.** Every `run` tool call appends its command, exit status, duration and
+combined output, bounded to 300 lines or 16 KiB per run with the ledger log path
+for the rest; the tab follows the newest run until you scroll. With a top or
+bottom placement, or no pane, the same output appears inline under its work group
+as a `RUN OUTPUT` block (first 20 lines) that Ctrl+O folds with the diffs. Ctrl+W and Ctrl+O fold work and diff
 groups; the selection and fold state survive redraw and resize. PageUp/PageDown
 scroll the selected Diff or Session pane; in Work they scroll the transcript.
 Live diff previews are bounded to 200 lines/32 KiB; complete filenames and
@@ -405,12 +423,13 @@ the cached identity. No inference request is made for these measurements.
 | `/`, then type | Filter command names and supported argument choices |
 | Tab / Up / Down in suggestions | Complete the selection / move selection; Enter on a selected completion deliberately submits |
 | F2 or bare `/theme` | Cycle installed built-ins, then discovered custom theme packs |
-| Tab outside suggestions | Select Work, Diff or Session in a side pane/overlay |
+| Tab outside suggestions | Select Work, Diff, Session, Model or Log in a side pane/overlay |
+| Click a Model row or `/model PROVIDER/MODEL` | Switch models when idle; `/model list` refreshes the tab |
 | Shift+Tab or click mode badge | Cycle manual -> plan -> accept -> auto -> manual when idle |
 | Click sidebar hint / Work, Diff, Session | Toggle inspector / select pane without submitting the draft |
 | Wheel / trackpad | Scroll the pane under the pointer; navigate suggestions over a popup |
 | Ctrl+W | Fold/unfold tool work groups |
-| Ctrl+O | Fold/unfold committed diffs |
+| Ctrl+O | Fold/unfold committed diffs and inline run output |
 | PageUp / PageDown | Scroll the transcript |
 | Ctrl+G | Jump to the latest transcript without changing the draft |
 | Ctrl+C | Cancel the current turn, or clear the idle draft |

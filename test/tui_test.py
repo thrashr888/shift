@@ -1106,6 +1106,121 @@ class PTY(unittest.TestCase):
                 os.close(master);os.close(slave)
 
 
+class ModelPicker(unittest.TestCase):
+    def picker(self):
+        terminal=terminal_view(40,128,Mock())
+        m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'qwen3.8:27b-mlx','mode':'accept','turn':1}})
+        m.control('ready');terminal.draw()
+        return terminal
+
+    def text(self,terminal):
+        return '\n'.join(terminal.screen.line(y) for y in range(terminal.screen.size[0]))
+
+    def test_entering_the_model_tab_lists_once_and_renders_choices(self):
+        terminal=self.picker();m=terminal.model
+        self.assertEqual(terminal.tabs()[-2:],['model','log'])
+        for _ in range(3):terminal.key('\t')
+        self.assertEqual(m.panel_tab,'model')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/model list','request_id':1})
+        terminal.draw();self.assertIn('Listing models from ollama',self.text(terminal))
+        m.event({'type':'session-command-result','value':{'request_id':1,'ok':True,'message':'2 models available in the Model tab'}})
+        m.event({'type':'models','value':{'provider':'ollama','models':['ollama/qwen3.8:27b-mlx','ollama/gemma:2b']}})
+        terminal.draw();text=self.text(terminal)
+        self.assertIn('▶ ollama/qwen3.8:27b-mlx',text);self.assertIn('  ollama/gemma:2b',text)
+        for _ in range(5):terminal.key('\t')
+        self.assertEqual(m.panel_tab,'model');self.assertEqual(terminal.child.ui.call_count,1)
+
+    def test_clicking_a_model_row_selects_it_through_the_host_and_updates_the_badge(self):
+        terminal=self.picker();m=terminal.model
+        m.panel_tab='model'
+        m.event({'type':'models','value':{'provider':'ollama','models':['ollama/qwen3.8:27b-mlx','ollama/gemma:2b']}})
+        terminal.draw()
+        row=next(r for r,a in terminal.hits if a==('model','ollama/gemma:2b'))
+        terminal.pointer(row.x+3,row.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/model ollama/gemma:2b','request_id':1})
+        self.assertIn('Selecting ollama/gemma:2b',m.notice)
+        m.event({'type':'session-command-result','value':{'request_id':1,'ok':True,'message':'ollama/gemma:2b · thinking #f · effort default · fast off'}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'gemma:2b','mode':'accept','turn':1}})
+        terminal.draw();text=self.text(terminal)
+        self.assertIn('▶ ollama/gemma:2b',text);self.assertIn('main | gemma:2b',text)
+        self.assertFalse(any(a==('model','ollama/gemma:2b') for _,a in terminal.hits))
+
+    def test_busy_and_approval_refuse_model_changes_without_touching_the_session(self):
+        terminal=self.picker();m=terminal.model
+        m.panel_tab='model';m.event({'type':'models','value':{'provider':'ollama','models':['ollama/a','ollama/b']}})
+        m.control('working');terminal.draw()
+        row=next(r for r,a in terminal.hits if a==('model','ollama/b'))
+        terminal.pointer(row.x+3,row.y,'press')
+        terminal.child.ui.assert_not_called();self.assertIn('Turn running',m.notice)
+        m.draft='/model ollama/b';terminal.key('\n')
+        terminal.child.ui.assert_not_called();terminal.child.send.assert_not_called()
+        m.control('needs_approval');m.draft='/model ollama/b';terminal.key('\n')
+        terminal.child.ui.assert_not_called();terminal.child.send.assert_not_called()
+        self.assertIn('Finish approval',m.notice);self.assertTrue(m.approval)
+
+    def test_listing_failure_shows_in_the_tab_and_completion_offers_models(self):
+        terminal=self.picker();m=terminal.model
+        m.panel_tab='model';terminal.request_model_list()
+        m.event({'type':'session-command-result','value':{'request_id':1,'ok':False,'error':'system-error: connection refused'}})
+        terminal.draw();text=self.text(terminal)
+        self.assertIn('Model list unavailable',text);self.assertIn('connection refused',text)
+        self.assertFalse(terminal.request_model_list())
+        m.event({'type':'models','value':{'provider':'ollama','models':['ollama/a','ollama/b']}})
+        m.draft='/model ollama/';terminal.draw()
+        self.assertEqual([c[0] for c in terminal.completion_choices],['/model ollama/a','/model ollama/b'])
+        m.draft='/model ';terminal.draw()
+        self.assertEqual(terminal.completion_choices[0][0],'/model list')
+
+
+class RunLog(unittest.TestCase):
+    def run_result(self,turn=1,ident=3,lines=('checking notes','port check ok'),ok=True,truncated=False):
+        head='run make test · '+('exit 0' if ok else 'exit 2')+' · 1.2s · '+str(len(lines))+' lines · log .shift/logs/run-3.log'
+        return {'type':'tool-result','value':{'turn':turn,'id':ident,'name':'run','ok':ok,'summary':head,
+                'output':head+'\n'+'\n'.join(lines),'truncated':truncated}}
+
+    def test_log_tab_shows_each_run_with_status_and_output_and_follows_the_latest(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'turn-start','value':{'turn':1}})
+        m.event({'type':'tool','value':{'turn':1,'id':3,'name':'run','summary':'make test','at':'17:16'}})
+        m.event(self.run_result())
+        m.control('ready');m.panel_tab='log';terminal.draw()
+        text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('LOG',text);self.assertIn('[1] exit 0 · 1.2s',text);self.assertIn('make test',text);self.assertIn('port check ok',text)
+        self.assertEqual(m.runs[0]['log'],'.shift/logs/run-3.log')
+        for i in range(2,40):
+            m.event({'type':'tool','value':{'turn':i,'id':i,'name':'run','summary':'make test','at':'17:16'}})
+            m.event(self.run_result(turn=i,ident=i,lines=tuple('line %d.%d'%(i,j) for j in range(6)),ok=i%2==0,truncated=i==39))
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('line 39.5',text);self.assertIn('output truncated; full log:',text);self.assertIn('.shift/logs/run-3.log',text)
+        self.assertNotIn('port check ok',text)
+        terminal.key(tui.curses.KEY_PPAGE);terminal.draw()
+        self.assertLess(m.panel_scroll['log'],terminal.panel_limits['log'])
+
+    def test_bottom_placement_shows_run_output_inline_and_folds_with_ctrl_o(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.config['placement']='bottom'
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'turn-start','value':{'turn':1}})
+        m.event({'type':'transcript','value':{'role':'user','text':'Check the port'}})
+        m.event({'type':'tool','value':{'turn':1,'id':3,'name':'run','summary':'make test','at':'17:16'}})
+        m.event(self.run_result(lines=tuple('out %d'%i for i in range(30))))
+        m.control('ready');terminal.draw()
+        text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('▼ RUN OUTPUT  exit 0 · make test',text);self.assertIn('  out 19',text)
+        m.event({'type':'tool','value':{'turn':1,'id':4,'name':'run','summary':'make lint','at':'17:17'}})
+        m.event(self.run_result(ident=4,lines=('linting','error: trailing whitespace'),ok=False))
+        rows=terminal.group_rows(terminal.active_group(),120,True)
+        text='\n'.join(''.join(part[0] for part in row) for row in rows)
+        self.assertIn('    exit 2 · error: trailing whitespace · Log tab',text)
+        self.assertNotIn('run make test · exit 2',text)
+        self.assertNotIn('out 20',text);self.assertIn('+10 more lines in the Log tab',text)
+        terminal.key('\x0f');terminal.draw()
+        text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('▶ RUN OUTPUT',text);self.assertNotIn('out 19',text)
+
+
 class TerminfoRepeat(unittest.TestCase):
     """Terminals that advertise rep (Ghostty, kitty) must still get whole glyphs from ncurses 6.0."""
     def setUp(self):

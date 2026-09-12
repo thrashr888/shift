@@ -106,7 +106,9 @@ The TUI uses Python 3's standard-library curses adapter around the same Guile
 session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the
 themes, and Ctrl+C cancels the active turn. Acid keeps a split transcript/output
 layout; `/place bottom` gives any theme a full-width transcript with bottom
-telemetry. Tab switches side-pane views; Ctrl+W/Ctrl+O fold real work/diffs.
+telemetry. Tab switches the Work, Diff, Session, Model and Log pane views, where
+Model lists and switches the provider's models and Log keeps bash run output;
+Ctrl+W/Ctrl+O fold real work/diffs.
 Acid uses a lowercase pixel wordmark and deep-purple RGB palette on capable
 terminals, with indexed-color/ASCII/monochrome fallbacks. For example:
 
