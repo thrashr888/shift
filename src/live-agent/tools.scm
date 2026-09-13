@@ -466,8 +466,9 @@
    ((string=? name "skill")
     (function-tool
      "skill"
-     "Load one of the skills listed in the system prompt. Returns its instructions and its folder, whose files you can read. Load a skill before following it."
-     (json-object (cons "name" (string-parameter "Skill name from the skills list")))
+     "Load one of the skills listed in the system prompt. Returns its instructions and its folder; pass path to read one of its supporting files instead. Load a skill before following it."
+     (json-object (cons "name" (string-parameter "Skill name from the skills list"))
+                  (cons "path" (string-parameter "Optional file inside the skill folder, such as references/api.md")))
      '("name")))
    ((string=? name "read")
     (function-tool

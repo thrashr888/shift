@@ -100,8 +100,6 @@ The same policy gates model tools, selected context reads, and recovery retries.
 Shell `deny` and process tool ceilings still apply. Mode is process-owned data;
 `live_eval` cannot change it. Explicit terminal slash commands are user operations.
 Autopilot is an explicit choice; nothing infers approval from prompt words.
-Settings saved before autopilot existed still load: `accept` becomes autopilot
-(it already allowed edits) and the conservative `auto` becomes manual.
 
 ## File changes
 
@@ -162,12 +160,18 @@ that version or newer; a stale `cargo install` in `~/.cargo/bin` shadows the
 Homebrew one.
 
 Every mode except plan asks before a run. The answer `a` approves it and adds the
-exact argv to this session's allowlist; `/run allow cargo test` adds a prefix,
-`/run deny cargo test` removes it, and `/run list` shows them with their settings
-source (`user`, `project`, `session`, or `default`). Terminal changes are session
-preferences; lists replace lower-priority lists rather than merging them. Allowlisted prefixes
-run without asking in manual, where every other tool still asks; autopilot never
-asks. Prefixes match exact leading elements only. `/settings save` promotes the list like any other preference. MCP
+exact argv to this session's allowlist. The allowlist has three scopes that
+union, the way Claude Code's permission rules do: user
+(`~/.config/shift/settings.json`), project (`.shift/settings.json`, committable,
+so a repository can ship the commands its panes and tests need) and session.
+`/allow-run "cargo test"` allows a prefix for this session; add `project` or
+`user` to persist it there, quotes optional. `/run allow cargo test` is the
+session form, `/run deny cargo test` removes a prefix from every scope holding
+it, and `/run list` shows each prefix with its scope. Allowlisted prefixes run
+without asking in manual, where every other tool still asks; autopilot never
+asks. Prefixes match exact leading elements only. `/settings save` promotes the
+whole effective list to that scope. This repository's own `.shift/settings.json`
+allows `git status`, `git log` and `make test` for its SHIFT pane. MCP
 callers cannot approve or extend it.
 
 The `coding` built-in provides `status`, `diff`, `apply_patch`, and `run`. `apply_patch`
@@ -202,15 +206,21 @@ a user skill of the same name. Skills other agents already installed in
 `disable-model-invocation: true` is the only optional field that matters: it
 keeps a skill out of the model's index so only you can load it.
 
-The model sees a `<skills>` index of names and descriptions in its system
-message and loads a body with the read-only `skill` tool, which returns the
-instructions and the folder; `read` accepts paths under a valid skill folder so
-supporting files are reachable without widening the project boundary. `/skills`
+Skill folders may sit directly in a source or one level down in category
+folders, the way Hermes lays out `~/.hermes/skills/category/skill`. The model
+sees a `<skills>` index of names and descriptions in its system message and
+loads a body with the read-only `skill` tool, which returns the instructions
+and the folder; `skill` with a `path` returns one supporting file, and `read`
+accepts paths under a valid skill folder too, so `references/` and `scripts/`
+are reachable without widening the project boundary. `/skills`
 lists every skill with its source, validity and loaded state; `/skill NAME`
 (Tab-completes) sends a skill with your next prompt, wrapped in a
 `<skill name="…">` block that stays in history. The Session tab's `SKILLS`
 section shows the same list with `●` for loaded skills; clicking an unloaded row
-runs `/skill NAME`. The receipt records `skills` loaded in the turn, and
+runs `/skill NAME`. `/learn NAME [notes]` asks the model to write the
+procedure it just carried out as `.shift/skills/NAME/SKILL.md`, through the
+normal `write` path and its approval, so a session that worked out a workflow
+leaves a committable skill behind. The receipt records `skills` loaded in the turn, and
 `receipt.skills` lands on the turn span. Loading a skill never changes tool
 policy: the `skill` tool is read-only, so plan mode allows it and manual mode
 asks like any read.
@@ -460,7 +470,10 @@ Busy turns, pending approvals and sessions open elsewhere refuse the switch.
 as data rather than code: each pane has a `name`, a `title`, and up to 24 rows
 of `text`, a live `field` (`session.name`, `session.model`, `usage.prompt`,
 `receipt.status`, `source.loaded` and the rest of the documented list), or a
-`command` argv. Clicking a command row runs that row as a background job;
+`command` argv, or a `source` that borrows one of the built-in sidebar sections
+(`session`, `skills`, `sessions`, `peers`, `receipt`, `telemetry`, `source`,
+`jobs`, `runs`, `models`), so a project can compose its own status tab from the
+same pieces the Session and Log tabs use. Clicking a command row runs that row as a background job;
 `/pane run NAME` starts every command row and `/pane run NAME ROW` one of them,
 through the same `run` machinery as the agent's runs, but only when the
 session's run allowlist already permits it; otherwise the pane reports which
@@ -576,7 +589,7 @@ the cached identity. No inference request is made for these measurements.
 | Wheel / trackpad | Scroll the pane under the pointer; navigate suggestions over a popup |
 | Ctrl+W | Fold/unfold tool work groups |
 | Ctrl+O | Fold/unfold committed diffs and inline run output |
-| PageUp / PageDown | Scroll the transcript |
+| PageUp / PageDown, or Option/Ctrl + Up/Down | Scroll the transcript, or the selected side pane; Mac keyboards without page keys use the arrows |
 | Ctrl+G | Jump to the latest transcript without changing the draft |
 | Ctrl+C | Cancel the current turn, or clear the idle draft |
 | Ctrl+D | Exit and restore the terminal |

@@ -273,6 +273,8 @@
     "  /skills           list skills (SKILL.md folders) and which are loaded\n"
     "  /skill NAME       send a skill's instructions with the next prompt\n"
     "  /jobs             list background jobs; /jobs cancel ID stops one\n"
+    "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
+    "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
     "  /traces [QUERY]   list recent spans or search all session traces\n"
     "  /trace SPAN_ID    inspect one full span returned by trace search\n"
     "  /compact          summarize older history and retain recent turns\n"
@@ -503,9 +505,9 @@
 (define queued-skills '())
 (define (emit-skills!) (when (ui-connected?) (ui-emit! "skills" (skills-json))))
 (define (execute-skill arguments)
-  (let ((name (json-object-ref arguments "name" #f)))
+  (let ((name (json-object-ref arguments "name" #f)) (path (json-object-ref arguments "path" #f)))
     (unless (string? name) (error "name must be a string"))
-    (let ((body (skill-load! name)))
+    (let ((body (if (string? path) (skill-file name path) (skill-load! name))))
       (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
       (emit-skills!)
       (make-tool-result #t body))))
@@ -524,6 +526,46 @@
         (string-append
          (string-join (map (lambda (entry) (string-append "<skill name=\"" (car entry) "\">\n" (cdr entry) "\n</skill>")) queued) "\n\n")
          "\n\n" text))))
+;; /allow-run PREFIX [session|project|user]: persist an argv prefix so runs
+;; that start with it never ask. Quotes around the prefix are accepted, since
+;; the pane hint prints them; project entries live in the committable
+;; .shift/settings.json, user entries in ~/.config/shift/settings.json.
+(define (unquote-prefix text)
+  (let ((t (string-trim-both text)))
+    (if (and (>= (string-length t) 2) (memv (string-ref t 0) '(#\" #\'))
+             (char=? (string-ref t 0) (string-ref t (- (string-length t) 1))))
+        (substring t 1 (- (string-length t) 1))
+        t)))
+(define (allow-run-command! text)
+  (let* ((parts (string-tokenize (string-trim-both text)))
+         (scope (and (pair? parts) (member (car (last-pair parts)) '("session" "project" "user"))
+                     (string->symbol (car (last-pair parts)))))
+         (prefix-text (if scope (string-trim-both (substring text 0 (- (string-length text) (string-length (symbol->string scope))))) text))
+         (prefix (string-tokenize (unquote-prefix prefix-text))))
+    (when (null? prefix) (error "use /allow-run \"ARGV PREFIX\" [session|project|user]"))
+    (allow-run! prefix (or scope 'session))
+    (format #f "Allowed ~a: ~a~a" (or scope 'session) (string-join prefix " ")
+            (if (eq? (or scope 'session) 'session) " (this session; add project or user to persist)" ""))))
+(define (show-allow-runs)
+  (let ((entries (run-allow-entries)))
+    (if (null? entries)
+        (display "No allowlisted run prefixes. /allow-run \"make test\" [project|user]\n")
+        (for-each (lambda (entry) (format #t "~a  ~a~%" (cdr entry) (string-join (car entry) " "))) entries))))
+;; /learn NAME [notes]: ask the model to write what it just did as a project
+;; skill; the write goes through the normal mutation path and approval.
+(define (learn-skill! runtime tracer session text)
+  (let* ((parts (string-tokenize text)) (name (and (pair? parts) (car parts)))
+         (notes (if (and (pair? parts) (pair? (cdr parts))) (string-join (cdr parts) " ") "")))
+    (unless (and name (<= 1 (string-length name) 64)
+                 (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) name))
+      (error "use /learn NAME [notes]; NAME is 1-64 lowercase letters, digits or hyphens"))
+    (list 'prompt (string-append
+     "Turn the procedure from this conversation into a reusable skill named \"" name "\". "
+     "Write the file .shift/skills/" name "/SKILL.md with YAML frontmatter containing exactly `name: " name "` "
+     "and a one-line `description` that says what the skill does and when to use it, then Markdown instructions: "
+     "the steps, the commands that worked, the pitfalls, and what to verify. Keep it under 200 lines; put long "
+     "reference material in files beside SKILL.md and link to them. Do not include secrets or machine-specific paths."
+     (if (string-null? notes) "" (string-append " Notes from the user: " notes))))))
 (define (show-jobs)
   (let ((all (if (builtin-enabled? 'coding) ((builtin-ref 'coding 'job-list)) '())))
     (if (null? all)
@@ -1060,6 +1102,11 @@
     'continue)
    ((string=? line "/generations") (show-generations runtime) 'continue)
    ((string=? line "/extensions") (show-extensions runtime) 'continue)
+   ((string=? line "/allow-run") (show-allow-runs) 'continue)
+   ((string-prefix? "/allow-run " line)
+    (display (allow-run-command! (trimmed-command-argument line "/allow-run "))) (newline) 'continue)
+   ((string-prefix? "/learn " line)
+    (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
    ((string=? line "/skills") (show-skills) 'continue)
    ((string=? line "/jobs") (show-jobs) 'continue)
    ((string-prefix? "/jobs cancel " line)
@@ -1612,21 +1659,17 @@
     (cond
      ((or (null? parts) (equal? parts '("list")))
       (if (null? current)
-          (format #t "Run allowlist is empty (~a); answer a at a run prompt or use /run allow ARGV...~%"
-                  (setting-source 'run-allow))
-          (for-each (lambda (prefix)
-                      (format #t "allow ~a (~a)~%" (string-join prefix " ")
-                              (setting-source 'run-allow))) current)))
+          (format #t "Run allowlist is empty (default); answer a at a run prompt or use /allow-run \"ARGV...\" [project|user]~%")
+          (for-each (lambda (entry)
+                      (format #t "allow ~a (~a)~%" (string-join (car entry) " ") (cdr entry)))
+                    (run-allow-entries))))
      ((and (string=? (car parts) "allow") (pair? (cdr parts)))
-      (unless (member (cdr parts) current)
-        (settings-set! (list (cons 'run-allow (append current (list (cdr parts)))))))
-      (format #t "Allowed without asking in accept/auto: ~a~%" (string-join (cdr parts) " ")))
+      (allow-run! (cdr parts) 'session)
+      (format #t "Allowed without asking in this session: ~a~%" (string-join (cdr parts) " ")))
      ((and (string=? (car parts) "deny") (pair? (cdr parts)))
-      (unless (member (cdr parts) current)
-        (error "that prefix is not in the allowlist" (string-join (cdr parts) " ")))
-      (settings-set! (list (cons 'run-allow (delete (cdr parts) current))))
-      (format #t "Removed: ~a~%" (string-join (cdr parts) " ")))
-     (else (error "use /run list, /run allow ARGV..., or /run deny ARGV...")))
+      (let ((scopes (deny-run! (cdr parts))))
+        (format #t "Removed from ~a: ~a~%" (string-join (map symbol->string scopes) ", ") (string-join (cdr parts) " "))))
+     (else (error "use /run list, /run allow ARGV..., /run deny ARGV..., or /allow-run \"ARGV...\" [project|user]")))
     #t))
 
 (define (prepare-changes name arguments)
@@ -2622,7 +2665,13 @@
                    (when result
                      (set! history (compact-history! runtime tracer (cadr result) #f))
                      (set! turn-count (+ turn-count 1)))) 'continue))))
-        (case action
+        ;; A command may hand back a prompt to run as a turn (/learn does).
+        (when (and (pair? action) (eq? (car action) 'prompt))
+          (let ((result (perform-turn! runtime tracer history (cadr action) turn-count)))
+            (when result
+              (set! history (compact-history! runtime tracer (cadr result) #f))
+              (set! turn-count (+ turn-count 1)))))
+        (case (if (pair? action) 'continue action)
           ((reset) (set! history '()) (set! turn-count 1)
                    (set! last-ui-usage #f)
                    (display "Conversation state cleared.\n"))

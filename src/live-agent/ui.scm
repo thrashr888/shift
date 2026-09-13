@@ -88,6 +88,8 @@
 (define pane-fields '("session.name" "session.provider" "session.model" "session.mode" "session.turn"
                       "usage.prompt" "usage.limit" "usage.round" "usage.max_rounds"
                       "receipt.status" "receipt.duration_ms" "source.loaded" "source.process"))
+;; Rows a pane may borrow from the built-in tabs.
+(define pane-sources '("session" "skills" "sessions" "peers" "receipt" "telemetry" "source" "jobs" "runs" "models"))
 (define (valid-pane-row? row)
   (and (json-object? row)
        (let ((entries (json-object-entries row)))
@@ -96,6 +98,7 @@
                 (cond
                  ((string=? key "text") (safe-text? value 120))
                  ((string=? key "field") (and (string? value) (member value pane-fields) #t))
+                 ((string=? key "source") (and (string? value) (member value pane-sources) #t))
                  ((string=? key "command")
                   (and (json-array? value) (<= 1 (length (json-array-items value)) 16)
                        (every (lambda (part) (safe-text? part 200)) (json-array-items value))))
@@ -153,12 +156,14 @@
 ;; whenever Shift runs in that project, and explicit `panes` preferences win.
 (define (pane-row->json row)
   (unless (and (pair? row) (symbol? (car row)) (list? (cdr row)))
-    (error "pane rows are (text \"...\"), (field NAME) or (command \"argv\" ...)" row))
+    (error "pane rows are (text \"...\"), (field NAME), (source NAME) or (command \"argv\" ...)" row))
   (case (car row)
     ((text) (unless (and (= (length row) 2) (string? (cadr row))) (error "text rows take one string" row))
      (json-object (cons "text" (cadr row))))
     ((field) (unless (and (= (length row) 2) (symbol? (cadr row))) (error "field rows take one field name" row))
      (json-object (cons "field" (symbol->string (cadr row)))))
+    ((source) (unless (and (= (length row) 2) (symbol? (cadr row))) (error "source rows take one section name" row))
+     (json-object (cons "source" (symbol->string (cadr row)))))
     ((command) (unless (and (pair? (cdr row)) (every string? (cdr row))) (error "command rows take argv strings" row))
      (json-object (cons "command" (apply json-array (cdr row)))))
     (else (error "unknown pane row" row))))

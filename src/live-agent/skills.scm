@@ -8,7 +8,7 @@
   #:use-module (live-agent json)
   #:export (skills-init! skill-index skill-find skill-directories skill-load!
             skills-prompt-block skills-json skill-loaded? loaded-skills reset-loaded-skills!
-            parse-skill-file))
+            parse-skill-file skill-file))
 
 (define max-file-bytes (* 64 1024))
 (define max-body-bytes (* 32 1024))
@@ -102,15 +102,37 @@
     (lambda () (sort (filter (lambda (n) (not (member n '("." "..")))) (scandir directory)) string<?))
     (lambda _ '())))
 
+;; A source holds skill folders directly or grouped one level down in
+;; category folders, the way Hermes lays out ~/.hermes/skills/category/skill.
+(define (skill-folders directory)
+  (append-map
+   (lambda (name)
+     (let ((child (string-append directory "/" name)))
+       (cond ((file-exists? (string-append child "/SKILL.md")) (list child))
+             ((catch #t (lambda () (eq? 'directory (stat:type (stat child)))) (lambda _ #f))
+              (filter (lambda (grand) (file-exists? (string-append grand "/SKILL.md")))
+                      (map (lambda (n) (string-append child "/" n)) (directory-entries child))))
+             (else '()))))
+   (directory-entries directory)))
 (define (current-signature)
   (map (lambda (entry)
          (let ((directory (cdr entry)))
            (cons directory
-                 (map (lambda (name)
-                        (let ((file (string-append directory "/" name "/SKILL.md")))
-                          (cons name (catch #t (lambda () (stat:mtime (stat file))) (lambda _ #f)))))
-                      (directory-entries directory)))))
+                 (map (lambda (folder)
+                        (cons folder (catch #t (lambda () (stat:mtime (stat (string-append folder "/SKILL.md")))) (lambda _ #f))))
+                      (skill-folders directory)))))
        sources))
+;; A supporting file inside a valid skill's folder, bounded like SKILL.md.
+(define (skill-file name path)
+  (let ((rec (skill-find name)))
+    (unless (and rec (field rec 'valid)) (error "no valid skill named" name))
+    (let* ((root (canonicalize-path (field rec 'path)))
+           (target (catch #t (lambda () (canonicalize-path (string-append root "/" path))) (lambda _ #f))))
+      (unless (and target (or (string=? target root) (string-prefix? (string-append root "/") target)))
+        (error "path must name a file inside the skill folder" path))
+      (when (> (stat:size (stat target)) max-file-bytes) (error "skill file exceeds 64 KiB" path))
+      (string-append "Skill " name " file " path "\n\n"
+                     (call-with-input-file target get-string-all #:encoding "UTF-8")))))
 
 (define (rebuild!)
   (set! index
@@ -119,12 +141,10 @@
           (reverse result)
           (let* ((source (caar entries)) (directory (cdar entries))
                  (found (filter-map
-                          (lambda (name)
-                            (let ((child (string-append directory "/" name)))
-                              (and (file-exists? (string-append child "/SKILL.md"))
-                                   (not (member name seen))
-                                   (read-skill child source))))
-                          (directory-entries directory))))
+                          (lambda (child)
+                            (and (not (member (basename child) seen))
+                                 (read-skill child source)))
+                          (skill-folders directory))))
             (loop (cdr entries) (append (map (lambda (r) (field r 'name)) found) seen)
                   (append (reverse found) result)))))))
 

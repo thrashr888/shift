@@ -234,7 +234,7 @@ class CodingWorkflow(unittest.TestCase):
                 reloader=tui.Reloader(candidate,watch=False)
                 pid=child.process.pid
                 pending=model.pending_draft
-                candidate.write_text(code.replace("self.box(r,'PENDING TOOL: PgUp/PgDn')","self.box(r,'LIVE PENDING TOOL')"))
+                candidate.write_text(code.replace("self.box(r,'PENDING TOOL: PgUp/PgDn or Opt-Up/Dn')","self.box(r,'LIVE PENDING TOOL')"))
                 reloader.request()
                 self.assertTrue(reloader.check(terminal))
                 self.assertIn('reloaded',model.notice)
@@ -839,6 +839,19 @@ class CodingWorkflow(unittest.TestCase):
                             for m in Provider.last_messages if m.get("role") == "user")
                         or "exit 0" in results[2])
 
+    def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
+        output = self.shift(
+            '/allow-run "sh -c" project\n/allow-run\nrun it\n/quit\n',
+            plan=[tool_call("run", {"argv": ["sh", "-c", "echo allowed"]}), answer("done")],
+        )
+        self.assertIn("Allowed project: sh -c", output)
+        self.assertIn("project  sh -c", output)
+        self.assertIn("allowed", self.tool_results()[0])
+        settings = json.loads((self.project / ".shift/settings.json").read_text())
+        self.assertEqual(settings["run-allow"], [["sh", "-c"]])
+        session_file = self.state() / "settings.json"
+        self.assertFalse(session_file.exists() and json.loads(session_file.read_text()).get("run-allow"))
+
     def test_parallel_reads_keep_their_order_and_trace_it(self):
         (self.project / "b.txt").write_text("bravo\n")
         Provider.plan = []
@@ -983,40 +996,36 @@ class RunListSource(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"run-allow": prefixes}))
 
-    def test_precedence_and_empty_sources(self):
-        for source in ("default", "user", "project", "session"):
-            for empty in (False, True):
-                with self.subTest(source=source, empty=empty), tempfile.TemporaryDirectory() as tmp:
-                    project = Path(tmp)
-                    files = [project / "config/shift/settings.json", project / ".shift/settings.json",
-                             project / ".shift/sessions/check/settings.json"]
-                    rank = ["default", "user", "project", "session"].index(source)
-                    for index in range(rank):
-                        self.seed(files[index], [["shadowed", str(index)]])
-                    if rank:
-                        self.seed(files[rank - 1], [] if empty else [["make", "test"]])
-                    output = self.invoke(project, "/run list")
-                    if empty or source == "default":
-                        self.assertIn(f"Run allowlist is empty ({source})", output)
-                        self.assertIn("/run allow", output)
-                    else:
-                        rows = [line for line in output.splitlines() if line.startswith("allow ")]
-                        self.assertEqual(rows, [f"allow make test ({source})"])
+    def test_scopes_union_and_list_with_their_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            output = self.invoke(project, "/run list")
+            self.assertIn("Run allowlist is empty (default)", output)
+            self.assertIn("/allow-run", output)
+            self.seed(project / "config/shift/settings.json", [["git", "status"]])
+            self.seed(project / ".shift/settings.json", [["make", "test"]])
+            self.seed(project / ".shift/sessions/check/settings.json", [["cargo", "test"]])
+            output = self.invoke(project, "/run list")
+            rows = [line for line in output.splitlines() if line.startswith("allow ")]
+            self.assertEqual(rows, ["allow git status (user)", "allow make test (project)", "allow cargo test (session)"])
 
-    def test_terminal_changes_and_resume_are_session_sourced(self):
+    def test_terminal_changes_persist_at_their_scope(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             self.seed(project / ".shift/settings.json", [["make", "test"]])
             output = self.invoke(project, "/run allow cargo test\n/run list")
-            self.assertIn("allow make test (session)", output)
+            self.assertIn("allow make test (project)", output)
             self.assertIn("allow cargo test (session)", output)
             output = self.invoke(project, "/run deny make test\n/run list")
+            self.assertIn("Removed from project: make test", output)
             rows = [line for line in output.splitlines() if line.startswith("allow ")]
             self.assertEqual(rows, ["allow cargo test (session)"])
-            output = self.invoke(project, "/run list")
-            self.assertIn("allow cargo test (session)", output)
+            self.assertEqual(json.loads((project / ".shift/settings.json").read_text())["run-allow"], [])
             saved = json.loads((project / ".shift/sessions/check/settings.json").read_text())
             self.assertEqual(saved["run-allow"], [["cargo", "test"]])
+            output = self.invoke(project, '/allow-run "npm test" user\n/run list')
+            self.assertIn("allow npm test (user)", output)
+            self.assertEqual(json.loads((project / "config/shift/settings.json").read_text())["run-allow"], [["npm", "test"]])
 
 
 

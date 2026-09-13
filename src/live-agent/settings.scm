@@ -4,16 +4,71 @@
   #:use-module (live-agent json)
   #:use-module (live-agent generation)
   #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
-            settings-show settings-object setting-source load-dotenv!))
+            settings-show settings-object setting-source load-dotenv! allow-run! deny-run! run-allow-entries))
 
 ;; Data only: never evaluate persisted preferences as Scheme. Live image code
 ;; cannot access this module or change the process-owned execution mode.
 (define (assq-delete-all key entries) (filter (lambda (p) (not (eq? (car p) key))) entries))
 (define preferences '())
 (define sources '())
+;; The run allowlist is the one setting that unions across scopes instead of
+;; the nearest scope replacing the rest: a prefix allowed for the user, the
+;; project (committable .shift/settings.json) or this session all count.
 (define project-file #f)
 (define session-file #f)
 (define user-file #f)
+(define allow-lists '((user . ()) (project . ()) (session . ())))
+(define (allow-scope-set! scope prefixes)
+  (set! allow-lists (acons scope prefixes (assq-delete-all scope allow-lists))))
+(define (union-allow-lists)
+  (fold (lambda (scope acc)
+          (fold (lambda (prefix acc) (if (member prefix acc) acc (append acc (list prefix))))
+                acc (or (assq-ref allow-lists scope) '())))
+        '() '(user project session)))
+(define (refresh-run-allow!)
+  (set! preferences (acons 'run-allow (union-allow-lists) (assq-delete-all 'run-allow preferences))))
+(define (scope-file scope)
+  (case scope ((user) user-file) ((project) project-file) ((session) session-file) (else #f)))
+(define (file-entries path)
+  (if (and path (file-exists? path))
+      (let ((value (call-with-input-file path (lambda (p) (json-read (get-string-all p))))))
+        (map (lambda (entry) (cons (rename (string->symbol (car entry))) (decode (rename (string->symbol (car entry))) (cdr entry))))
+             (json-object-entries value)))
+      '()))
+;; (allow-run! prefix scope) persists an argv prefix at that scope and makes
+;; it effective at once; session prefixes go to the session file like every
+;; other preference, project and user ones touch only run-allow in their file.
+(define (allow-run! prefix scope)
+  (unless (valid? 'run-allow (list prefix)) (error "an allowlist prefix is a non-empty argv" prefix))
+  (unless (memq scope '(user project session)) (error "scope must be user, project or session" scope))
+  (let ((current (or (assq-ref allow-lists scope) '())))
+    (unless (member prefix current)
+      (let ((next (append current (list prefix))) (path (scope-file scope)))
+        (cond
+         ((eq? scope 'session)
+          (when path (write-settings path (acons 'run-allow next (assq-delete-all 'run-allow (file-entries path))))))
+         (else
+          (unless path (error "no settings file for scope" scope))
+          (write-settings path (acons 'run-allow next (assq-delete-all 'run-allow (file-entries path))))))
+        (allow-scope-set! scope next)
+        (refresh-run-allow!)))
+    (assq-ref allow-lists scope)))
+;; (deny-run! prefix) removes a prefix from every scope that holds it,
+;; rewriting those files, and reports the scopes it left.
+(define (deny-run! prefix)
+  (let ((removed (filter (lambda (scope) (member prefix (or (assq-ref allow-lists scope) '()))) '(user project session))))
+    (when (null? removed) (error "that prefix is not in the allowlist" (string-join prefix " ")))
+    (for-each (lambda (scope)
+                (let ((next (delete prefix (assq-ref allow-lists scope))) (path (scope-file scope)))
+                  (when path (write-settings path (acons 'run-allow next (assq-delete-all 'run-allow (file-entries path)))))
+                  (allow-scope-set! scope next)))
+              removed)
+    (refresh-run-allow!)
+    removed))
+;; Oldest scope first: ((prefix . scope) ...) for /allow-run listings.
+(define (run-allow-entries)
+  (append-map (lambda (scope) (map (lambda (prefix) (cons prefix scope)) (or (assq-ref allow-lists scope) '())))
+              '(user project session)))
 ;; SHIFT_PROVIDER_RETRIES sets the process-wide default so test harnesses can
 ;; make planned provider errors fail fast; the setting still wins.
 (define default-provider-retries
@@ -94,11 +149,16 @@
        (lambda (entry)
          (let* ((key (rename (string->symbol (car entry)))) (value (decode key (cdr entry))))
            (unless (valid? key value) (error "invalid setting" path key))
-           (set! preferences (acons key value (assq-delete-all key preferences)))
-           (set! sources (acons key source (assq-delete-all key sources)))))
+           (cond
+            ((eq? key 'run-allow) (allow-scope-set! source value) (refresh-run-allow!)
+             (set! sources (acons key source (assq-delete-all key sources))))
+            (else
+             (set! preferences (acons key value (assq-delete-all key preferences)))
+             (set! sources (acons key source (assq-delete-all key sources)))))))
        (json-object-entries value)))))
 (define (settings-init! project-state session-state)
   (set! preferences '()) (set! sources '())
+  (set! allow-lists '((user . ()) (project . ()) (session . ())))
   (set! project-file (string-append project-state "/settings.json"))
   (set! session-file (and session-state (string-append session-state "/settings.json")))
   (set! user-file (string-append (or (getenv "XDG_CONFIG_HOME")
@@ -119,12 +179,22 @@
 (define (settings-set! entries)
   (for-each (lambda (entry)
               (unless (valid? (car entry) (cdr entry)) (error "invalid setting" (car entry)))) entries)
-  (let ((next (fold (lambda (entry acc)
-                     (acons (car entry) (cdr entry) (assq-delete-all (car entry) acc)))
-                   preferences entries)))
+  (let* ((allow (assq-ref entries 'run-allow))
+         (session-allow (if allow
+                            ;; Prefixes already allowed at another scope are not copied into the session.
+                            (filter (lambda (prefix) (not (or (member prefix (or (assq-ref allow-lists 'user) '()))
+                                                              (member prefix (or (assq-ref allow-lists 'project) '())))))
+                                    allow)
+                            (or (assq-ref allow-lists 'session) '())))
+         (next (fold (lambda (entry acc)
+                       (acons (car entry) (cdr entry) (assq-delete-all (car entry) acc)))
+                     preferences entries)))
     ;; Only publish changes after durable storage succeeds.
-    (when session-file (write-settings session-file next))
+    (when session-file
+      (write-settings session-file (acons 'run-allow session-allow (assq-delete-all 'run-allow next))))
+    (when allow (allow-scope-set! 'session session-allow))
     (set! preferences next)
+    (when allow (refresh-run-allow!))
     (for-each (lambda (entry)
                 (set! sources (acons (car entry) 'session (assq-delete-all (car entry) sources)))) entries)))
 (define (setting-set! key value) (settings-set! (list (cons key value))))
@@ -135,9 +205,13 @@
     (setting-set! key (decode key value))))
 (define (settings-save! generation scope)
   (let ((path (if (eq? scope 'user) user-file project-file)))
+    ;; Saving promotes preferences, and the whole effective allowlist, to that scope.
     (write-settings path (map (lambda (entry) (cons (string->symbol (car entry))
                                                    (decode (string->symbol (car entry)) (cdr entry))))
                              (json-object-entries (settings-object generation))))
+    (allow-scope-set! scope (setting-ref generation 'run-allow))
+    (allow-scope-set! 'session '())
+    (when session-file (write-settings session-file (acons 'run-allow '() (assq-delete-all 'run-allow (file-entries session-file)))))
     path))
 (define (setting-source key)
   (or (assq-ref sources key) 'default))

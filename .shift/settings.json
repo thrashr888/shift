@@ -1,0 +1,1 @@
+{"run-allow":[["git","status"],["git","log"],["make","test"]]}

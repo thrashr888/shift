@@ -79,6 +79,9 @@
   "{\"name\":\"proj\",\"title\":\"PROJ\",\"rows\":[{\"text\":\"from the project\"},{\"field\":\"session.model\"},{\"command\":[\"git\",\"status\"]}]}"
   (json-write (car (json-array-items (json-object-ref (config) "panes")))))
 (test-equal "check-panes-file summarizes a valid pack" '(("proj" . 3)) (check-panes-file (string-append root "/project/panes.scm")))
+(test-equal "source rows borrow built-in sections" "{\"source\":\"skills\"}"
+  (json-write (car (json-array-items (json-object-ref (car (json-array-items (panes-pack->json "((pane \"s\" \"S\" (source skills)))"))) "rows")))))
+(test-error "unknown sources are rejected" #t (panes-pack->json "((pane \"s\" \"S\" (source everything)))"))
 (patch (cons "panes" (json-array pane)))
 (test-equal "explicit panes win over the project file" "shift"
   (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))

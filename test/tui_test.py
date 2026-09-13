@@ -919,7 +919,7 @@ class PresentationReload(unittest.TestCase):
         self.t.anchor=(3,0);m.panel_tab='session'
         snapshot=copy.deepcopy(m.__dict__)
         old_class=self.t.__class__
-        self.path.write_text(self.source.replace("self.box(r,'PENDING TOOL: PgUp/PgDn')","self.box(r,'LIVE PENDING TOOL')"))
+        self.path.write_text(self.source.replace("self.box(r,'PENDING TOOL: PgUp/PgDn or Opt-Up/Dn')","self.box(r,'LIVE PENDING TOOL')"))
         self.reload.request()
         self.assertTrue(self.reload.check(self.t,now=1))
         self.assertIsNot(self.t.__class__,old_class)
@@ -1417,6 +1417,33 @@ class Skills(unittest.TestCase):
         terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
         self.assertIn('Skills: release',text)
         self.assertIn('/skill release',[c[0] for c in tui.suggestions('/skill re',[],False,[],[],[],['release','review'])])
+
+
+class SourceRows(unittest.TestCase):
+    def test_panes_borrow_built_in_sections_and_session_tab_leads_with_skills(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.config['panes']=[{'name':'status','title':'STATUS','rows':[{'text':'Mine'},{'source':'skills'},{'source':'jobs'},{'source':'sessions'}]}]
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
+        m.event({'type':'skills','value':[{'name':'release','description':'Cut a release','source':'project','valid':True,'loaded':False,'model':True}]})
+        m.event({'type':'sessions','value':{'current':'main','sessions':[{'name':'main','turns':1,'status':'current'}]}})
+        m.event({'type':'job','value':{'event':'running','id':'job-1','argv':['make','test'],'status':'running','elapsed_ms':500,'tail':'','turn':1,'log':'runs/job-1.log'}})
+        m.control('ready');m.panel_tab='status';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('Mine',text);self.assertIn('SKILLS',text);self.assertIn('RUNNING',text);self.assertIn('SESSIONS',text)
+        self.assertNotIn('/allow-run permits',text)
+        self.assertTrue(any(a==('skill','release') for _,a in terminal.hits))
+        m.panel_tab='session';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertLess(text.index('SKILLS'),text.index('SESSIONS'))
+        self.assertLess(text.index('SESSIONS'),text.index('PEERS'))
+
+    def test_option_and_control_arrows_page_the_pane(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.control('ready');m.panel_tab='log';m.panel_scroll['log']=0
+        for _ in range(30):m.runs.append({'kind':'run','turn':1,'id':None,'ok':True,'command':'x','status':'exit 0','seconds':'','log':'','lines':['y'],'truncated':False,'at':''})
+        terminal.draw()
+        self.assertEqual(tui.KEY_SEQUENCES['[1;3B'],tui.curses.KEY_NPAGE);self.assertEqual(tui.KEY_SEQUENCES['[1;5A'],tui.curses.KEY_PPAGE)
+        terminal.key(tui.curses.KEY_NPAGE);self.assertEqual(m.panel_scroll['log'],10)
+        terminal.key(tui.curses.KEY_PPAGE);self.assertEqual(m.panel_scroll['log'],0)
+        self.assertIn('/allow-run "make test" project',[c[0] for c in tui.suggestions('/allow-run "make',[],False,[],[],[],[],['make test'])])
 
 
 class Jobs(unittest.TestCase):

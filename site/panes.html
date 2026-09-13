@@ -50,6 +50,7 @@
 PANE  = ( pane NAME TITLE ROW ... )     <span class="code-muted">; 1 to 24 rows</span>
 ROW   = ( text STRING )                 <span class="code-muted">; up to 120 printable characters</span>
       | ( field FIELD )                 <span class="code-muted">; a live value, redrawn live</span>
+      | ( source SECTION )              <span class="code-muted">; a built-in sidebar section</span>
       | ( command STRING ... )          <span class="code-muted">; argv of 1 to 16 strings, not a shell line</span>
 NAME  = "[a-z0-9-]{1,16}"               <span class="code-muted">; not work, diff, session, model or log</span>
 TITLE = up to 12 printable characters   <span class="code-muted">; the tab label</span></code></pre>
@@ -75,6 +76,26 @@ TITLE = up to 12 printable characters   <span class="code-muted">; the tab label
           <tr><td>receipt.duration_ms</td><td>How long the last turn took, in milliseconds.</td></tr>
           <tr><td>source.loaded</td><td>The Shift checkout the running image was loaded from.</td></tr>
           <tr><td>source.process</td><td>The Shift checkout the process started with.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="reference-block" aria-labelledby="sources-title">
+      <h2 id="sources-title">Sources</h2>
+      <p>A <span class="mono">source</span> row borrows one of the sections the built-in tabs are made of, so a project can compose its own status tab: skills next to the git status it cares about, or the running jobs beside a checklist.</p>
+      <table class="fields">
+        <thead><tr><th scope="col">Source</th><th scope="col">Shows</th></tr></thead>
+        <tbody>
+          <tr><td>session</td><td>Name, provider/model, mode and turn.</td></tr>
+          <tr><td>skills</td><td>Skills with source and loaded state; clicking loads one.</td></tr>
+          <tr><td>sessions</td><td>Durable sessions with status marks; clicking an idle one switches.</td></tr>
+          <tr><td>peers</td><td>The MCP endpoint and attached peers.</td></tr>
+          <tr><td>receipt</td><td>The latest turn’s receipt.</td></tr>
+          <tr><td>telemetry</td><td>Exact context and round values.</td></tr>
+          <tr><td>source</td><td>The Shift checkout the session and process loaded.</td></tr>
+          <tr><td>jobs</td><td>Background jobs while they run.</td></tr>
+          <tr><td>runs</td><td>The run history the Log tab shows.</td></tr>
+          <tr><td>models</td><td>The provider’s models; clicking switches.</td></tr>
         </tbody>
       </table>
     </section>

@@ -30,6 +30,9 @@ KEY_SEQUENCES = {
     '[1~':curses.KEY_HOME, '[4~':curses.KEY_END, '[7~':curses.KEY_HOME, '[8~':curses.KEY_END,
     '[3~':curses.KEY_DC, '[5~':curses.KEY_PPAGE, '[6~':curses.KEY_NPAGE,
     '[Z':curses.KEY_BTAB, 'OQ':curses.KEY_F2, '[12~':curses.KEY_F2,
+    # Option/Ctrl + Up/Down page like PgUp/PgDn on keyboards without those keys.
+    '[1;3A':curses.KEY_PPAGE, '[1;3B':curses.KEY_NPAGE, '[1;5A':curses.KEY_PPAGE, '[1;5B':curses.KEY_NPAGE,
+    '[1;9A':curses.KEY_PPAGE, '[1;9B':curses.KEY_NPAGE,
 }
 ENUMS = {
     '/mode':MODES, '/brand':('replace','subtitle','none'), '/place':('left','right','top','bottom','modal'),
@@ -49,19 +52,20 @@ COMMANDS = {
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
     '/receipt':'Last turn receipt',
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
-    '/jobs':'List background jobs (cancel ID stops one)',
+    '/jobs':'List background jobs (cancel ID stops one)', '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
+    '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
     '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
 
 
-def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=(), skills=()):
+def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=(), skills=(), commands=()):
     query=draft.strip()
     if not query.startswith('/'):
         return [(name,description) for name,description in COMMANDS.items()
                 if palette and query.casefold() in (name+' '+description).casefold()]
     name,separator,value=draft.partition(' ')
     if separator:
-        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else tuple('run '+pane for pane in panes) if name=='/pane' else tuple(skills) if name=='/skill' else ENUMS.get(name,())
+        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else tuple('run '+pane for pane in panes) if name=='/pane' else tuple(skills) if name=='/skill' else tuple('"'+cmd+'"'+suffix for cmd in commands for suffix in ('',' project',' user')) if name=='/allow-run' else ENUMS.get(name,())
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
 
@@ -773,7 +777,8 @@ class Terminal:
             self.completion_query=query
         self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items'],[s.get('name','') for s in m.sessions['items']],
                                             [str(p.get('name','')) for p in m.config.get('panes',[]) if isinstance(p,dict)],
-                                            [str(k.get('name','')) for k in m.skills if k.get('valid',True)]) if active else []
+                                            [str(k.get('name','')) for k in m.skills if k.get('valid',True)],
+                                            [' '.join(str(x) for x in row['command']) for p in m.config.get('panes',[]) if isinstance(p,dict) for row in p.get('rows',[]) if isinstance(row,dict) and 'command' in row]) if active else []
         self.completion_index=min(self.completion_index,max(0,len(self.completion_choices)-1))
         return active
 
@@ -1369,74 +1374,33 @@ class Terminal:
             rows.append([(text,3,True)])
         def line(text,tone=1):
             rows.append([(text,tone,False)])
-        if self.pane(m.panel_tab):
-            pane=self.pane(m.panel_tab);outputs=m.pane_output.get(m.panel_tab,{})
-            title(str(pane.get('title',m.panel_tab)).upper())
-            fields={'session.name':m.session.get('name'),'session.provider':m.session.get('provider'),'session.model':m.session.get('model'),
-                    'session.mode':m.session.get('mode'),'session.turn':m.session.get('turn'),'usage.prompt':m.usage.get('prompt'),
-                    'usage.limit':m.usage.get('limit'),'usage.round':m.usage.get('round'),'usage.max_rounds':m.usage.get('max_rounds'),
-                    'receipt.status':m.receipt.get('status'),'receipt.duration_ms':m.receipt.get('duration_ms'),
-                    'source.loaded':m.source_identity['loaded'].get('label'),'source.process':m.source_identity['process'].get('label')}
-            for index,row in enumerate(pane.get('rows',[])):
-                if not isinstance(row,dict):continue
-                if 'text' in row:
-                    for part in wrap(str(row['text']),width,words=True):line(part)
-                elif 'field' in row:
-                    key=str(row['field']);value=fields.get(key)
-                    rows.append([(key.split('.')[-1].replace('_',' ')+': ',4,False),(str(value) if value not in (None,'') else 'not measured',1,False)])
-                elif 'command' in row:
-                    argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
-                    mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
-                    rows.append([(mark,2,True),(argv,1,True),((' · '+entry['status']+(' · '+entry['at'] if entry['at'] else '')) if entry else ' · click to run',2 if entry and entry['ok'] else 11 if entry else 4,False)])
-                    actions[len(rows)-1]=('pane',m.panel_tab+' '+str(index))
-                    if entry:
-                        for text in entry['lines'][:40]:
-                            for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
-                        if len(entry['lines'])>40 or entry['truncated']:line('  … more in the Log tab'+(' and the full log' if entry['truncated'] else ''),4)
-            line('')
-            for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
-        elif m.panel_tab=='model':
-            current=str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting'))
-            title('MODEL');line(current);line('')
-            if m.models['error']:
-                for part in wrap('Model list unavailable: '+m.models['error'],width,words=True):line(part,11)
-                line('Tab here again or /model list to retry',4)
-            elif not m.models['items']:
-                line('Listing models from '+str(m.session.get('provider','the provider'))+'…' if m.models['requested'] else 'Tab here again or /model list to list',4)
-            else:
-                for name in m.models['items']:
-                    selected=name==current
-                    rows.append([(('▶ ' if selected else '  ') if self.unicode and not c.get('ascii') else ('> ' if selected else '  '),2,True),
-                                 (name,2 if selected else 1,selected)])
-                    if not selected:actions[len(rows)-1]=('model',name)
-                line('');line('Click a model or /model NAME (Tab completes)',4)
-        elif m.panel_tab=='log':
-            title('LOG · bash runs'+(' · '+str(len(m.jobs))+' running' if m.jobs else ''))
-            if m.jobs:
-                line('');title('RUNNING')
-                for job_id,job in m.jobs.items():
-                    mark='● ' if self.unicode and not c.get('ascii') else '* '
-                    rows.append([(mark,3,True),(job_id,1,True),(' · '+str(round(job['elapsed']/1000,1))+'s',4,False)])
-                    for part in wrap(job['argv'],width,words=True)[:2]:rows.append([('  '+part,1,False)])
-                    if job['tail']:line('  '+job['tail'],4)
-                line('/jobs cancel ID stops one',4)
-            if not m.runs and not m.jobs:line('No bash runs yet',4)
-            for run in m.runs:
-                line('')
-                # Status first: commands can be long and would push it off the row.
-                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
-                rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
-                             ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
-                for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
-                for text in run['lines']:
-                    for part in wrap(text,width):line(part)
-                if run['truncated']:
-                    for part in wrap('… output truncated; full log: '+run['log'],width,words=True):line(part,4)
-        elif m.panel_tab=='session':
+        # Sidebar content is a set of named sections. Built-in tabs are fixed
+        # orderings of them; a pane's (source NAME) row borrows any one.
+        sections={}
+        def section(name):
+            def register(fn):sections[name]=fn;return fn
+            return register
+        @section('session')
+        def _session():
             title('SESSION');line(str(m.session.get('name','default')))
             line(str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting')))
             line('Mode: '+m.session.get('mode','manual'));line('Turn: '+str(m.session.get('turn','unknown')))
-            line('');title('SESSIONS')
+        @section('skills')
+        def _skills():
+            title('SKILLS')
+            if not m.skills:line('No skills; add SKILL.md folders under .shift/skills or .agents/skills',4)
+            for skill in m.skills:
+                name=clean(str(skill.get('name','')));valid=skill.get('valid',True);loaded=bool(skill.get('loaded'))
+                mark=('● ' if loaded else '○ ') if self.unicode and not c.get('ascii') else ('* ' if loaded else '- ')
+                rows.append([(mark,2 if loaded else 11 if not valid else 4,True),(name,2 if loaded else 1,loaded),
+                             ('  '+clean(str(skill.get('source',''))),4,False)])
+                if valid and not loaded:actions[len(rows)-1]=('skill',name)
+                detail=clean(str(skill.get('error') or skill.get('description') or ''))
+                for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if not valid else 4)
+            if any(s.get('valid',True) and not s.get('loaded') for s in m.skills):line('Click a skill or /skill NAME to send it with the next prompt',4)
+        @section('sessions')
+        def _sessions():
+            title('SESSIONS')
             plain=c.get('ascii') or not self.unicode
             marks={'current':('▶ ','> '),'running':('● ','* '),'idle':('○ ','- ')}
             if m.sessions['error']:
@@ -1452,7 +1416,9 @@ class Terminal:
                 if status=='idle':actions[len(rows)-1]=('session',name)
                 line('    '+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
             if m.sessions['items']:line('Click an idle session or /session NAME to switch',4)
-            line('');title('PEERS')
+        @section('peers')
+        def _peers():
+            title('PEERS')
             endpoint=m.session.get('mcp')
             if endpoint:
                 for part in wrap(str(endpoint),width):line(part,4)
@@ -1461,18 +1427,9 @@ class Terminal:
             for peer in m.peers.values():
                 rows.append([(('● ' if self.unicode and not c.get('ascii') else '* '),3,True),(peer['name']+(' '+peer['version'] if peer['version'] else ''),1,True)])
                 line('    '+str(peer['calls'])+' calls'+(' · last '+peer['last'] if peer['last'] else '')+(' · '+peer['at'] if peer['at'] else ''),4)
-            line('');title('SKILLS')
-            if not m.skills:line('No skills; add SKILL.md folders under .shift/skills or .agents/skills',4)
-            for skill in m.skills:
-                name=clean(str(skill.get('name','')));valid=skill.get('valid',True);loaded=bool(skill.get('loaded'))
-                mark=('● ' if loaded else '○ ') if self.unicode and not c.get('ascii') else ('* ' if loaded else '- ')
-                rows.append([(mark,2 if loaded else 11 if not valid else 4,True),(name,2 if loaded else 1,loaded),
-                             ('  '+clean(str(skill.get('source',''))),4,False)])
-                if valid and not loaded:actions[len(rows)-1]=('skill',name)
-                detail=clean(str(skill.get('error') or skill.get('description') or ''))
-                for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if not valid else 4)
-            if any(s.get('valid',True) and not s.get('loaded') for s in m.skills):line('Click a skill or /skill NAME to send it with the next prompt',4)
-            line('');title('LATEST RECEIPT')
+        @section('receipt')
+        def _receipt():
+            title('LATEST RECEIPT')
             if m.receipt:
                 line('Status: '+str(m.receipt.get('status','unknown')))
                 line('Duration: '+str(m.receipt.get('duration_ms','unknown'))+' ms')
@@ -1481,27 +1438,108 @@ class Terminal:
                     line(' '.join(run.get('command',[])))
                     line('exit '+str(run.get('exit_code','unknown')),2 if run.get('success') else 11)
             else:line('No completed turn',4)
-            if c.get('metrics') and 'context' in c['sections']:
-                line('');title('TELEMETRY · EXACT VALUES')
-                for label,key in (('Prompt','prompt'),('Limit','limit'),('Round','round'),('Max rounds','max_rounds')):
-                    value=m.usage.get(key)
-                    detail=format(value,',') if isinstance(value,(int,float)) else 'not measured'
-                    if key=='prompt' and value is not None:detail+=' ('+m.usage.get('prompt_source','reported')+')'
-                    if key=='round' and m.usage.get('round_source')=='not-started':detail+=' (not started)'
-                    line(label+': '+detail)
-                memory=m.usage.get('memory_bytes')
-                line('Allocated: '+(format(memory,',')+' bytes' if isinstance(memory,(int,float)) else 'N/A'))
-                if m.usage.get('memory_label'):line(str(m.usage['memory_label']))
-                if m.usage.get('context_source'):line('Context: '+str(m.usage['context_source']))
-                for note in self.telemetry_notes():
-                    for part in wrap(note,width,words=True):line(part,4)
-            line('');title('SHIFT SOURCE')
+        @section('telemetry')
+        def _telemetry():
+            title('TELEMETRY · EXACT VALUES')
+            for label,key in (('Prompt','prompt'),('Limit','limit'),('Round','round'),('Max rounds','max_rounds')):
+                value=m.usage.get(key)
+                detail=format(value,',') if isinstance(value,(int,float)) else 'not measured'
+                if key=='prompt' and value is not None:detail+=' ('+m.usage.get('prompt_source','reported')+')'
+                if key=='round' and m.usage.get('round_source')=='not-started':detail+=' (not started)'
+                line(label+': '+detail)
+            memory=m.usage.get('memory_bytes')
+            line('Allocated: '+(format(memory,',')+' bytes' if isinstance(memory,(int,float)) else 'N/A'))
+            if m.usage.get('memory_label'):line(str(m.usage['memory_label']))
+            if m.usage.get('context_source'):line('Context: '+str(m.usage['context_source']))
+            for note in self.telemetry_notes():
+                for part in wrap(note,width,words=True):line(part,4)
+        @section('source')
+        def _source():
+            title('SHIFT SOURCE')
             line('Loaded: '+m.source_identity['loaded']['label'])
             line('Process: '+m.source_identity['process']['label'])
             line('TUI: '+m.source_identity['presentation'])
             if m.source_identity.get('terminfo'):line('Terminfo: '+m.source_identity['terminfo'],4)
             for part in wrap(m.source_identity['loaded'].get('commit') or 'Commit unavailable',max(1,width)):
                 line(part)
+        @section('jobs')
+        def _jobs():
+            if m.jobs:
+                title('RUNNING')
+                for job_id,job in m.jobs.items():
+                    mark='● ' if self.unicode and not c.get('ascii') else '* '
+                    rows.append([(mark,3,True),(job_id,1,True),(' · '+str(round(job['elapsed']/1000,1))+'s',4,False)])
+                    for part in wrap(job['argv'],width,words=True)[:2]:rows.append([('  '+part,1,False)])
+                    if job['tail']:line('  '+job['tail'],4)
+                line('/jobs cancel ID stops one',4)
+        @section('runs')
+        def _runs():
+            title('LOG · bash runs'+(' · '+str(len(m.jobs))+' running' if m.jobs else ''))
+            if not m.runs:line('No bash runs yet',4)
+            for run in m.runs:
+                line('')
+                # Status first: commands can be long and would push it off the row.
+                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
+                             ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
+                for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
+                for text in run['lines']:
+                    for part in wrap(text,width):line(part)
+                if run['truncated']:
+                    for part in wrap('… output truncated; full log: '+run['log'],width,words=True):line(part,4)
+        @section('models')
+        def _models():
+            current=str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting'))
+            title('MODEL');line(current);line('')
+            if m.models['error']:
+                for part in wrap('Model list unavailable: '+m.models['error'],width,words=True):line(part,11)
+                line('Tab here again or /model list to retry',4)
+            elif not m.models['items']:
+                line('Listing models from '+str(m.session.get('provider','the provider'))+'…' if m.models['requested'] else 'Tab here again or /model list to list',4)
+            else:
+                for name in m.models['items']:
+                    selected=name==current
+                    rows.append([(('▶ ' if selected else '  ') if self.unicode and not c.get('ascii') else ('> ' if selected else '  '),2,True),
+                                 (name,2 if selected else 1,selected)])
+                    if not selected:actions[len(rows)-1]=('model',name)
+                line('');line('Click a model or /model NAME (Tab completes)',4)
+        def render(names):
+            for i,name in enumerate(names):
+                if i:line('')
+                sections[name]()
+        if self.pane(m.panel_tab):
+            pane=self.pane(m.panel_tab);outputs=m.pane_output.get(m.panel_tab,{})
+            title(str(pane.get('title',m.panel_tab)).upper())
+            fields={'session.name':m.session.get('name'),'session.provider':m.session.get('provider'),'session.model':m.session.get('model'),
+                    'session.mode':m.session.get('mode'),'session.turn':m.session.get('turn'),'usage.prompt':m.usage.get('prompt'),
+                    'usage.limit':m.usage.get('limit'),'usage.round':m.usage.get('round'),'usage.max_rounds':m.usage.get('max_rounds'),
+                    'receipt.status':m.receipt.get('status'),'receipt.duration_ms':m.receipt.get('duration_ms'),
+                    'source.loaded':m.source_identity['loaded'].get('label'),'source.process':m.source_identity['process'].get('label')}
+            for index,row in enumerate(pane.get('rows',[])):
+                if not isinstance(row,dict):continue
+                if 'text' in row:
+                    for part in wrap(str(row['text']),width,words=True):line(part)
+                elif 'field' in row:
+                    key=str(row['field']);value=fields.get(key)
+                    rows.append([(key.split('.')[-1].replace('_',' ')+': ',4,False),(str(value) if value not in (None,'') else 'not measured',1,False)])
+                elif 'source' in row:
+                    if str(row['source']) in sections:sections[str(row['source'])]()
+                elif 'command' in row:
+                    argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
+                    mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
+                    rows.append([(mark,2,True),(argv,1,True),((' · '+entry['status']+(' · '+entry['at'] if entry['at'] else '')) if entry else ' · click to run',2 if entry and entry['ok'] else 11 if entry else 4,False)])
+                    actions[len(rows)-1]=('pane',m.panel_tab+' '+str(index))
+                    if entry:
+                        for text in entry['lines'][:40]:
+                            for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
+                        if len(entry['lines'])>40 or entry['truncated']:line('  … more in the Log tab'+(' and the full log' if entry['truncated'] else ''),4)
+            if any(isinstance(row,dict) and 'command' in row for row in pane.get('rows',[])):
+                line('')
+                for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
+        elif m.panel_tab=='model':render(['models'])
+        elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
+        elif m.panel_tab=='session':
+            render(['session','skills','sessions','peers','receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
         elif m.panel_tab=='diff':
             title('OUTPUT DIFF');line('')
             rows.extend((self.framed_diff(group,width,full=True) or [[('No committed changes',4,False)]])
@@ -1607,7 +1645,7 @@ class Terminal:
             height=min(session.h,len(preview)+2)
             r=Rect(session.x+1,session.y+session.h-height,max(2,session.w-2),height)
             self.regions['approval']=r
-            self.box(r,'PENDING TOOL: PgUp/PgDn')
+            self.box(r,'PENDING TOOL: PgUp/PgDn or Opt-Up/Dn')
             self.panel_limits['approval']=max(0,len(preview)-height+2)
             start=min(self.model.panel_scroll.get('approval',0),max(0,len(preview)-height+2))
             self.model.panel_scroll['approval']=start
@@ -1646,10 +1684,10 @@ class Terminal:
             self.hit(input_y,cols-hint_width,12,('commands',None))
             self.hit(input_y,cols-hint_width+24,8,('theme',None))
         tab_hint='Tab pane  ' if panel and (mode=='overlay' or c['placement'] not in ('top','bottom')) else ''
-        if tab_hint and m.panel_tab!='work':tab_hint+='PgUp/PgDn pane  '
+        if tab_hint and m.panel_tab!='work':tab_hint+='Opt-Up/Dn pane  '
         def fit(prefix,hints):
             # Drop the least essential hints until the row fits the width.
-            for drop in ('PgUp/PgDn pane','^O diff','^W work','Tab pane','S-Tab mode','^B sidebar'):
+            for drop in ('Opt-Up/Dn pane','^O diff','^W work','Tab pane','S-Tab mode','^B sidebar'):
                 if len(prefix+'  '.join(hints))<=cols:break
                 hints=[hint for hint in hints if hint!=drop]
             return prefix+'  '.join(hints)

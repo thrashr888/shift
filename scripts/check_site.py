@@ -107,8 +107,10 @@ def check():
     block = re.search(r"\(define pane-fields '\((.*?)\)\)", ui, re.DOTALL)
     declared = re.findall(r'"([a-z_.]+)"', block.group(1)) if block else []
     published = re.findall(r"<tr><td>([a-z_.]+)</td>", texts["panes.html"])
-    if declared != published:
-        errors.append(f"panes.html fields drift from ui.scm: declared={declared}, published={published}")
+    sources_block = re.search(r"\(define pane-sources '\((.*?)\)\)", ui, re.DOTALL)
+    declared_sources = re.findall(r'"([a-z]+)"', sources_block.group(1)) if sources_block else []
+    if declared + declared_sources != published:
+        errors.append(f"panes.html fields or sources drift from ui.scm: declared={declared + declared_sources}, published={published}")
 
     if re.search(r"@import\b|url\s*\(", texts["styles.css"], re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")

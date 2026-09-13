@@ -1,7 +1,7 @@
 # RFC: skills, background jobs, and a composable sidebar
 
-Status: implemented September 13, 2026, except the `source` rows in section 3.
-The decisions at the end record what changed from the draft.
+Status: implemented September 13, 2026, `source` rows included. The decisions
+at the end record what changed from the draft.
 
 ## Summary
 

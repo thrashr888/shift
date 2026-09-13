@@ -15,7 +15,7 @@ One line per document, then the open work those documents still describe.
 | [gaps-with-pi.md](gaps-with-pi.md) | The asymmetric comparison with Pi, refreshed September 13. |
 | [review-2026-09-04.md](review-2026-09-04.md) | The September 4 runtime review; its seven findings are fixed. |
 | [ablation-2026-09-04.md](ablation-2026-09-04.md) | Evidence for those fixes and the built-in ablation. |
-| [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | RFC for skills, background jobs, concurrent read-only tools, and the paginated sidebar; implemented except `source` rows. |
+| [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | RFC for skills, background jobs, concurrent read-only tools, and the composable sidebar; implemented. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
 Pane packs have a published reference at
@@ -26,9 +26,6 @@ Pane packs have a published reference at
 Collected from the documents above on September 13, 2026. Each item names the
 document that explains why it matters.
 
-- **Sidebar sources.** `source` rows so the built-in Session and Log tabs
-  become default panes a project can recompose
-  ([skills-and-jobs-rfc](skills-and-jobs-rfc.md)).
 - **Subagent fan-out.** Parallel children with isolated workspaces
   ([subagents](subagents.md)).
 - **Project trace recall.** Cross-session search over a project's traces
