@@ -133,6 +133,7 @@
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift --list-sessions [--state-dir PATH]\n"
+    "       shift --check-panes [FILE]        lint a pane pack (default .shift/panes.scm)\n"
     "       shift session-fork PARENT CHILD\n"
     "\nInteractive terminals open curses (--tui is a compatibility alias).\n"
     "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
@@ -221,6 +222,16 @@
                                   (substring (cadr rest) (+ equals 1)))))))
       (loop (cddr rest) agent state-dir watch? session-name session-mode list?
             initial-prompt fork-parent fork-child))
+     ((string=? (car rest) "--check-panes")
+      (let* ((path (if (and (pair? (cdr rest)) (not (string-prefix? "-" (cadr rest)))) (cadr rest) ".shift/panes.scm"))
+             (outcome (catch #t (lambda () (check-panes-file path)) (lambda (key . args) (error-text key args)))))
+        (cond ((string? outcome)
+               (format (current-error-port) "~a: ~a~%" path outcome)
+               (exit 2))
+              (else
+               (for-each (lambda (pane) (format #t "pane ~a: ~a rows~%" (car pane) (cdr pane))) outcome)
+               (format #t "~a: ok~%" path)
+               (exit 0)))))
      ((member (car rest) '("-h" "--help"))
       (usage)
       (exit 0))

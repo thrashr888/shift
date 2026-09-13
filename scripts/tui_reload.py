@@ -131,6 +131,7 @@ class Reloader:
                 preview.screen = PreviewScreen(terminal.screen.getmaxyx())
                 preview.put = lambda *args, **kwargs: None
                 preview.colors = lambda: None
+                preview.sync_mouse = lambda enabled: None
                 preview.reloader = None
                 preview.draw()
             except Exception:

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="acid">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101116">
+  <meta name="description" content="Shift pane packs: give a project its own inspector tabs as Scheme data. The reference for .shift/panes.scm.">
+  <title>Shift — pane packs</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="./" aria-label="Shift home"><span>shift</span><span class="brand-mark" aria-hidden="true">///</span></a>
+    <nav aria-label="Main navigation">
+      <a href="./#playground">Playground</a>
+      <a href="./#ghostty">Themes</a>
+      <a href="./#panes">Panes</a>
+      <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main" class="reference wrap">
+    <section class="reference-intro" aria-labelledby="panes-title">
+      <p class="eyebrow">Reference / pane packs</p>
+      <h1 id="panes-title">Panes are <span>data.</span></h1>
+      <p class="lede">A pane is a tab in Shift’s inspector that your project owns: a few lines of text, live values from the session, and commands that run through the same allowlisted machinery as the agent’s own runs. You declare it once, in <span class="mono">.shift/panes.scm</span>, and every Shift session opened in that folder shows it.</p>
+      <p class="lede">The file is Scheme the way a theme pack is Scheme: one form, read with <span class="mono">read</span> and never evaluated. There is no code to load, no plugin API to version, and nothing a pane can do that the session could not already do.</p>
+    </section>
+
+    <section class="reference-block" aria-labelledby="example-title">
+      <h2 id="example-title">The shape</h2>
+      <p>Shift’s own repository ships this pack. It adds a <span class="mono">SHIFT</span> tab beside Work, Diff, Session, Model and Log.</p>
+      <pre aria-label="Example pane pack"><code><span class="code-muted">;; .shift/panes.scm</span>
+((<span class="code-accent">pane</span> "shift" "SHIFT"
+   (<span class="code-accent">text</span> "Shift checkout health")
+   (<span class="code-accent">field</span> source.loaded)
+   (<span class="code-accent">field</span> session.model)
+   (<span class="code-accent">field</span> usage.prompt)
+   (<span class="code-accent">command</span> "git" "status" "--short")
+   (<span class="code-accent">command</span> "git" "log" "--oneline" "-3")
+   (<span class="code-accent">command</span> "make" "test")))</code></pre>
+    </section>
+
+    <section class="reference-block" aria-labelledby="grammar-title">
+      <h2 id="grammar-title">Grammar</h2>
+      <pre aria-label="Pane pack grammar"><code>PACK  = ( PANE ... )                    <span class="code-muted">; up to 4 panes, one form per file</span>
+PANE  = ( pane NAME TITLE ROW ... )     <span class="code-muted">; 1 to 24 rows</span>
+ROW   = ( text STRING )                 <span class="code-muted">; up to 120 printable characters</span>
+      | ( field FIELD )                 <span class="code-muted">; a live value, redrawn live</span>
+      | ( command STRING ... )          <span class="code-muted">; argv of 1 to 16 strings, not a shell line</span>
+NAME  = "[a-z0-9-]{1,16}"               <span class="code-muted">; not work, diff, session, model or log</span>
+TITLE = up to 12 printable characters   <span class="code-muted">; the tab label</span></code></pre>
+      <p>Names are what <span class="mono">/pane run NAME</span> and the tab strip use; titles are what you read. Comments and whitespace are yours to use. Anything outside this grammar, including any other list head, is rejected as a whole: an invalid pack is reported and skipped, and the last valid one stays loaded.</p>
+    </section>
+
+    <section class="reference-block" aria-labelledby="fields-title">
+      <h2 id="fields-title">Fields</h2>
+      <p>A <span class="mono">field</span> row names one of these symbols. It shows the label and the current value, or a dash before the session has reported it.</p>
+      <table class="fields">
+        <thead><tr><th scope="col">Field</th><th scope="col">Shows</th></tr></thead>
+        <tbody>
+          <tr><td>session.name</td><td>The durable session name.</td></tr>
+          <tr><td>session.provider</td><td>The provider serving the model.</td></tr>
+          <tr><td>session.model</td><td>The model the next turn will use.</td></tr>
+          <tr><td>session.mode</td><td>The tool policy: manual, plan or autopilot.</td></tr>
+          <tr><td>session.turn</td><td>The turn counter.</td></tr>
+          <tr><td>usage.prompt</td><td>Prompt tokens in the last reported round.</td></tr>
+          <tr><td>usage.limit</td><td>The context limit the session budgets against.</td></tr>
+          <tr><td>usage.round</td><td>The model round within the current turn.</td></tr>
+          <tr><td>usage.max_rounds</td><td>The round ceiling for a turn.</td></tr>
+          <tr><td>receipt.status</td><td>The last turn’s receipt status.</td></tr>
+          <tr><td>receipt.duration_ms</td><td>How long the last turn took, in milliseconds.</td></tr>
+          <tr><td>source.loaded</td><td>The Shift checkout the running image was loaded from.</td></tr>
+          <tr><td>source.process</td><td>The Shift checkout the process started with.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="reference-block" aria-labelledby="commands-title">
+      <h2 id="commands-title">Commands</h2>
+      <p>A <span class="mono">command</span> row is an argv, not a shell line, and it runs only when the session’s run allowlist already permits that prefix: the same rule that governs the agent’s <span class="mono">run</span> tool. Otherwise the row reports which <span class="mono">/allow-run</span> prefix is missing. Clicking a command row runs it; <span class="mono">/pane run NAME</span> runs every command row in the pane and <span class="mono">/pane run NAME ROW</span> one of them. Output shows under the row and in the Log tab, bounded to 300 lines or 16 KiB per run.</p>
+      <pre aria-label="Allow a pane's commands"><code>./bin/shift --allow-run "git status" --allow-run "git log" --allow-run "make test"
+<span class="code-muted">shift&gt;</span> /pane run shift</code></pre>
+    </section>
+
+    <section class="reference-block" aria-labelledby="loading-title">
+      <h2 id="loading-title">Loading, precedence, checking</h2>
+      <ul class="plain">
+        <li>The pack loads whenever Shift runs in the project and reloads within half a second when the file changes.</li>
+        <li>An explicit <span class="mono">panes</span> preference, from <span class="mono">/ui</span> or the agent’s <span class="mono">ui</span> tool, takes precedence over the file. It carries the same panes as JSON objects with <span class="mono">name</span>, <span class="mono">title</span> and <span class="mono">rows</span>, validated by the same rules.</li>
+        <li>The file is committable. Shift’s own <span class="mono">.gitignore</span> keeps the rest of the state directory private and allows only the pack.</li>
+        <li><span class="mono">./bin/shift --check-panes</span> lints the pack the way a session loads it and exits non-zero with the reason; pass a path to check another file.</li>
+      </ul>
+      <pre aria-label="Lint a pane pack"><code>$ ./bin/shift --check-panes
+pane shift: 7 rows
+.shift/panes.scm: ok</code></pre>
+    </section>
+
+    <p class="caption">Panes never load Python or Scheme code and never widen what the session may run. Details live in the <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">terminal guide</a>.</p>
+  </main>
+
+  <footer class="site-footer wrap">
+    <a class="wordmark" href="./" aria-label="Shift home"><span>shift</span><span class="brand-mark" aria-hidden="true">///</span></a>
+    <p>A Shift experiment. Make the agent your own.</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="https://github.com/thrashr888/shift/blob/main/README.md">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

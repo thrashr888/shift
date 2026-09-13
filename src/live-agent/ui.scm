@@ -5,7 +5,7 @@
   #:use-module (ice-9 ftw)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
-  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler!))
+  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler! panes-pack->json check-panes-file error-text))
 
 ;; Presentation preferences are independent of agent generations and authority.
 ;; Scheme packs are bounded data, never evaluated as process code.
@@ -75,7 +75,7 @@
      ((string=? key "placement") (member value '("left" "right" "top" "bottom" "modal")))
      ((string=? key "density") (member value '("compact" "comfortable")))
      ((string=? key "border") (member value '("thin" "heavy" "double" "none")))
-     ((member key '("ascii" "metrics" "motion" "terminal_colors")) (boolean? value))
+     ((member key '("ascii" "metrics" "motion" "terminal_colors" "mouse")) (boolean? value))
      ((string=? key "panes") (valid-panes? value))
      ((string=? key "wordmark") (and (json-array? value) (<= 1 (length (json-array-items value)) 3)
        (every (lambda (v) (safe-text? v 64)) (json-array-items value))))
@@ -125,7 +125,7 @@
     (cons "wordmark" (json-array "shift ///"))
     (cons "branding" "subtitle") (cons "sidebar" "auto") (cons "placement" "right")
     (cons "density" "comfortable") (cons "border" "thin") (cons "ascii" #f) (cons "metrics" #t) (cons "motion" #t)
-    (cons "terminal_colors" #t) (cons "panes" (json-array))
+    (cons "terminal_colors" #t) (cons "mouse" #t) (cons "panes" (json-array))
     (cons "sections" (json-array "files" "context" "checks" "session"))
     (cons "background" "#170626") (cons "foreground" "#f4edff") (cons "accent" "#b6ff00")
     (cons "secondary" "#45f6ff") (cons "muted" "#ae7deb") (cons "panel" "#1e0c32")
@@ -146,16 +146,57 @@
                  (and user-dir (string-append user-dir "/themes/" name ".scm"))
                  (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/themes/" name ".scm"))))
       (error "UI theme not found" name)))
-;; A project's own panes live in PROJECT/.shift/panes.json (a JSON array of
-;; panes, committable) and load whenever Shift runs in that project; explicit
-;; `panes` preferences take precedence over the file.
+;; A project's own panes live in PROJECT/.shift/panes.scm, one data form
+;; read but never evaluated: a list of (pane NAME TITLE ROW ...) forms whose
+;; rows are (text "...") , (field session.model) or (command "git" "status").
+;; The pack becomes the same JSON the `panes` preference validates, loads
+;; whenever Shift runs in that project, and explicit `panes` preferences win.
+(define (pane-row->json row)
+  (unless (and (pair? row) (symbol? (car row)) (list? (cdr row)))
+    (error "pane rows are (text \"...\"), (field NAME) or (command \"argv\" ...)" row))
+  (case (car row)
+    ((text) (unless (and (= (length row) 2) (string? (cadr row))) (error "text rows take one string" row))
+     (json-object (cons "text" (cadr row))))
+    ((field) (unless (and (= (length row) 2) (symbol? (cadr row))) (error "field rows take one field name" row))
+     (json-object (cons "field" (symbol->string (cadr row)))))
+    ((command) (unless (and (pair? (cdr row)) (every string? (cdr row))) (error "command rows take argv strings" row))
+     (json-object (cons "command" (apply json-array (cdr row)))))
+    (else (error "unknown pane row" row))))
+(define (pane-form->json form)
+  (unless (and (list? form) (>= (length form) 4) (eq? (car form) 'pane) (string? (cadr form)) (string? (caddr form)))
+    (error "panes are (pane \"name\" \"TITLE\" ROW ...)" form))
+  (json-object (cons "name" (cadr form)) (cons "title" (caddr form))
+               (cons "rows" (apply json-array (map pane-row->json (cdddr form))))))
+(define (panes-pack->json text)
+  (let ((data (call-with-input-string text
+                (lambda (p) (let ((form (read p)))
+                  (unless (eof-object? (read p)) (error "a pane pack is one list of pane forms")) form)))))
+    (unless (list? data) (error "a pane pack is a list of (pane ...) forms"))
+    (let ((value (apply json-array (map pane-form->json data))))
+      (unless (valid-panes? value)
+        (error "pane pack exceeds the limits: up to 4 panes named [a-z0-9-]{1,16} (not a built-in tab), titles up to 12 characters, 1-24 rows, text up to 120 characters, known fields, commands of 1-16 argv strings"))
+      value)))
 (define (project-panes)
-  (let ((path (and project-dir (string-append project-dir "/panes.json"))))
+  (let ((path (and project-dir (string-append project-dir "/panes.scm"))))
     (if (and path (file-exists? path))
-        (let* ((text (bounded-read path)) (value (json-read text)))
-          (unless (valid-panes? value) (error "panes.json must be a JSON array of valid panes" path))
-          (cons text value))
+        (let ((text (bounded-read path)))
+          (cons text (catch #t (lambda () (panes-pack->json text))
+                       (lambda (key . args) (error (format #f "~a: ~a" path (error-text key args)))))))
         #f)))
+;; Guile errors carry (subr message irritants rest); render them the way the
+;; REPL would, so pack mistakes read as one line with the file in front.
+(define (error-text key args)
+  (let ((message (and (>= (length args) 2) (string? (cadr args)) (cadr args)))
+        (irritants (if (and (>= (length args) 3) (list? (caddr args))) (caddr args) '())))
+    (cond ((not message) (format #f "~a ~s" key args))
+          ((string-index message #\~) (apply format #f message irritants))
+          (else (string-join (cons message (map (lambda (x) (format #f "~s" x)) irritants)) " ")))))
+;; `shift --check-panes [FILE]` lints a pack the way the session loads it.
+(define* (check-panes-file #:optional (path ".shift/panes.scm"))
+  (map (lambda (pane)
+         (cons (json-object-ref pane "name")
+               (length (json-array-items (json-object-ref pane "rows")))))
+       (json-array-items (panes-pack->json (bounded-read path)))))
 (define (resolve-presentation prefs)
   (let* ((name (json-object-ref prefs "theme" "acid")) (path (find-pack name))
          (text (bounded-read path))
@@ -176,7 +217,7 @@
       (list (if (and project (null? own)) (merge-objects merged (json-object (cons "panes" (cdr project)))) merged)
             path text))))
 (define (panes-file-changed?)
-  (let ((path (and project-dir (string-append project-dir "/panes.json"))))
+  (let ((path (and project-dir (string-append project-dir "/panes.scm"))))
     (if (and path (file-exists? path))
         (not (equal? (bounded-read path) panes-text))
         (and panes-text #t))))

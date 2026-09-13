@@ -789,7 +789,7 @@ class Interaction(unittest.TestCase):
     def test_completion_filter_arguments_escape_palette_and_mouse(self):
         for key in '/mo':self.t.key(key)
         self.t.draw()
-        self.assertEqual([c[0] for c in self.t.completion_choices],['/mode','/motion','/model'])
+        self.assertEqual([c[0] for c in self.t.completion_choices],['/mode','/motion','/mouse','/model'])
         self.t.key('\t');self.assertEqual(self.m.draft,'/mode')
         self.t.child.ui.assert_not_called()
         for key in ' a':self.t.key(key)
@@ -1503,6 +1503,24 @@ class TerminalColors(unittest.TestCase):
             terminal.sync_terminal(True);self.assertEqual(len(writes),3)
         m.draft='/terminal on';terminal.key('\n')
         terminal.child.ui.assert_called_once_with({'action':'patch','patch':{'terminal_colors':True}})
+
+
+class MouseCapture(unittest.TestCase):
+    def test_mouse_preference_releases_and_restores_tracking(self):
+        terminal=terminal_view(24,80,Mock());m=terminal.model
+        writes=[]
+        with patch.object(tui.sys,'stdout',Mock(write=writes.append,flush=lambda:None)), \
+             patch.object(tui.curses,'mousemask',Mock(),create=True), patch.object(tui.curses,'mouseinterval',Mock(),create=True):
+            terminal.mouse_capable=True;terminal.mouse_enabled=True
+            terminal.sync_mouse(False)
+            self.assertFalse(terminal.mouse_enabled);self.assertIn('\x1b[?1000l',writes[-1])
+            terminal.sync_mouse(False);self.assertEqual(len(writes),1)
+            terminal.sync_mouse(True)
+            self.assertTrue(terminal.mouse_enabled);self.assertIn('\x1b[?1000h',writes[-1])
+            terminal.sync_mouse(True);self.assertEqual(len(writes),2)
+        m.draft='/mouse off';terminal.key('\n')
+        terminal.child.ui.assert_called_once_with({'action':'patch','patch':{'mouse':False}})
+        self.assertIn('/mouse',tui.suggestions('/mou',[],[],[],[],[])[0])
 
 
 class TerminfoRepeat(unittest.TestCase):

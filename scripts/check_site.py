@@ -12,7 +12,8 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
-PUBLIC_FILES = {"index.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES
+PAGES = ("index.html", "panes.html")
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
 
@@ -63,35 +64,51 @@ def check():
 
     texts = {name: (SITE / name).read_text(encoding="utf-8") for name in PUBLIC_FILES}
     for name, text in texts.items():
-        if re.search(r"localhost|127\.0\.0\.1|/Users/|/home/|\.shift/|\.env\b", text):
+        if re.search(r"localhost|127\.0\.0\.1|/Users/|/home/|\.shift/(?!panes\.scm)|\.env\b", text):
             errors.append(f"Local/private reference in public file: {name}")
-    page = Page()
-    page.feed(texts["index.html"])
-    errors.extend(page.errors)
-    if page.headings != 1:
-        errors.append("The page must have exactly one h1.")
-    for ref in page.references:
-        if ref not in page.ids:
-            errors.append(f"Missing HTML control/label target: {ref}")
+    pages = {}
+    for name in PAGES:
+        page = Page()
+        page.feed(texts[name])
+        pages[name] = page
+        errors.extend(f"{name}: {error}" for error in page.errors)
+        if page.headings != 1:
+            errors.append(f"{name} must have exactly one h1.")
+        for ref in page.references:
+            if ref not in page.ids:
+                errors.append(f"{name}: missing HTML control/label target: {ref}")
 
-    for tag, link in page.links:
-        url = urlsplit(link)
-        if url.scheme or url.netloc:
-            if tag != "a" or url.scheme != "https" or url.hostname != "github.com":
-                errors.append(f"Nonlocal asset or unexpected external link: {link}")
+    for name, page in pages.items():
+        for tag, link in page.links:
+            url = urlsplit(link)
+            if url.scheme or url.netloc:
+                if tag != "a" or url.scheme != "https" or url.hostname != "github.com":
+                    errors.append(f"{name}: nonlocal asset or unexpected external link: {link}")
+                    continue
+                prefix = "/thrashr888/shift/blob/main/"
+                if url.path.startswith(prefix):
+                    path = ROOT / unquote(url.path.removeprefix(prefix))
+                    if not path.is_file() or not path.resolve().is_relative_to(ROOT):
+                        errors.append(f"{name}: repository documentation target missing: {link}")
                 continue
-            prefix = "/thrashr888/shift/blob/main/"
-            if url.path.startswith(prefix):
-                path = ROOT / unquote(url.path.removeprefix(prefix))
-                if not path.is_file() or not path.resolve().is_relative_to(ROOT):
-                    errors.append(f"Repository documentation target missing: {link}")
-            continue
-        if url.path.startswith("/") or ".." in Path(unquote(url.path)).parts:
-            errors.append(f"URL does not preserve the project-site base path: {link}")
-        elif url.path and url.path != "./" and url.path.removeprefix("./") not in PUBLIC_FILES:
-            errors.append(f"Missing local asset: {link}")
-        if url.fragment and url.fragment not in page.ids:
-            errors.append(f"Missing in-page anchor: {link}")
+            target = url.path.removeprefix("./")
+            if url.path.startswith("/") or ".." in Path(unquote(url.path)).parts:
+                errors.append(f"{name}: URL does not preserve the project-site base path: {link}")
+            elif target and target not in PUBLIC_FILES:
+                errors.append(f"{name}: missing local asset: {link}")
+            if url.fragment:
+                # Links across pages ("./#panes") resolve against the target page.
+                ids = pages[target or "index.html"].ids if (target or "index.html") in pages else set()
+                if url.fragment not in ids:
+                    errors.append(f"{name}: missing anchor: {link}")
+
+    # The published field list is the one ui.scm validates.
+    ui = (ROOT / "src/live-agent/ui.scm").read_text(encoding="utf-8")
+    block = re.search(r"\(define pane-fields '\((.*?)\)\)", ui, re.DOTALL)
+    declared = re.findall(r'"([a-z_.]+)"', block.group(1)) if block else []
+    published = re.findall(r"<tr><td>([a-z_.]+)</td>", texts["panes.html"])
+    if declared != published:
+        errors.append(f"panes.html fields drift from ui.scm: declared={declared}, published={published}")
 
     if re.search(r"@import\b|url\s*\(", texts["styles.css"], re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")
@@ -111,4 +128,4 @@ if __name__ == "__main__":
         for failure in failures:
             print(f"site: {failure}", file=sys.stderr)
         sys.exit(1)
-    print("Site checks passed: allowlisted public files, relative assets, valid anchors, local-only demo, current Ghostty themes.")
+    print("Site checks passed: allowlisted public files, relative assets, valid anchors, local-only demo, current Ghostty themes, current pane fields.")

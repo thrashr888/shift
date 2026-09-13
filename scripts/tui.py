@@ -34,14 +34,15 @@ KEY_SEQUENCES = {
 ENUMS = {
     '/mode':MODES, '/brand':('replace','subtitle','none'), '/place':('left','right','top','bottom','modal'),
     '/sidebar':('auto','on','off'), '/density':('compact','comfortable'), '/border':('thin','heavy','double','none'),
-    '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'), '/terminal':('on','off'),
+    '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'), '/terminal':('on','off'), '/mouse':('on','off'),
     '/ui':('get','undo','reload','code-reload','save user','save project'),
 }
 COMMANDS = {
     '/theme':'Cycle theme, or choose a name', '/mode':'Execution policy', '/name':'Personal identity',
     '/brand':'Wordmark style', '/place':'Inspector position', '/sidebar':'Inspector visibility',
     '/density':'Transcript spacing', '/border':'Frame style', '/motion':'Working animation',
-    '/terminal':'Sync terminal colors to the theme', '/pane':'Run a user-owned pane (run NAME [ROW])',
+    '/terminal':'Sync terminal colors to the theme', '/mouse':'Mouse capture; off keeps the terminal\'s own selection',
+    '/pane':'Run a user-owned pane (run NAME [ROW])',
     '/copy':'Copy the last reply to the clipboard (or the N-th from last)',
     '/ui':'Live presentation settings', '/work':'Automatic work display', '/help':'Session command help',
     '/model':'Inspect or choose a model', '/context':'Context usage and limit', '/settings':'Session settings',
@@ -292,7 +293,7 @@ class Model:
     def __init__(self):
         self.config = dict(theme='acid', identity=os.environ.get('USER', 'shift'), branding='subtitle',
                            wordmark=['shift ///'], sidebar='auto', placement='right', density='comfortable', border='thin',
-                           ascii=False, metrics=True, motion=True, terminal_colors=True, background='#170626', foreground='#f4edff', accent='#b6ff00',
+                           ascii=False, metrics=True, motion=True, terminal_colors=True, mouse=True, background='#170626', foreground='#f4edff', accent='#b6ff00',
                            secondary='#45f6ff', muted='#ae7deb', panel='#1e0c32',
                            positive='#64fff2', negative='#ff6588',
                            added_background='#074e4a', removed_background='#45152f',
@@ -580,14 +581,8 @@ class Terminal:
         try: curses.curs_set(1)
         except curses.error: pass
         self.mouse_enabled=False
-        if os.environ.get('TERM','').startswith(('xterm','screen','tmux','rxvt')) or curses.tigetstr('kmous'):
-            mask=sum(getattr(curses,name,0) for name in ('BUTTON1_PRESSED','BUTTON1_RELEASED','BUTTON1_CLICKED',
-                                                       'BUTTON4_PRESSED','BUTTON5_PRESSED'))
-            curses.mouseinterval(0)
-            curses.mousemask(mask)
-            sys.stdout.write('\x1b[?1000;1006;1007s\x1b[?1007l\x1b[?1000h\x1b[?1006h')
-            sys.stdout.flush()
-            self.mouse_enabled=True
+        self.mouse_capable=bool(os.environ.get('TERM','').startswith(('xterm','screen','tmux','rxvt')) or curses.tigetstr('kmous'))
+        self.sync_mouse(True)
 
     def init_interactions(self):
         self.reloader=None
@@ -603,11 +598,27 @@ class Terminal:
         self.palette_draft=None
         self.last_press=None
         self.mouse_enabled=False
+        self.mouse_capable=False
         self.acs=False
         self.unicode=True
         self.scroll_limit=0
         self.panel_limits={}
         self.key_sequences=dict(KEY_SEQUENCES)
+
+    def sync_mouse(self,enabled):
+        # The `mouse` preference decides who gets clicks and the wheel: Shift
+        # (tabs, rows, copy labels, scrolling) or the terminal's own selection
+        # and scrollback. /mouse off releases tracking live; on takes it back.
+        if enabled and self.mouse_capable and not self.mouse_enabled:
+            mask=sum(getattr(curses,name,0) for name in ('BUTTON1_PRESSED','BUTTON1_RELEASED','BUTTON1_CLICKED',
+                                                       'BUTTON4_PRESSED','BUTTON5_PRESSED'))
+            curses.mouseinterval(0)
+            curses.mousemask(mask)
+            sys.stdout.write('\x1b[?1000;1006;1007s\x1b[?1007l\x1b[?1000h\x1b[?1006h')
+            sys.stdout.flush()
+            self.mouse_enabled=True
+        elif not enabled:
+            self.stop_mouse()
 
     def stop_mouse(self):
         if self.mouse_enabled:
@@ -1490,6 +1501,7 @@ class Terminal:
 
     def draw(self):
         self.colors()
+        self.sync_mouse(self.model.config.get('mouse',True) is not False)
         m=self.model;c=m.config;rows,cols=self.screen.getmaxyx()
         if self.draw_size!=(rows,cols) or self.draw_revision!=m.revision:
             self.screen.clearok(True)
@@ -1622,6 +1634,9 @@ class Terminal:
         if name=='/terminal':
             if value not in ('on','off'):raise ValueError('use /terminal on|off')
             self.child.ui({'action':'patch','patch':{'terminal_colors':value=='on'}});return True
+        if name=='/mouse':
+            if value not in ('on','off'):raise ValueError('use /mouse on|off')
+            self.child.ui({'action':'patch','patch':{'mouse':value=='on'}});return True
         if name in keys:
             self.child.ui({'action':'patch','patch':{keys[name]:value}});return True
         if name=='/motion':

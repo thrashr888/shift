@@ -410,12 +410,27 @@ Output shows under the row and in the Log tab, bounded like other runs. Panes
 never load Python, and the agent's `ui` tool can edit them only under the same
 validation as colors.
 
-A project ships its panes in `.shift/panes.json`, a JSON array of panes that
-loads whenever Shift runs in that folder and reloads within half a second when
-it changes; this repository's own file adds a SHIFT tab with checkout health,
+A project ships its panes in `.shift/panes.scm`, a pane pack: one Scheme data
+form, read like a theme pack and never evaluated, holding up to four
+`(pane NAME TITLE ROW ...)` forms whose rows are `(text "...")`,
+`(field session.model)` or `(command "git" "status" "--short")`. It loads
+whenever Shift runs in that folder and reloads within half a second when it
+changes; this repository's own file adds a SHIFT tab with checkout health,
 `git status`, `git log` and `make test`. The file is committable (`.gitignore`
 keeps the rest of `.shift/` private). Explicit `panes` preferences, for example
-from `/ui`, take precedence over the file; an invalid file is reported and skipped.
+from `/ui`, take precedence over the file and carry the same panes as JSON; an
+invalid file is reported and skipped. `./bin/shift --check-panes [FILE]` lints
+a pack the way a session loads it. The grammar and field list are published at
+<https://thrashr888.github.io/shift/panes.html>.
+
+```scheme
+;; .shift/panes.scm
+((pane "shift" "SHIFT"
+   (text "Checkout health")
+   (field source.loaded)
+   (command "git" "status" "--short")
+   (command "make" "test")))
+```
 
 ```text
 /ui {"action":"patch","patch":{"panes":[{"name":"shift","title":"SHIFT","rows":[
@@ -437,8 +452,12 @@ they cannot change settings or approve anything.
 one before, and clicking a `SHIFT` role label copies that block. The text goes
 out as OSC 52, which Ghostty, kitty, iTerm2 and tmux forward to the system
 clipboard even over SSH, and also through `pbcopy`, `xclip` or `wl-copy` when
-one is installed. Mouse tracking keeps drag-selection for the terminal's own
-modified-drag convention.
+one is installed. While Shift tracks the mouse for tabs, rows and the wheel,
+the terminal still selects natively with its modifier held: Shift in Ghostty,
+kitty, WezTerm and xterm, Option in iTerm2. `/mouse off` (the `mouse`
+preference) releases tracking so plain drag-selection, right-click and the
+terminal's own scrollback work as usual, and clicks inside Shift stop; `/mouse
+on` takes them back. Both take effect live.
 
 **Log.** Every `run` tool call appends its command, exit status, duration and
 combined output, bounded to 300 lines or 16 KiB per run with the ledger log path

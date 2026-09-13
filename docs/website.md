@@ -41,6 +41,16 @@ the generator. Run it after changing a pack; `--check` (also run by
 files drift. Users copy a file into `~/.config/ghostty/themes/` and set
 `theme = shift-NAME`. The site's card swatches repeat the file's colors.
 
+## Pane pack reference
+
+`site/panes.html` is the published reference for `.shift/panes.scm`: the
+grammar, the field list, how commands run and how packs load. The index's
+"Bring your own panes" section links to it. The field table must match
+`pane-fields` in `src/live-agent/ui.scm`; `check_site.py` fails when they
+drift, and it allows the literal `.shift/panes.scm` path while still rejecting
+other state-directory references. Keep the example on both pages in step with
+this repository's own `.shift/panes.scm`.
+
 ## Check and preview
 
 ```sh

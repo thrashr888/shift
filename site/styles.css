@@ -167,6 +167,21 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
 .install-example .eyebrow { display: block; margin-bottom: .5rem; }
 .install-example p { color: var(--muted); font-size: .875rem; margin: 0; }
 :root[data-theme="qdos"] .theme-card, :root[data-theme="qdos"] .install-example { border: 3px double var(--line); }
+.panes-section { margin-top: 6rem; padding-top: 3rem; border-top: 1px solid var(--line); }
+.panes-section .text-link { display: inline-block; margin-top: 1rem; }
+.reference { padding-block: 3rem 4rem; max-width: 76ch; }
+.reference-intro h1 { font-size: clamp(2.75rem, 5vw, 4.5rem); margin-bottom: 1.5rem; }
+.reference .lede { font-size: 1.05rem; color: var(--muted); margin: 0 0 1rem; }
+.reference-block { margin-top: 3rem; }
+.reference-block h2 { font-size: 1.5rem; margin-bottom: 1rem; }
+.reference-block p { color: var(--muted); font-size: .9375rem; margin: 0 0 1rem; }
+.reference-block pre { background: var(--panel); border: 1px solid var(--line); padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+.reference .plain { padding-left: 1.25rem; margin: 0 0 1rem; color: var(--muted); font-size: .9375rem; }
+.reference .plain li { margin-bottom: .5rem; }
+.fields { width: 100%; border-collapse: collapse; font-size: .875rem; }
+.fields th, .fields td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.fields th { font: .75rem/1.6 var(--mono); text-transform: uppercase; color: var(--muted); }
+.fields td:first-child { font-family: var(--mono); white-space: nowrap; }
 .live-section { margin-top: 6rem; padding-top: 3rem; border-top: 1px solid var(--line); }
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 3rem; border-block: 1px solid var(--line); }
 .principles article { padding: 2rem; border-right: 1px solid var(--line); display: flex; flex-direction: column; }

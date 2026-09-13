@@ -70,18 +70,29 @@
   (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "field" "env.HOME")))))))))
 (test-error "pane commands are argv lists" #t
   (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "command" "rm -rf /")))))))))
-(call-with-output-file (string-append root "/project/panes.json")
-  (lambda (p) (display "[{\"name\":\"proj\",\"title\":\"PROJ\",\"rows\":[{\"text\":\"from the project\"}]}]" p)))
+(call-with-output-file (string-append root "/project/panes.scm")
+  (lambda (p) (display ";; project panes\n((pane \"proj\" \"PROJ\" (text \"from the project\") (field session.model) (command \"git\" \"status\")))" p)))
 (patch (cons "panes" (json-array)))
-(test-equal "a project's panes.json loads when the session has no panes of its own" "proj"
+(test-equal "a project's panes.scm loads when the session has no panes of its own" "proj"
   (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))
+(test-equal "pane pack rows become the same JSON the preference validates"
+  "{\"name\":\"proj\",\"title\":\"PROJ\",\"rows\":[{\"text\":\"from the project\"},{\"field\":\"session.model\"},{\"command\":[\"git\",\"status\"]}]}"
+  (json-write (car (json-array-items (json-object-ref (config) "panes")))))
+(test-equal "check-panes-file summarizes a valid pack" '(("proj" . 3)) (check-panes-file (string-append root "/project/panes.scm")))
 (patch (cons "panes" (json-array pane)))
 (test-equal "explicit panes win over the project file" "shift"
   (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))
 (patch (cons "panes" (json-array)))
-(call-with-output-file (string-append root "/project/panes.json") (lambda (p) (display "[{\"name\":\"log\"}]" p)))
-(test-error "an invalid project panes.json is rejected, not loaded" #t (ui-action! (json-object (cons "action" "reload"))))
-(delete-file (string-append root "/project/panes.json"))
+(call-with-output-file (string-append root "/project/panes.scm") (lambda (p) (display "((pane \"log\" \"L\" (text \"x\")))" p)))
+(test-error "an invalid project panes.scm is rejected, not loaded" #t (ui-action! (json-object (cons "action" "reload"))))
+(test-error "pane packs are data: no evaluation, no unknown rows" #t (panes-pack->json "((pane \"x\" \"X\" (eval (system \"true\"))))"))
+(test-error "field names are symbols from the known list" #t (panes-pack->json "((pane \"x\" \"X\" (field env.HOME)))"))
+(test-error "a pane pack is one form" #t (panes-pack->json "((pane \"x\" \"X\" (text \"a\"))) (pane \"y\" \"Y\" (text \"b\"))"))
+(delete-file (string-append root "/project/panes.scm"))
+(patch (cons "mouse" #f))
+(test-equal "mouse capture is a boolean preference" #f (json-object-ref (config) "mouse"))
+(test-error "mouse capture must be boolean" #t (patch (cons "mouse" "off")))
+(patch (cons "mouse" #t))
 (patch (cons "terminal_colors" #t))
 (test-equal "terminal color sync is a boolean preference" #t (json-object-ref (config) "terminal_colors"))
 (test-error "terminal color sync must be boolean" #t (patch (cons "terminal_colors" "yes")))
