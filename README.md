@@ -213,6 +213,7 @@ before it activates. Every model tool execution crosses the process-owned mode
 and approval policy; prompt keywords never authorize mutations. This is a
 constrained language surface, not a resource or semantic sandbox.
 
+[docs/index.md](docs/index.md) lists every document and the open work.
 See [daily-driver usage](docs/daily-driver.md) for saved settings, history, Claude,
 approval modes, context budgets, and the live localhost MCP endpoint.
 

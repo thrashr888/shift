@@ -1,7 +1,7 @@
 # Gaps between this spike and Pi
 
-Snapshot: 2026-09-04, rows refreshed 2026-09-08 after the daily-driver and
-coding-workflow slices. “Pi” means the current Pi coding agent maintained at
+Snapshot: 2026-09-04, rows refreshed 2026-09-13 after the TUI, receipt, retry,
+evals and pane-pack slices. “Pi” means the current Pi coding agent maintained at
 [`earendil-works/pi`](https://github.com/earendil-works/pi) (the former
 `badlogic/pi-mono` URL redirects there).
 
@@ -13,16 +13,16 @@ observability. The useful comparison is therefore asymmetric.
 
 | Gap | Why it matters |
 | --- | --- |
-| Coding workflow depth | `read`, `rg`, `write`, `edit`, `apply_patch`, `status`, `diff`, and an argv-only `run` with timeouts now cover the loop, with diff previews at approval, a hash-gated `/undo`, and `/recover restore`. Still missing: an end-of-turn receipt, diagnostics integration, and background jobs. |
+| Coding workflow depth | `read`, `rg`, `write`, `edit`, `apply_patch`, `status`, `diff`, and an argv-only `run` with timeouts now cover the loop, with diff previews at approval, a hash-gated `/undo`, and `/recover restore`. The end-of-turn receipt landed on September 9 with a JSON form. Still missing: diagnostics integration and background jobs. |
 | Session lifecycle depth | Named conversations now resume, compact, cancel, fork fixed checkpoints, and expose explicit interrupted-tool and interrupted-mutation recovery, but there is no share/export workflow or exact mid-process continuation. |
-| Provider breadth | Native Ollama, streaming OpenAI Chat Completions, and a native Claude adapter with `/model`, `/effort`, `/fast`, and `/thinking` are still behind Pi’s provider catalog, authentication, retries, and multimodal handling. |
-| Terminal product | There is no rich TUI, multiline editor, tool-call renderer, queueing, keybindings, themes, settings UI, or model picker. |
+| Provider breadth | Native Ollama, streaming OpenAI Chat Completions, and a native Claude adapter with `/model`, `/effort`, `/fast`, `/thinking` and bounded retries with backoff are still behind Pi’s provider catalog, authentication, and multimodal handling. |
+| Terminal product | The curses TUI is the interactive default, with presentation packs and themes, a model picker, a session switcher, a run log, user-owned pane packs, a command palette, clipboard copy, terminal color sync, and live reload of presentation code. Still missing: a multiline editor, prompt queueing, and rendered tool-call cards. |
 | Extension ecosystem | Named Scheme artifacts can now be created, listed, loaded, disabled, and exported, but there are no skills, prompt templates, dependencies, package registry, lifecycle/event API, custom UI, signatures, or compatibility metadata. |
-| Embedding modes | There is no print/JSON mode, RPC protocol, SDK, web UI, or supported library boundary. |
-| Long-session behavior | Boundary-safe model compaction, a token-budget preflight with `/context`, provider-reported usage on exit, cancellation, and interrupted-tool records now exist, but there is no provider retry/backoff, deterministic replay, or quality evaluator for summaries. |
+| Embedding modes | `--print` with a JSON receipt and a localhost MCP server with read-mostly tools exist, and pane packs are a published data API. There is no RPC protocol, SDK, web UI, or supported library boundary. |
+| Long-session behavior | Boundary-safe model compaction, a token-budget preflight with `/context`, provider-reported usage on exit, cancellation, interrupted-tool records, and provider retries with backoff now exist, but there is no deterministic replay or quality evaluator for summaries. |
 | Production hardening | The Scheme evaluator’s authority surface needs a deeper audit, fuzzing, resource limits, symlink/race analysis, secret redaction, trace retention controls, and cross-platform testing. |
 | Mutation lifecycle | Project-file mutations are now previewed as diffs, journaled with pre-images, and undoable. Live-image state can be exported as a named artifact and disabled, but there is still no reviewed diff for live patches, promotion into base source, migration, signature, or replay guarantee. |
-| Performance evidence | There are no benchmarks showing that live Scheme changes are faster or more reliable than editing and reloading an extension. |
+| Performance evidence | The evals driver runs dogfood tasks and a 25-instance SWE-bench slice (16 of 25 resolved on September 8), but nothing yet compares live Scheme repair against editing and reloading an extension. |
 
 Pi already covers most of that surface: four run modes, broad providers,
 `read`/`write`/`edit`/`bash`, session trees and compaction, extensions, skills,
@@ -39,10 +39,10 @@ documentation.
 | Transactional code generations | Pi can hot-reload extensions, but a reload replaces the extension/resource runtime. It does not expose a first-class, immutable generation with a fingerprint attached to every turn and tool call. |
 | Granular live rollback | Pi’s session tree can branch conversation history, but it is not a rollback stack for an individual behavior definition. This harness can reject an invalid patch atomically or return to the prior code generation. |
 | In-session constrained language | Pi extensions are TypeScript modules with normal process authority. This harness evaluates a curated Scheme surface with no direct filesystem, process, network, module-loading, or ambient `eval` bindings. |
-| Stable capability ceiling | Pi explicitly has no built-in permission system; extensions run with the user process’s permissions. Here the live image cannot widen shell policy beyond `ask`, and file reads cross a stable project-root boundary. This is promising, not yet a security proof. |
+| Stable capability ceiling | Pi explicitly has no built-in permission system; extensions run with the user process’s permissions. Here the live image cannot change the tool policy (manual, plan, autopilot) or the run allowlist, and file reads cross a stable project-root boundary. This is promising, not yet a security proof. |
 | Generation-attributed diagnosis | Pi has a vendor-neutral telemetry contract, but it deliberately ships without an exporter. It also has no equivalent code-generation identity to correlate a changed function with before/after answers. This harness records the selector, selected paths, generation, result, and tool/LLM tree locally and in Phoenix. |
 | Direct behavior patching by the model | Pi can ask the model to edit an extension and can arrange a follow-up reload, but the documented reload flow keeps the running handler in its old call frame. Here `live_eval` validates and activates a single function change for the next turn without rewriting a source file. |
-| Built-in subagents and plan mode | Pi deliberately omits these and expects packages to add them. This harness now has one generation-pinned supervised child with linked traces and a durable narrower authority ceiling, but not parallel fan-out, isolated workspaces, or a plan-mode product. |
+| Built-in subagents and plan mode | Pi deliberately omits these and expects packages to add them. This harness now has one generation-pinned supervised child with linked traces, a durable narrower authority ceiling, and a plan mode that permits only read-only tools, but not parallel fan-out or isolated workspaces. |
 
 Sources: Pi’s
 [`extension reload semantics`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md),

@@ -28,6 +28,16 @@ Project-local settings/history, Claude and model controls, normalized tool histo
 deterministic approval modes, context budget preflight, and shared HTTP/stdio MCP
 are implemented and validated. See [usage and validation](daily-driver.md).
 
-Next slice: richer diff/undo and test interactions, TUI, dynamic skills and project
-trace recall. Model-based approval execution and URL/file packs remain gated on
-that foundation and their evaluations. No memory database or MCP client was added.
+## Since then (through September 13)
+
+The coding workflow (`status`, `diff`, `apply_patch`, `run`, `/undo`, the
+receipt), print mode with `--allow-run` and `--receipt`, provider retries, the
+evals driver, and the curses TUI as the interactive default all shipped. The
+policy modes were renamed to manual, plan and autopilot on September 12; `accept`
+and `auto` remain accepted as aliases. The TUI added themes, a model picker, a
+session switcher, a run log, pane packs, MCP peers, terminal color sync and
+clipboard copy.
+
+Still open from this plan: dynamic skills, project trace recall, file/URL packs,
+an MCP client, and model-based approval execution, which stays gated on shadow
+evaluation. No memory database was added.

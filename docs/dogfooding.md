@@ -5,7 +5,9 @@ is ready to replace a mature coding agent. The safe shape is a two-level loop:
 
 1. Codex or the user is the supervisor and starts a durable `dogfood` session.
 2. The inner agent uses `read`, `rg`, `write`, and exact `edit` inside this repo.
-3. Shell still pauses for an explicit one-key approval.
+3. In manual mode every tool that is not an allowlisted `run` pauses for a
+   one-key approval; plan mode permits only reads; autopilot allows everything
+   and is the mode to use once the run allowlist is trusted.
 4. Live-image changes are validated and hot-activate for the next turn.
 5. Stable-runtime changes are only file edits. They do not enter the running
    authority boundary; the supervisor reviews the diff, runs `make check`, and
@@ -19,7 +21,7 @@ Start directly:
 make dogfood
 ```
 
-Or, from Codex, use the project MCP tools to start session `dogfood` in `auto`
+Or, from Codex, use the project MCP tools to start session `dogfood` in `manual`
 mode, send a task, inspect its output, handle approvals explicitly, and resume
 the same name after a restart. Multiple named sessions can test different live
 prompts or models concurrently without mixing conversations or trace identity.
@@ -37,19 +39,21 @@ granting the inner model authority to accept its own runtime changes.
 
 - `status`, `diff`, `apply_patch`, and `run` now replace the shell for the
   inspect-change-test loop, with diff previews at approval, `/undo`, and
-  `/recover restore`. There is still no end-of-turn receipt or diagnostics
-  integration, so the supervisor reconstructs outcomes from tool output and traces.
+  `/recover restore`, and the end-of-turn receipt records changed files,
+  commands, test outcomes and tokens. There is still no diagnostics integration,
+  so test results are exit status plus bounded output.
 - Long sessions now compact into a traced summary and can search pre-compaction
-  trace evidence, and checkpoints can fork into generation-pinned children, but
-  there is no token-budget policy, summary-quality evaluator, lossless
-  event-sourced trajectory, or isolated workspace branch.
+  trace evidence, checkpoints can fork into generation-pinned children, and
+  `turn-token-budget` ends a runaway turn with a recorded reason, but there is
+  no summary-quality evaluator, lossless event-sourced trajectory, or isolated
+  workspace branch.
 - Interrupted tools leave an explicit write-ahead record with manual
   retry/discard, and interrupted file mutations can be put back from their
   recorded pre-images. There is no exact mid-process continuation or
   deterministic replay, so a mutating retry may still be ambiguous.
-- A supervisor can wait for or cancel one child, but there is no general
-  background job model, provider retry, model fallback, parallel fan-out, or
-  concurrent tool execution.
+- A supervisor can wait for or cancel one child and providers retry with
+  backoff, but there is no general background job model, model fallback,
+  parallel fan-out, or concurrent tool execution.
 - Stable-runtime upgrades need the versioned supervisor/handoff described in
   `docs/live-updates.md`; only the user-owned live image updates in process.
 - The Scheme evaluator and filesystem confinement need deeper adversarial tests,
