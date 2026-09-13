@@ -55,6 +55,24 @@
 (patch (cons "background" "#170626") (cons "theme" "blueprint"))
 (test-equal "RGB colors are validated preferences" "#170626" (json-object-ref (config) "background"))
 (test-equal "explicit placement still wins over the Blueprint bottom preset" "left" (json-object-ref (config) "placement"))
+(define pane (json-object (cons "name" "shift") (cons "title" "SHIFT")
+  (cons "rows" (json-array (json-object (cons "text" "Checkout"))
+                           (json-object (cons "field" "session.name"))
+                           (json-object (cons "command" (json-array "git" "status" "--short")))))))
+(patch (cons "panes" (json-array pane)))
+(test-equal "user-owned panes are validated preferences" "shift"
+  (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))
+(test-error "pane names cannot shadow built-in tabs" #t
+  (patch (cons "panes" (json-array (json-object (cons "name" "log") (cons "title" "L") (cons "rows" (json-array (json-object (cons "text" "x")))))))))
+(test-error "pane rows accept only text, field or command" #t
+  (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "python" "code")))))))))
+(test-error "pane fields come from the known list" #t
+  (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "field" "env.HOME")))))))))
+(test-error "pane commands are argv lists" #t
+  (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "command" "rm -rf /")))))))))
+(patch (cons "terminal_colors" #t))
+(test-equal "terminal color sync is a boolean preference" #t (json-object-ref (config) "terminal_colors"))
+(test-error "terminal color sync must be boolean" #t (patch (cons "terminal_colors" "yes")))
 (test-error "short RGB rejected" #t (patch (cons "accent" "#abc")))
 (test-error "nonhex RGB rejected" #t (patch (cons "accent" "#oops!!")))
 (ui-stop!)

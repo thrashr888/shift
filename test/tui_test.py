@@ -484,7 +484,7 @@ class Bridge(unittest.TestCase):
         self.env=patch.dict(os.environ,{'XDG_CONFIG_HOME':str(self.path/'config')})
         self.env.start()
         self.args=['--agent',str(ROOT/'test/session-agent.scm'),'--state-dir',str(self.path/'state'),
-                   '--session','test','--no-watch']
+                   '--session','test','--no-watch','--no-mcp']
         self.child=tui.Child(self.args);self.model=tui.Model()
         self.wait(lambda:self.model.ready)
 
@@ -524,6 +524,51 @@ class Bridge(unittest.TestCase):
         terminal.request_sessions()
         self.wait(lambda:self.model.sessions['items'] and self.model.command_pending is None)
         self.assertEqual({i['name']:i['status'] for i in self.model.sessions['items']},{'test':'idle','other':'current'})
+
+    def test_pane_commands_run_only_when_allowlisted_and_reach_pane_and_log(self):
+        terminal=terminal_view(40,128,self.child);terminal.model=self.model
+        self.child.ui({'action':'patch','patch':{'panes':[{'name':'shift','title':'SHIFT','rows':[{'field':'session.name'},{'command':['printf','pane says hi\\n']}]}]}})
+        self.wait(lambda:self.model.config.get('panes'))
+        self.assertEqual(terminal.tabs()[-1],'shift')
+        terminal.request_command('/pane run shift','Running pane shift','pane')
+        self.wait(lambda:self.model.command_pending is None)
+        self.assertIn('not allowlisted',self.model.notice);self.assertEqual(self.model.pane_output,{})
+        self.child.close()
+        self.child=tui.Child(self.args+['--allow-run','printf']);self.model=tui.Model();self.wait(lambda:self.model.ready)
+        terminal=terminal_view(40,128,self.child);terminal.model=self.model
+        self.wait(lambda:self.model.config.get('panes'))
+        terminal.request_command('/pane run shift','Running pane shift','pane')
+        self.wait(lambda:self.model.command_pending is None and self.model.pane_output.get('shift'))
+        entry=self.model.pane_output['shift'][1]
+        self.assertTrue(entry['ok']);self.assertEqual(entry['lines'],['pane says hi'])
+        self.assertEqual(self.model.runs[-1]['kind'],'pane');self.assertIn('Pane shift ran 1 command',self.model.notice)
+
+    def test_mcp_peers_are_listed_with_their_calls(self):
+        import socket,urllib.request
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
+        self.child.close()
+        self.child=tui.Child([a for a in self.args if a!='--no-mcp']+['--mcp-port',str(port)]);self.model=tui.Model();self.wait(lambda:self.model.ready)
+        self.assertEqual(self.model.session.get('mcp'),f'http://127.0.0.1:{port}/mcp')
+        def call(payload,session=None):
+            headers={'Content-Type':'application/json','Host':'127.0.0.1'}
+            if session:headers['Mcp-Session-Id']=session
+            request=urllib.request.Request(f'http://127.0.0.1:{port}/mcp',json.dumps(payload).encode(),headers)
+            with urllib.request.urlopen(request,timeout=10) as response:
+                return json.loads(response.read()),response.headers.get('Mcp-Session-Id')
+        body,session=call({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'claude-code','version':'2.1'}}})
+        self.assertEqual(body['result']['serverInfo']['name'],'shift');self.assertTrue(session)
+        self.wait(lambda:self.model.peers)
+        peer=next(iter(self.model.peers.values()));self.assertEqual((peer['name'],peer['version']),('claude-code','2.1'))
+        self.assertIn('Peer connected: claude-code',self.model.notice)
+        body,_=call({'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'shift_inspect','arguments':{'command':'/session'}}},session)
+        self.assertFalse(body['result']['isError'])
+        self.wait(lambda:peer['calls']==1)
+        self.assertEqual(peer['last'],'shift_inspect');self.assertEqual(self.model.runs[-1]['kind'],'peer')
+        self.assertIn('claude-code · shift_inspect /session',self.model.runs[-1]['command'])
+        body,_=call({'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'shift_prompt','arguments':{'text':'/context'}}},session)
+        self.assertTrue(body['result']['isError'])
+        self.wait(lambda:peer['calls']==2);self.assertFalse(self.model.runs[-1]['ok'])
 
     def test_live_preferences_resume_and_theme_save_reload(self):
         self.child.ui({'action':'patch','patch':{'identity':'thrashr888','branding':'replace'}})
@@ -1310,6 +1355,96 @@ class SessionSwitcher(unittest.TestCase):
         self.assertRaises(ValueError,terminal.switch_session,'../x')
         m.control('ready');m.draft='/session t';terminal.draw()
         self.assertEqual([c[0] for c in terminal.completion_choices],['/session task'])
+
+
+class UserPanes(unittest.TestCase):
+    PANE={'name':'shift','title':'SHIFT','rows':[{'text':'Checkout health'},{'field':'session.name'},{'field':'source.loaded'},
+                                                  {'command':['git','status','--short']},{'command':['make','test']}]}
+    def pane(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.config['panes']=[dict(self.PANE)]
+        m.source_identity={'process':{'label':'abc1234'},'loaded':{'label':'abc1234'},'presentation':'p'}
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.control('ready');m.panel_tab='shift';terminal.draw()
+        return terminal
+
+    def text(self,terminal):
+        return '\n'.join(terminal.screen.line(y) for y in range(40))
+
+    def test_pane_tab_renders_text_fields_and_clickable_commands(self):
+        terminal=self.pane();text=self.text(terminal)
+        self.assertEqual(terminal.tabs()[-1],'shift');self.assertIn('SHIFT',terminal.screen.line(5))
+        self.assertIn('Checkout health',text);self.assertIn('name: main',text);self.assertIn('loaded: abc1234',text)
+        self.assertIn('▶ git status --short · click to run',text)
+        row=next(r for r,a in terminal.hits if a==('pane','shift'))
+        terminal.pointer(row.x+3,row.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/pane run shift','request_id':1})
+        terminal.model.event({'type':'session-command-result','value':{'request_id':1,'ok':False,'error':'pane command is not allowlisted; /allow-run "make test" first'}})
+        self.assertIn('not allowlisted',terminal.model.notice)
+
+    def test_pane_output_fills_the_pane_and_the_log(self):
+        terminal=self.pane();m=terminal.model
+        head='run git status --short · exit 0 · 0.1s · 2 lines · log runs/run-1-1.log'
+        m.event({'type':'pane-output','value':{'pane':'shift','index':3,'argv':['git','status','--short'],'ok':True,
+                 'output':head+'\n M scripts/tui.py\n?? notes.txt','truncated':False,'at':'17:20'}})
+        terminal.draw();text=self.text(terminal)
+        self.assertIn('▶ git status --short · exit 0 · 17:20',text);self.assertIn('   M scripts/tui.py',text)
+        self.assertIn('▶ make test · click to run',text)
+        m.panel_tab='log';terminal.draw();text=self.text(terminal)
+        self.assertIn('[pane] exit 0',text);self.assertIn('git status --short',text)
+        m.draft='/pane ';terminal.draw()
+        self.assertEqual([c[0] for c in terminal.completion_choices],['/pane run shift'])
+        m.draft='/pane run nope';self.assertRaises(ValueError,terminal.local,m.draft)
+
+    def test_pane_labels_abbreviate_when_six_tabs_do_not_fit(self):
+        terminal=self.pane();terminal.screen.size=(30,96);terminal.draw()
+        strip=terminal.screen.line(5)
+        self.assertIn('WORK DIFF SESS MODE LOG SHIF',strip)
+        terminal.model.config.update(theme='qdos',placement='left');terminal.screen.size=(40,128);terminal.draw()
+        strip=terminal.screen.line(3)
+        self.assertIn('WORK DIFF SESS MODE LOG SHIF ',strip);self.assertNotIn('SHIdemo',strip)
+        self.assertIn('main | demo',strip)
+
+
+class Peers(unittest.TestCase):
+    def test_peer_events_show_in_session_tab_and_log(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.control('ready')
+        m.event({'type':'peer','value':{'event':'connected','id':'ab12','name':'claude-code','version':'2.1'}})
+        self.assertIn('Peer connected: claude-code 2.1',m.notice)
+        m.event({'type':'peer','value':{'event':'call','id':'ab12','tool':'shift_inspect','ok':True,'summary':'/context'}})
+        m.event({'type':'peer','value':{'event':'call','id':'ab12','tool':'shift_prompt','ok':False,'summary':'busy'}})
+        m.panel_tab='session';m.event({'type':'sessions','value':{'current':'main','sessions':[{'name':'main','turns':1,'status':'current'}]}})
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('PEERS',text);self.assertIn('● claude-code 2.1',text);self.assertIn('2 calls · last shift_prompt',text)
+        m.panel_tab='log';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('[peer] ok',text);self.assertIn('claude-code · shift_inspect /context',text)
+        self.assertIn('[peer] error',text)
+
+
+class ChildArguments(unittest.TestCase):
+    def test_mcp_starts_by_default_and_respects_explicit_choices(self):
+        base=['--agent','a.scm','--session','s']
+        self.assertEqual(tui.child_arguments(base)[1:],['--watch','--mcp-port','7331',*base])
+        self.assertEqual(tui.child_arguments(base+['--no-mcp'])[1:],['--watch',*base,'--no-mcp'])
+        self.assertEqual(tui.child_arguments(['--mcp-port','7345',*base])[1:],['--watch','--mcp-port','7345',*base])
+
+
+class TerminalColors(unittest.TestCase):
+    def test_terminal_colors_preference_sends_osc_and_resets(self):
+        terminal=terminal_view(24,80,Mock());m=terminal.model
+        writes=[]
+        with patch.object(tui.sys,'stdout',Mock(write=writes.append,flush=lambda:None)):
+            terminal.sync_terminal(True)
+            self.assertEqual(writes,['\x1b]11;#170626\x1b\\\x1b]10;#f4edff\x1b\\\x1b]12;#b6ff00\x1b\\'])
+            terminal.sync_terminal(False)
+            self.assertEqual(writes[-1],'\x1b]111\x1b\\\x1b]110\x1b\\\x1b]112\x1b\\')
+            terminal.sync_terminal(False);self.assertEqual(len(writes),2)
+            m.config['background']=18
+            terminal.sync_terminal(True);self.assertEqual(len(writes),3)
+        m.draft='/terminal on';terminal.key('\n')
+        terminal.child.ui.assert_called_once_with({'action':'patch','patch':{'terminal_colors':True}})
 
 
 class TerminfoRepeat(unittest.TestCase):

@@ -380,6 +380,13 @@ until you re-enter the tab or type `/model list`. Choosing another model of the
 current provider keeps its endpoint and key source, so a local OpenAI-compatible
 server stays selected; choosing another provider restores that provider's defaults.
 
+**Terminal colors.** `/terminal on` (the `terminal_colors` preference) makes the
+surrounding terminal follow the pack: default background, foreground and cursor
+color via OSC 11/10/12 whenever the theme changes, reset on exit or `/terminal off`.
+Ghostty, kitty and iTerm2 honor these; the setting is off by default because it
+recolors the whole tab, not only Shift's cells. The generated Ghostty themes remain
+the way to match the full 16-color palette.
+
 **Session.** Besides the current session, receipt, exact telemetry and source
 identity, the tab lists every durable session under the state directory with a
 status mark: `▶` current, `●` open in another process (its owner lock is held),
@@ -388,6 +395,34 @@ the list. Clicking an idle row, or `/session NAME` (Tab-completes), switches: th
 Guile owner of the current session checkpoints and exits, the same launch opens
 the other session, and the curses process, preferences and identity stay put.
 Busy turns, pending approvals and sessions open elsewhere refuse the switch.
+
+**User-owned panes.** A `panes` preference adds up to four tabs of your own,
+as data rather than code: each pane has a `name`, a `title`, and up to 24 rows
+of `text`, a live `field` (`session.name`, `session.model`, `usage.prompt`,
+`receipt.status`, `source.loaded` and the rest of the documented list), or a
+`command` argv. Command rows are clickable, and `/pane run NAME` runs every
+command row through the same `run` machinery as the agent's runs, but only when
+the session's run allowlist already permits it; otherwise the pane reports which
+`/allow-run` prefix is missing. Output shows under the row and in the Log tab,
+bounded like other runs. Panes live with the other presentation preferences
+(`/ui save project` shares them with a project), never load Python, and the
+agent's `ui` tool can edit them only under the same validation as colors.
+
+```text
+/ui {"action":"patch","patch":{"panes":[{"name":"shift","title":"SHIFT","rows":[
+  {"text":"Checkout health"},{"field":"source.loaded"},
+  {"command":["git","status","--short"]},{"command":["make","test"]}]}]}}
+```
+
+**Peers.** Every terminal session serves MCP for other clients at
+`http://127.0.0.1:7331/mcp`, falling forward to the next free port up to 7340
+when several sessions run; `--no-mcp` turns it off and `--mcp-port PORT` pins a
+port, which must then be free. The Session tab's PEERS section shows the endpoint.
+Each `initialize` answers with an `Mcp-Session-Id`; clients that send it back are
+listed in the Session tab's PEERS section with their name, version, call count
+and last tool, and every tool call they make lands in the Log tab as a `[peer]`
+entry with its outcome. Peers get the same four read-mostly tools as before;
+they cannot change settings or approve anything.
 
 **Log.** Every `run` tool call appends its command, exit status, duration and
 combined output, bounded to 300 lines or 16 KiB per run with the ledger log path
@@ -435,6 +470,8 @@ the cached identity. No inference request is made for these measurements.
 | Tab outside suggestions | Select Work, Diff, Session, Model or Log in a side pane/overlay |
 | Click a Model row or `/model PROVIDER/MODEL` | Switch models when idle; `/model list` refreshes the tab |
 | Click an idle Session row or `/session NAME` | Switch durable sessions when idle; running sessions are marked, not switchable |
+| Click a pane command or `/pane run NAME` | Run a user-owned pane's allowlisted commands |
+| `/terminal on` | Sync the terminal's default colors and cursor to the theme (`off` restores) |
 | Shift+Tab or click mode badge | Cycle manual -> plan -> accept -> auto -> manual when idle |
 | Click sidebar hint / Work, Diff, Session | Toggle inspector / select pane without submitting the draft |
 | Wheel / trackpad | Scroll the pane under the pointer; navigate suggestions over a popup |

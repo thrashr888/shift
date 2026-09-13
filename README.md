@@ -108,7 +108,9 @@ themes, and Ctrl+C cancels the active turn. Acid keeps a split transcript/output
 layout; `/place bottom` gives any theme a full-width transcript with bottom
 telemetry. Tab switches the Work, Diff, Session, Model and Log pane views, where
 Model lists and switches the provider's models, Session lists durable sessions
-with a status mark and switches between them, and Log keeps bash run output;
+with a status mark and switches between them, Log keeps bash run output, and a
+`panes` preference adds tabs of your own built from text, live fields and
+allowlisted commands; MCP peers attached with `--mcp-port` appear with their calls;
 Ctrl+W/Ctrl+O fold real work/diffs.
 Acid uses a lowercase pixel wordmark and deep-purple RGB palette on capable
 terminals, with indexed-color/ASCII/monochrome fallbacks. For example:
@@ -218,9 +220,10 @@ approval modes, context budgets, and the live localhost MCP endpoint.
 Ollama, OpenAI-compatible transport, Claude, tracing, the MCP server, and the coding
 tools (`status`, `diff`, `apply_patch`, `run`) are shipped as trusted built-ins under `extensions/shift/`. They are enabled automatically;
 there is no per-session load command. Provider modules load only when selected.
-The curses adapter leaves HTTP MCP off by default; pass `--mcp-port 7331` to
-enable `http://127.0.0.1:7331/mcp` in the same Guile process. Use `--mcp` for
-the plain JSON-RPC stdio transport instead of the terminal interface.
+The terminal interface serves HTTP MCP at `http://127.0.0.1:7331/mcp` in the
+same Guile process, falling forward to the next free port up to 7340 when
+several sessions run; `--no-mcp` turns it off and `--mcp-port PORT` pins a port.
+Use `--mcp` for the plain JSON-RPC stdio transport instead of the terminal interface.
 
 To keep a smaller process, set an explicit built-in allowlist before launch:
 
@@ -371,10 +374,12 @@ process, filesystem, network, dynamic-loading, or ambient evaluation authority.
 
 ## Attach to the live session
 
-Start `./bin/shift --mcp-port 7331`, then connect an HTTP MCP client to
-`http://127.0.0.1:7331/mcp`. The endpoint shares the terminal's process, settings,
-conversation, generation, and approval policy. It dies with the session.
-Use `--mcp-port PORT` for another port or `--no-mcp` to disable it.
+Start `./bin/shift`, then connect an HTTP MCP client to the endpoint shown in the
+Session tab, `http://127.0.0.1:7331/mcp` for the first session. It shares the
+terminal's process, settings, conversation, generation, and approval policy and
+dies with the session. Clients that keep the `Mcp-Session-Id` an `initialize`
+returns are listed as peers with their calls. Use `--mcp-port PORT` to pin a port
+or `--no-mcp` to disable it.
 
 `shift_status`, `shift_prompt`, `shift_inspect`, and `shift_cancel` operate on
 that live session. Mutating requests serialize; status remains available.

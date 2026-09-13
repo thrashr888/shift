@@ -34,13 +34,14 @@ KEY_SEQUENCES = {
 ENUMS = {
     '/mode':MODES, '/brand':('replace','subtitle','none'), '/place':('left','right','top','bottom','modal'),
     '/sidebar':('auto','on','off'), '/density':('compact','comfortable'), '/border':('thin','heavy','double','none'),
-    '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'),
+    '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'), '/terminal':('on','off'),
     '/ui':('get','undo','reload','code-reload','save user','save project'),
 }
 COMMANDS = {
     '/theme':'Cycle theme, or choose a name', '/mode':'Execution policy', '/name':'Personal identity',
     '/brand':'Wordmark style', '/place':'Inspector position', '/sidebar':'Inspector visibility',
     '/density':'Transcript spacing', '/border':'Frame style', '/motion':'Working animation',
+    '/terminal':'Sync terminal colors to the theme', '/pane':'Run a user-owned pane (run NAME)',
     '/ui':'Live presentation settings', '/work':'Automatic work display', '/help':'Session command help',
     '/model':'Inspect or choose a model', '/context':'Context usage and limit', '/settings':'Session settings',
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
@@ -49,14 +50,14 @@ COMMANDS = {
 }
 
 
-def suggestions(draft, themes, palette=False, models=(), sessions=()):
+def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=()):
     query=draft.strip()
     if not query.startswith('/'):
         return [(name,description) for name,description in COMMANDS.items()
                 if palette and query.casefold() in (name+' '+description).casefold()]
     name,separator,value=draft.partition(' ')
     if separator:
-        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else ENUMS.get(name,())
+        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else tuple('run '+pane for pane in panes) if name=='/pane' else ENUMS.get(name,())
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
 
@@ -70,13 +71,15 @@ def run_entry(result, tool=None):
     status=match[2] if match else ('ok' if result.get('ok') else 'failed')
     if body.startswith('files changed since you last read them: '):
         body=body.partition('\n')[2]
-    return {'turn':result.get('turn'),'id':result.get('id'),'ok':bool(result.get('ok')),'command':command,
+    lines=[clean(line) for line in body.split('\n')] if body else []
+    while lines and not lines[-1].strip():lines.pop()
+    return {'kind':'run','turn':result.get('turn'),'id':result.get('id'),'ok':bool(result.get('ok')),'command':command,
             'status':status,'seconds':match[3] if match else '',
-            'log':match[5] if match else '','lines':[clean(line) for line in body.split('\n')] if body else [],
+            'log':match[5] if match else '','lines':lines,
             'truncated':bool(result.get('truncated')),'at':str((tool or {}).get('at',''))}
 
 
-VALUE_OPTIONS = {'--agent':1, '--state-dir':1, '--session':1, '--new-session':1,
+VALUE_OPTIONS = {'--agent':1, '--state-dir':1, '--session':1, '--new-session':1, '--mcp-port':1,
                  '--resume':1, '--mode':1, '--model':1, '--allow-run':1,
                  '--set':1, '--receipt':1, '--mcp-port':1}
 
@@ -313,6 +316,8 @@ class Model:
         self.models={'provider':None,'items':[],'error':None,'requested':False}
         self.runs=deque(maxlen=50)
         self.sessions={'items':[],'error':None,'requested':False}
+        self.peers={}
+        self.pane_output={}
         self.approval_preview=''
         self.command_request=0
         self.command_pending=None
@@ -407,6 +412,24 @@ class Model:
                     self.sessions.update(error=self.notice,requested=False)
         elif kind == 'sessions':
             self.sessions={'items':[dict(item) for item in value.get('sessions',[])],'error':None,'requested':False}
+        elif kind == 'peer':
+            peer=self.peers.setdefault(str(value.get('id','')),{'name':'client','version':'','calls':0,'last':'','at':''})
+            stamp=time.strftime('%H:%M')
+            if value.get('event')=='connected':
+                peer.update(name=clean(value.get('name','client')),version=clean(value.get('version','')),at=stamp)
+                self.notice='Peer connected: '+peer['name']+(' '+peer['version'] if peer['version'] else '')
+            elif value.get('event')=='call':
+                peer.update(calls=peer['calls']+1,last=clean(value.get('tool','')),at=stamp)
+                self.runs.append({'kind':'peer','turn':self.session.get('turn','?'),'id':None,'ok':bool(value.get('ok')),
+                                  'command':peer['name']+' · '+clean(value.get('tool',''))+(' '+clean(value.get('summary','')) if value.get('summary') else ''),
+                                  'status':'ok' if value.get('ok') else 'error','seconds':'','log':'','lines':[],'truncated':False,'at':stamp})
+                self.panel_scroll['log']=10**9
+        elif kind == 'pane-output':
+            entry=run_entry({'output':value.get('output',''),'ok':value.get('ok'),'turn':self.session.get('turn','?'),'id':None,
+                             'truncated':value.get('truncated',False)})
+            entry.update(kind='pane',command=' '.join(str(part) for part in value.get('argv',[])),at=clean(value.get('at','')))
+            self.pane_output.setdefault(str(value.get('pane','')),{})[int(value.get('index',0))]=entry
+            self.runs.append(entry);self.panel_scroll['log']=10**9
         elif kind == 'models':
             self.models={'provider':value.get('provider'),'items':[str(item) for item in value.get('models',[])],
                          'error':None,'requested':False}
@@ -464,6 +487,13 @@ class Model:
             group['truncated']=value.get('truncated',False)
 
 
+def child_arguments(args):
+    # The live session serves MCP peers by default on 7331 (falling forward
+    # when busy); --no-mcp turns it off and --mcp-port pins a port.
+    mcp=[] if any(option in ('--no-mcp','--mcp-port') for option in args) else ['--mcp-port','7331']
+    return [str(ROOT/'bin/shift'),'--watch',*mcp,*args]
+
+
 class Child:
     def __init__(self, args, cwd=None):
         self.args=list(args);self.cwd=cwd
@@ -473,7 +503,7 @@ class Child:
         command_r, command_w = os.pipe()
         env = {**os.environ, 'SHIFT_CONTROL_FD':str(control_w), 'SHIFT_UI_EVENT_FD':str(event_w),
                'SHIFT_UI_COMMAND_FD':str(command_r), 'PYTHONUNBUFFERED':'1'}
-        self.process = subprocess.Popen([str(ROOT/'bin/shift'), '--no-mcp', '--watch', *args],
+        self.process = subprocess.Popen(child_arguments(args),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=env, cwd=cwd, pass_fds=(control_w,event_w,command_r), start_new_session=True)
         for fd in (control_w,event_w,command_r): os.close(fd)
@@ -679,12 +709,13 @@ class Terminal:
         m=self.model
         active=(self.menu or m.draft.startswith('/')) and self.completion_dismissed!=m.draft
         name,separator,_=m.draft.partition(' ')
-        if separator and name not in ENUMS and name not in ('/theme','/model','/session') and not self.menu:active=False
+        if separator and name not in ENUMS and name not in ('/theme','/model','/session','/pane') and not self.menu:active=False
         query=(self.menu,m.draft,tuple(m.themes),tuple(m.models['items']),tuple(s.get('name','') for s in m.sessions['items']))
         if query!=self.completion_query:
             self.completion_index=0
             self.completion_query=query
-        self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items'],[s.get('name','') for s in m.sessions['items']]) if active else []
+        self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items'],[s.get('name','') for s in m.sessions['items']],
+                                            [str(p.get('name','')) for p in m.config.get('panes',[]) if isinstance(p,dict)]) if active else []
         self.completion_index=min(self.completion_index,max(0,len(self.completion_choices)-1))
         return active
 
@@ -750,6 +781,7 @@ class Terminal:
                 elif kind=='session':
                     try:self.switch_session(value)
                     except ValueError as error:self.model.notice=str(error)
+                elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value,'pane')
                 elif kind=='model':
                     try:self.request_model(value)
                     except ValueError as error:self.model.notice=str(error)
@@ -803,8 +835,9 @@ class Terminal:
         c=self.model.config
         keys=('foreground','background','accent','secondary','muted','panel',
               'positive','negative','added_background','removed_background')
-        signature=tuple(c.get(k) for k in keys)
+        signature=tuple(c.get(k) for k in keys)+(bool(c.get('terminal_colors')),)
         if signature==self.palette:return
+        self.sync_terminal(bool(c.get('terminal_colors')))
         self.restore_colors()
         self.palette=signature
         if not curses.has_colors():return
@@ -841,6 +874,22 @@ class Terminal:
         for index,rgb in self.saved_colors.items():
             curses.init_color(index,*rgb)
         self.saved_colors.clear()
+        self.sync_terminal(False)
+
+    def sync_terminal(self,enabled):
+        # With terminal_colors on, the surrounding terminal follows the theme:
+        # default background, foreground and cursor via OSC 11/10/12, reset on
+        # exit or when the preference turns off. Only RGB packs are sent.
+        c=self.model.config
+        if enabled:
+            colors=[]
+            for code,key in ((11,'background'),(10,'foreground'),(12,'accent')):
+                value=c.get(key)
+                if isinstance(value,str) and len(value)==7:colors.append('\x1b]%d;%s\x1b\\'%(code,value))
+            if colors:
+                sys.stdout.write(''.join(colors));sys.stdout.flush();self.terminal_synced=True
+        elif getattr(self,'terminal_synced',False):
+            sys.stdout.write('\x1b]111\x1b\\\x1b]110\x1b\\\x1b]112\x1b\\');sys.stdout.flush();self.terminal_synced=False
 
     def put(self,y,x,text,width,color=1,bold=False,dim=False):
         rows,cols=self.screen.getmaxyx()
@@ -922,7 +971,23 @@ class Terminal:
 
     def tabs(self):
         sections=self.model.config['sections']
-        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])+['model','log']
+        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])+['model','log']+[
+            str(pane.get('name')) for pane in self.model.config.get('panes',[]) if isinstance(pane,dict)]
+
+    def pane(self,name):
+        return next((pane for pane in self.model.config.get('panes',[]) if isinstance(pane,dict) and pane.get('name')==name),None)
+
+    def tab_label(self,tab):
+        pane=self.pane(tab)
+        return str(pane.get('title',tab)).upper() if pane else tab.upper()
+
+    def tab_labels(self,width,gap):
+        # Labels shrink to their first letters before the strip would overflow.
+        labels=[self.tab_label(tab) for tab in self.tabs()]
+        for size in (12,4,3,2):
+            labels=[label[:size] for label in labels]
+            if sum(len(label)+gap for label in labels)-gap<=width:break
+        return labels
 
     def telemetry(self):
         m=self.model
@@ -1030,9 +1095,11 @@ class Terminal:
             if panel and mode=='docked':
                 x=panel.x+2
                 tabs=self.tabs()
-                roomy=sum(len(tab)+4 for tab in tabs)-2<=panel.w-2
-                for tab in tabs:
-                    text=(' '+tab.upper()+' ') if roomy else tab.upper()
+                labels=[self.tab_label(tab) for tab in tabs]
+                roomy=sum(len(label)+4 for label in labels)-2<=panel.w-2
+                if not roomy:labels=self.tab_labels(panel.w-2,1)
+                for tab,label in zip(tabs,labels):
+                    text=(' '+label+' ') if roomy else label
                     self.button(strip_y,x,text,len(text),('tab',tab),12 if m.panel_tab==tab else 4,m.panel_tab==tab)
                     x+=len(text)+(2 if roomy else 1)
         if c['branding']=='subtitle':
@@ -1063,8 +1130,8 @@ class Terminal:
         self.put(2,0,('=' if c.get('ascii') else '═')*cols,cols,1)
         if panel and mode=='docked' and c['placement'] in ('left','right'):
             x=panel.x
-            for tab in self.tabs():
-                text=tab.upper()+' '
+            for tab,label in zip(self.tabs(),self.tab_labels(panel.w-1,1)):
+                text=label+' '
                 self.button(3,x,text,len(text),('tab',tab),12 if tab==m.panel_tab else 3)
                 x+=len(text)
             start=panel.w+1 if c['placement']=='left' else 0
@@ -1223,7 +1290,32 @@ class Terminal:
             rows.append([(text,3,True)])
         def line(text,tone=1):
             rows.append([(text,tone,False)])
-        if m.panel_tab=='model':
+        if self.pane(m.panel_tab):
+            pane=self.pane(m.panel_tab);outputs=m.pane_output.get(m.panel_tab,{})
+            title(str(pane.get('title',m.panel_tab)).upper())
+            fields={'session.name':m.session.get('name'),'session.provider':m.session.get('provider'),'session.model':m.session.get('model'),
+                    'session.mode':m.session.get('mode'),'session.turn':m.session.get('turn'),'usage.prompt':m.usage.get('prompt'),
+                    'usage.limit':m.usage.get('limit'),'usage.round':m.usage.get('round'),'usage.max_rounds':m.usage.get('max_rounds'),
+                    'receipt.status':m.receipt.get('status'),'receipt.duration_ms':m.receipt.get('duration_ms'),
+                    'source.loaded':m.source_identity['loaded'].get('label'),'source.process':m.source_identity['process'].get('label')}
+            for index,row in enumerate(pane.get('rows',[])):
+                if not isinstance(row,dict):continue
+                if 'text' in row:
+                    for part in wrap(str(row['text']),width,words=True):line(part)
+                elif 'field' in row:
+                    key=str(row['field']);value=fields.get(key)
+                    rows.append([(key.split('.')[-1].replace('_',' ')+': ',4,False),(str(value) if value not in (None,'') else 'not measured',1,False)])
+                elif 'command' in row:
+                    argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
+                    mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
+                    rows.append([(mark,2,True),(argv,1,True),((' · '+entry['status']+(' · '+entry['at'] if entry['at'] else '')) if entry else ' · click to run',2 if entry and entry['ok'] else 11 if entry else 4,False)])
+                    actions[len(rows)-1]=('pane',m.panel_tab)
+                    if entry:
+                        for text in entry['lines'][:40]:
+                            for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
+                        if len(entry['lines'])>40 or entry['truncated']:line('  … more in the Log tab'+(' and the full log' if entry['truncated'] else ''),4)
+            line('');line('Commands run only when /allow-run permits them',4)
+        elif m.panel_tab=='model':
             current=str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting'))
             title('MODEL');line(current);line('')
             if m.models['error']:
@@ -1244,7 +1336,8 @@ class Terminal:
             for run in m.runs:
                 line('')
                 # Status first: commands can be long and would push it off the row.
-                rows.append([('['+str(run['turn'])+'] ',4,False),(run['status'],2 if run['ok'] else 11,True),
+                tag={'peer':'[peer] ','pane':'[pane] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
                              ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
                 for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
                 for text in run['lines']:
@@ -1271,6 +1364,15 @@ class Terminal:
                 if status=='idle':actions[len(rows)-1]=('session',name)
                 line('    '+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
             if m.sessions['items']:line('Click an idle session or /session NAME to switch',4)
+            line('');title('PEERS')
+            endpoint=m.session.get('mcp')
+            if endpoint:
+                for part in wrap(str(endpoint),width):line(part,4)
+            else:line('MCP is off for this session (--mcp-port enables it)',4)
+            if not m.peers:line('No peers attached',4)
+            for peer in m.peers.values():
+                rows.append([(('● ' if self.unicode and not c.get('ascii') else '* '),3,True),(peer['name']+(' '+peer['version'] if peer['version'] else ''),1,True)])
+                line('    '+str(peer['calls'])+' calls'+(' · last '+peer['last'] if peer['last'] else '')+(' · '+peer['at'] if peer['at'] else ''),4)
             line('');title('LATEST RECEIPT')
             if m.receipt:
                 line('Status: '+str(m.receipt.get('status','unknown')))
@@ -1473,6 +1575,13 @@ class Terminal:
             self.request_mode(value);return True
         if name=='/session' and value:
             self.switch_session(value);return True
+        if name=='/pane':
+            action,_,pane=value.partition(' ')
+            if action!='run' or not self.pane(pane.strip()):raise ValueError('use /pane run NAME')
+            self.request_command('/pane run '+pane.strip(),'Running pane '+pane.strip(),'pane');return True
+        if name=='/terminal':
+            if value not in ('on','off'):raise ValueError('use /terminal on|off')
+            self.child.ui({'action':'patch','patch':{'terminal_colors':value=='on'}});return True
         if name in keys:
             self.child.ui({'action':'patch','patch':{keys[name]:value}});return True
         if name=='/motion':

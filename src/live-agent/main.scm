@@ -851,9 +851,40 @@
   (ui-emit! "models" (json-object
     (cons "provider" (symbol->string (setting-ref generation 'agent-provider)))
     (cons "models" (apply json-array ids)))))
+;; A user-owned pane's commands run only when the session's run allowlist
+;; already permits them; output is recorded like any run and bounded for the UI.
+(define (run-pane! runtime name turn)
+  (let* ((generation (runtime-current runtime))
+         (panes (json-array-items (json-object-ref (json-object-ref (ui-state) "config") "panes" (json-array))))
+         (pane (find (lambda (pane) (equal? (json-object-ref pane "name" "") name)) panes)))
+    (unless pane (error "no pane named" name))
+    (let loop ((rows (json-array-items (json-object-ref pane "rows"))) (index 0) (ran 0))
+      (if (null? rows)
+          (format #f "Pane ~a ran ~a command~a" name ran (if (= ran 1) "" "s"))
+          (let ((row (car rows)))
+            (if (not (json-object-ref row "command" #f))
+                (loop (cdr rows) (+ index 1) ran)
+                (let* ((argv (json-array-items (json-object-ref row "command")))
+                       (allowed (run-allowed? argv (setting-ref generation 'run-allow))))
+                  (unless allowed
+                    (error (format #f "pane command is not allowlisted; /allow-run ~s first" (string-join argv " "))))
+                  (let* ((outcome ((builtin-ref 'coding 'coding-execute) "run"
+                                   (json-object (cons "argv" (apply json-array argv)))
+                                   (getcwd) ledger turn (coding-context generation #f)))
+                         (output (tool-result-output outcome))
+                         (excerpt (ui-output-excerpt output)))
+                    (ui-emit! "pane-output"
+                      (json-object (cons "pane" name) (cons "index" index)
+                                   (cons "argv" (apply json-array argv))
+                                   (cons "ok" (tool-result-success? outcome))
+                                   (cons "output" (car excerpt)) (cons "truncated" (cdr excerpt))
+                                   (cons "at" (strftime "%H:%M" (localtime (current-time))))))
+                    (loop (cdr rows) (+ index 1) (+ ran 1))))))))))
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode accept" "/mode auto" "/sessions"))
+        (and (= (length parts) 3) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/model")
              (or (string=? (cadr parts) "list")
                  (and (string-index (cadr parts) #\/)
@@ -2356,8 +2387,13 @@
       (lambda () (set! turn-active? #f) (set! turn-thread #f)))))
 
 (define mcp-stdio? #f)
+(define mcp-running? #f)
 (define mcp-http? (and (isatty? (current-input-port)) (not control-port)))
 (define mcp-port 7331)
+(define default-mcp-port 7331)
+;; Read-only requests from MCP peers neither echo into the transcript nor flip
+;; the session to WORKING; their output goes back to the peer.
+(define peer-request? (make-parameter #f))
 (define (transport-arguments args)
   (let loop ((remaining args) (out '()))
     (cond
@@ -2401,6 +2437,7 @@
       (ui-emit! "session" (json-object
         (cons "model" (setting-ref (runtime-current runtime) 'agent-model))
         (cons "provider" (symbol->string (setting-ref (runtime-current runtime) 'agent-provider)))
+        (cons "mcp" (if mcp-running? (format #f "http://127.0.0.1:~a/mcp" mcp-port) json-null))
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
         (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
         (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral")))))
@@ -2408,12 +2445,14 @@
       (ui-host-handler!
         (lambda (command)
           (unless (host-command-allowed? command)
-            (error "only /mode manual|plan|accept|auto, /model list, /model PROVIDER/MODEL, or /sessions is supported"))
+            (error "only /mode manual|plan|accept|auto, /model list, /model PROVIDER/MODEL, /sessions, or /pane run NAME is supported"))
           (unless (try-mutex lock) (error "Session busy; finish the turn or pending approval before changing mode or model"))
           (dynamic-wind
             (lambda () #t)
             (lambda ()
               (cond
+                ((string-prefix? "/pane run " command)
+                 (run-pane! runtime (substring command 10) turn-count))
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
                  (let ((summaries (session-summaries (dirname (dirname (session-directory session))) (session-name session))))
@@ -2436,14 +2475,14 @@
     (define (process! line)
       (publish-session!)
       (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
-      (when (and (ui-connected?) (not (string-null? (string-trim-both line))))
+      (when (and (ui-connected?) (not (peer-request?)) (not (string-null? (string-trim-both line))))
         (emit-control! "working"))
       (parameterize ((current-turn turn-count))
       (let ((action
              (cond
                ((string-null? (string-trim-both line)) 'continue)
                ((string-prefix? "/" line)
-                (emit-ui-transcript! "user" line)
+                (unless (peer-request?) (emit-ui-transcript! "user" line))
                 (handle-command runtime tracer session line))
                (else
                  (let ((result (perform-turn! runtime tracer history line turn-count)))
@@ -2467,6 +2506,8 @@
         (publish-session!)
         action)))
     (define (dispatch method argument)
+      (if (eq? method 'peer)
+          (begin (ui-emit! "peer" argument) #t)
       (if (eq? method 'cancel)
           (begin
             (when turn-thread
@@ -2491,19 +2532,30 @@
               (lambda () #t)
               (lambda ()
                 (let ((output (open-output-string)))
-                  (parameterize ((current-output-port output) (current-error-port output) (interactive-approval? #f))
+                  (parameterize ((current-output-port output) (current-error-port output) (interactive-approval? #f)
+                                 (peer-request? (eq? method 'inspect)))
                     (process! argument))
                   (when (not (string=? operation-status "ok")) (error "session operation failed" (get-output-string output)))
                   (get-output-string output)))
-              (lambda () (unlock-mutex lock)))))))
+              (lambda () (unlock-mutex lock))))))))
     (register-host!)
     (publish-session!)
     (ui-emit! "history" (apply json-array (take-right history (min 50 (length history)))))
     (let ((stop-mcp!
             (if (and mcp-http? (builtin-enabled? 'mcp))
-                (catch #t
-                  (lambda () ((builtin-ref 'mcp 'start-mcp!) mcp-port dispatch))
-                  (lambda _ (error "MCP port unavailable; choose --mcp-port PORT or --no-mcp" mcp-port)))
+                ;; The default port falls forward so several live sessions can
+                ;; coexist; an explicit other port must be exactly available.
+                (let try ((port mcp-port) (remaining (if (= mcp-port default-mcp-port) 10 1)))
+                  (catch #t
+                    (lambda ()
+                      (let ((stop ((builtin-ref 'mcp 'start-mcp!) port dispatch)))
+                        (set! mcp-port port) (set! mcp-running? #t)
+                        (publish-session!)
+                        stop))
+                    (lambda _
+                      (if (> remaining 1)
+                          (try (+ port 1) (- remaining 1))
+                          (error "MCP port unavailable; choose --mcp-port PORT or --no-mcp" port)))))
                 (lambda () #t))))
       (dynamic-wind
         (lambda () #t)
