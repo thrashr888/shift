@@ -39,7 +39,7 @@
       (lambda (key . detail)
         (ui-emit! "session-command-result"
           (json-object (cons "request_id" request) (cons "ok" #f)
-                       (cons "error" (format #f "~a: ~s" key detail))))))))
+                       (cons "error" (error-text key detail))))))))
 (define (ui-connected?) (if event-port #t #f))
 (define (ui-emit! type value)
   (when event-port
