@@ -1,4 +1,5 @@
-(use-modules (srfi srfi-64)
+(use-modules (srfi srfi-1)
+             (srfi srfi-64)
              (live-agent generation)
              (live-agent json)
              (live-agent provider)
@@ -142,5 +143,20 @@
 (test-error "session fork refuses to overwrite a child"
   #t
   (fork-session! test-root "dogfood" "dogfood-child"))
+
+(define held (open-session! test-root "dogfood" 'resume))
+(define (summary name)
+  (find (lambda (item) (equal? (json-object-ref item "name") name))
+        (session-summaries test-root "dogfood-child")))
+(test-equal "session summaries mark the current session" "current"
+  (json-object-ref (summary "dogfood-child") "status"))
+(test-equal "session summaries detect a session held by another owner" "running"
+  (json-object-ref (summary "dogfood") "status"))
+(test-assert "session summaries carry turn counts and checkpoint times"
+  (and (number? (json-object-ref (summary "dogfood") "turns"))
+       (string? (json-object-ref (summary "dogfood") "updated"))))
+(close-session! held)
+(test-equal "session summaries show released sessions as idle" "idle"
+  (json-object-ref (summary "dogfood") "status"))
 
 (test-end "durable session")

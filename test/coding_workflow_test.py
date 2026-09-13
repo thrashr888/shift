@@ -301,6 +301,7 @@ class CodingWorkflow(unittest.TestCase):
             self.assertEqual(model.session["provider"], "openai")
             for _ in range(3): terminal.key('\t')
             self.assertEqual(model.panel_tab, 'model')
+            wait_for(lambda: model.command_pending is None); terminal.settle()
             wait_for(lambda: model.models["items"] == ["openai/fake", "openai/offline-fixture"] and model.command_pending is None)
             self.assertIn("2 models available", model.notice)
             terminal.draw()

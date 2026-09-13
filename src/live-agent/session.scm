@@ -14,6 +14,7 @@
             open-session!
             fork-session!
             list-session-names
+            session-summaries
             session-name
             session-id
             session-directory
@@ -210,6 +211,35 @@
                   (string-append root "/" name "/session.json"))))
           (scandir root (lambda (name) (not (member name '("." ".."))))))
          string<?))))
+
+;; What the frontend's session list shows: durable sessions with their turn
+;; count, last checkpoint, and whether another live process holds the lock.
+;; Probing never creates a lock file or blocks.
+(define (session-status directory current?)
+  (cond
+   (current? "current")
+   ((not (file-exists? (string-append directory "/owner.lock"))) "idle")
+   (else
+    (let ((port (open-file (string-append directory "/owner.lock") "r")))
+      (catch 'system-error
+        (lambda () (flock port (logior LOCK_EX LOCK_NB)) (flock port LOCK_UN) (close-port port) "idle")
+        (lambda _ (close-port port) "running"))))))
+(define (session-summaries state-directory current-name)
+  (map (lambda (name)
+         (let* ((directory (string-append (session-root state-directory) "/" name))
+                (path (checkpoint-path directory))
+                (root (catch #t
+                        (lambda ()
+                          (and (<= (stat:size (stat path)) max-checkpoint-bytes)
+                               (call-with-input-file path (lambda (port) (json-read (get-string-all port))))))
+                        (lambda _ #f)))
+                (field (lambda (key default) (if (json-object? root) (json-object-ref root key default) default))))
+           (json-object (cons "name" name)
+                        (cons "turns" (let ((next (field "next_turn" 1))) (if (number? next) (max 0 (- next 1)) 0)))
+                        (cons "updated" (field "updated_at" json-null))
+                        (cons "fork" (field "fork" json-null))
+                        (cons "status" (session-status directory (equal? name current-name))))))
+       (list-session-names state-directory)))
 
 (define (fork-session! state-directory parent-name child-name)
   (unless (and (safe-session-name? parent-name)

@@ -501,6 +501,30 @@ class Bridge(unittest.TestCase):
             time.sleep(.02)
         self.fail('timed out: '+str(list(self.model.lines)))
 
+    def test_session_list_reports_ownership_and_switching_reopens_the_launch(self):
+        terminal=terminal_view(40,128,self.child);terminal.model=self.model
+        other=tui.Child(tui.with_session(self.args,'other'));held=tui.Model()
+        try:
+            self.wait(lambda:(other.poll(held) or True) and held.ready)
+            terminal.request_sessions()
+            self.wait(lambda:self.model.sessions['items'] and self.model.command_pending is None)
+            status={item['name']:item['status'] for item in self.model.sessions['items']}
+            self.assertEqual(status,{'test':'current','other':'running'})
+            self.assertFalse(terminal.switch_session('other'));self.assertIn('another process',self.model.notice)
+        finally:
+            other.close()
+        self.model.sessions={'items':[],'error':None,'requested':False}
+        terminal.request_sessions()
+        self.wait(lambda:self.model.sessions['items'] and self.model.command_pending is None)
+        self.assertEqual({i['name']:i['status'] for i in self.model.sessions['items']},{'test':'current','other':'idle'})
+        self.assertTrue(terminal.switch_session('other'))
+        self.child=terminal.child;self.model=terminal.model
+        self.wait(lambda:self.model.ready and self.model.session.get('name')=='other')
+        self.assertIn('--session',self.child.args);self.assertEqual(self.child.args[-1],'other')
+        terminal.request_sessions()
+        self.wait(lambda:self.model.sessions['items'] and self.model.command_pending is None)
+        self.assertEqual({i['name']:i['status'] for i in self.model.sessions['items']},{'test':'idle','other':'current'})
+
     def test_live_preferences_resume_and_theme_save_reload(self):
         self.child.ui({'action':'patch','patch':{'identity':'thrashr888','branding':'replace'}})
         self.wait(lambda:self.model.config['branding']=='replace')
@@ -1120,7 +1144,13 @@ class ModelPicker(unittest.TestCase):
     def test_entering_the_model_tab_lists_once_and_renders_choices(self):
         terminal=self.picker();m=terminal.model
         self.assertEqual(terminal.tabs()[-2:],['model','log'])
-        for _ in range(3):terminal.key('\t')
+        terminal.key('\t');terminal.key('\t')
+        self.assertEqual(m.panel_tab,'session')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/sessions','request_id':1})
+        m.event({'type':'session-command-result','value':{'request_id':1,'ok':True,'message':'1 durable sessions'}})
+        m.event({'type':'sessions','value':{'current':'main','sessions':[{'name':'main','turns':1,'status':'current'}]}})
+        terminal.child.ui.reset_mock();m.command_request=0
+        terminal.key('\t')
         self.assertEqual(m.panel_tab,'model')
         terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/model list','request_id':1})
         terminal.draw();self.assertIn('Listing models from ollama',self.text(terminal))
@@ -1129,7 +1159,18 @@ class ModelPicker(unittest.TestCase):
         terminal.draw();text=self.text(terminal)
         self.assertIn('▶ ollama/qwen3.8:27b-mlx',text);self.assertIn('  ollama/gemma:2b',text)
         for _ in range(5):terminal.key('\t')
+        self.assertEqual(m.panel_tab,'model')
+        self.assertEqual([c.args[0]['command'] for c in terminal.child.ui.call_args_list].count('/model list'),1)
+
+    def test_pane_entered_during_a_pending_command_asks_again_when_idle(self):
+        terminal=self.picker();m=terminal.model
+        terminal.key('\t');terminal.key('\t');terminal.key('\t')
         self.assertEqual(m.panel_tab,'model');self.assertEqual(terminal.child.ui.call_count,1)
+        terminal.settle();self.assertEqual(terminal.child.ui.call_count,1)
+        m.event({'type':'session-command-result','value':{'request_id':1,'ok':True,'message':'1 durable sessions'}})
+        m.event({'type':'sessions','value':{'current':'main','sessions':[{'name':'main','turns':1,'status':'current'}]}})
+        terminal.settle()
+        self.assertEqual(terminal.child.ui.call_args.args[0]['command'],'/model list')
 
     def test_clicking_a_model_row_selects_it_through_the_host_and_updates_the_badge(self):
         terminal=self.picker();m=terminal.model
@@ -1221,6 +1262,56 @@ class RunLog(unittest.TestCase):
         self.assertIn('▶ RUN OUTPUT',text);self.assertNotIn('out 19',text)
 
 
+class SessionSwitcher(unittest.TestCase):
+    def tab(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        terminal.child.args=['--agent','a.scm','--session','main','--no-watch'];terminal.child.cwd=None
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':3}})
+        m.control('ready');m.panel_tab='session'
+        m.event({'type':'sessions','value':{'current':'main','sessions':[
+            {'name':'main','turns':2,'updated':'2026-09-12T20:00:35Z','status':'current'},
+            {'name':'dogfood','turns':14,'updated':'2026-09-11T06:26:03Z','status':'running'},
+            {'name':'task','turns':0,'updated':'2026-09-10T12:00:00Z','status':'idle'}]}})
+        terminal.draw()
+        return terminal
+
+    def text(self,terminal):
+        return '\n'.join(terminal.screen.line(y) for y in range(40))
+
+    def test_session_tab_lists_sessions_with_status_marks_and_only_idle_rows_switch(self):
+        terminal=self.tab();text=self.text(terminal)
+        self.assertIn('▶ main',text);self.assertIn('    2 turns · 2026-09-12 20:00',text)
+        self.assertIn('● dogfood · open elsewhere',text);self.assertIn('    14 turns · 2026-09-11 06:26',text)
+        self.assertIn('○ task',text);self.assertIn('    0 turns · 2026-09-10 12:00',text)
+        actions=[a for _,a in terminal.hits if a[0]=='session']
+        self.assertEqual(actions,[('session','task')])
+
+    def test_switching_replaces_the_backend_with_the_same_launch_and_keeps_identity(self):
+        terminal=self.tab();m=terminal.model;old=terminal.child
+        m.source_identity={'process':{'label':'abc'},'loaded':{'label':'abc'},'presentation':'p'}
+        with patch.object(tui,'Child') as child:
+            child.return_value=Mock(args=['x'],cwd=None)
+            row=next(r for r,a in terminal.hits if a==('session','task'))
+            terminal.pointer(row.x+3,row.y,'press')
+            child.assert_called_once_with(['--agent','a.scm','--no-watch','--session','task'],None)
+        old.close.assert_called_once()
+        self.assertIsNot(terminal.model,m);self.assertEqual(terminal.model.panel_tab,'session')
+        self.assertEqual(terminal.model.source_identity['loaded']['label'],'abc')
+        self.assertIn('Opening session task',terminal.model.notice)
+
+    def test_switch_refusals_never_close_the_backend(self):
+        terminal=self.tab();m=terminal.model
+        for name,expected in (('main','Already in session'),('dogfood','open in another process')):
+            terminal.switch_session(name);self.assertIn(expected,m.notice)
+        m.control('working');terminal.switch_session('task');self.assertIn('Turn running',m.notice)
+        m.control('needs_approval');m.draft='/session task';terminal.key('\n')
+        self.assertIn('Finish approval',m.notice)
+        terminal.child.close.assert_not_called();terminal.child.send.assert_not_called()
+        self.assertRaises(ValueError,terminal.switch_session,'../x')
+        m.control('ready');m.draft='/session t';terminal.draw()
+        self.assertEqual([c[0] for c in terminal.completion_choices],['/session task'])
+
+
 class TerminfoRepeat(unittest.TestCase):
     """Terminals that advertise rep (Ghostty, kitty) must still get whole glyphs from ncurses 6.0."""
     def setUp(self):
@@ -1230,6 +1321,7 @@ class TerminfoRepeat(unittest.TestCase):
         lines=[line for line in source.splitlines() if not line.startswith('#')]
         lines[0]='shift-rep-test|xterm-256color with rep,'
         lines.insert(1,'\trep=%p1%c\\E[%p2%{1}%-%db,')
+        lines.insert(2,'\tTc,')  # an extended capability that must survive the copy
         src=Path(self.temp.name)/'rep.src';src.write_text('\n'.join(lines)+'\n')
         subprocess.run(['tic','-x','-o',self.temp.name,str(src)],capture_output=True,check=True)
         self.env={**os.environ,'TERM':'shift-rep-test','TERMINFO':self.temp.name}
@@ -1240,8 +1332,8 @@ class TerminfoRepeat(unittest.TestCase):
             self.assertIsNone(tui.rep_free_terminfo('xterm-256color',(6,0)))
             directory=tui.rep_free_terminfo('shift-rep-test',(6,0))
         self.assertIsNotNone(directory);self.addCleanup(shutil.rmtree,directory,True)
-        copy=subprocess.run(['infocmp','-A',directory,'-1','shift-rep-test'],capture_output=True,text=True,check=True).stdout
-        self.assertNotIn('rep=',copy);self.assertIn('cup=',copy)
+        copy=subprocess.run(['infocmp','-A',directory,'-x','-1','shift-rep-test'],capture_output=True,text=True,check=True).stdout
+        self.assertNotIn('rep=',copy);self.assertIn('cup=',copy);self.assertIn('Tc,',copy)
 
     def test_pty_rules_are_whole_glyphs_on_a_rep_terminal(self):
         master,slave=pty.openpty()

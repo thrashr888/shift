@@ -45,18 +45,18 @@ COMMANDS = {
     '/model':'Inspect or choose a model', '/context':'Context usage and limit', '/settings':'Session settings',
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
     '/receipt':'Last turn receipt',
-    '/session':'Current session', '/undo':'Undo last turn edits', '/quit':'Exit session',
+    '/session':'Current session, or switch to NAME', '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
 
 
-def suggestions(draft, themes, palette=False, models=()):
+def suggestions(draft, themes, palette=False, models=(), sessions=()):
     query=draft.strip()
     if not query.startswith('/'):
         return [(name,description) for name,description in COMMANDS.items()
                 if palette and query.casefold() in (name+' '+description).casefold()]
     name,separator,value=draft.partition(' ')
     if separator:
-        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else ENUMS.get(name,())
+        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else ENUMS.get(name,())
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
 
@@ -79,6 +79,15 @@ def run_entry(result, tool=None):
 VALUE_OPTIONS = {'--agent':1, '--state-dir':1, '--session':1, '--new-session':1,
                  '--resume':1, '--mode':1, '--model':1, '--allow-run':1,
                  '--set':1, '--receipt':1, '--mcp-port':1}
+
+
+def with_session(args, name):
+    # The same launch, pointed at another durable session.
+    result=[];index=0
+    while index<len(args):
+        if args[index] in ('--session','--new-session','--resume'):index+=2;continue
+        result.append(args[index]);index+=1
+    return result+['--session',name]
 
 
 def frontend_arguments(argv):
@@ -114,7 +123,7 @@ def rep_free_terminfo(term, version=None):
     if not term or tuple(version[:2])>=(6,1) or not (shutil.which('infocmp') and shutil.which('tic')):
         return None
     try:
-        source=subprocess.run(['infocmp','-1',term],capture_output=True,text=True,timeout=5,check=True).stdout
+        source=subprocess.run(['infocmp','-x','-1',term],capture_output=True,text=True,timeout=5,check=True).stdout
     except (OSError,subprocess.SubprocessError):
         return None
     lines=source.splitlines()
@@ -303,6 +312,7 @@ class Model:
         self.themes=['acid','paddock','blueprint','qdos']
         self.models={'provider':None,'items':[],'error':None,'requested':False}
         self.runs=deque(maxlen=50)
+        self.sessions={'items':[],'error':None,'requested':False}
         self.approval_preview=''
         self.command_request=0
         self.command_pending=None
@@ -393,6 +403,10 @@ class Model:
                 self.notice=' · '.join(clean(part).strip() for part in str(message).splitlines() if part.strip())
                 if command=='/model list' and not value.get('ok'):
                     self.models.update(error=self.notice,requested=False)
+                if command=='/sessions' and not value.get('ok'):
+                    self.sessions.update(error=self.notice,requested=False)
+        elif kind == 'sessions':
+            self.sessions={'items':[dict(item) for item in value.get('sessions',[])],'error':None,'requested':False}
         elif kind == 'models':
             self.models={'provider':value.get('provider'),'items':[str(item) for item in value.get('models',[])],
                          'error':None,'requested':False}
@@ -452,6 +466,7 @@ class Model:
 
 class Child:
     def __init__(self, args, cwd=None):
+        self.args=list(args);self.cwd=cwd
         self.watch=watch_enabled(args)
         control_r, control_w = os.pipe()
         event_r, event_w = os.pipe()
@@ -611,6 +626,43 @@ class Terminal:
         if '/' not in name or any(ch.isspace() for ch in name):raise ValueError('use /model PROVIDER/MODEL')
         return self.request_command('/model '+name,'Selecting '+name,'model')
 
+    def request_sessions(self):
+        m=self.model
+        if m.sessions['requested'] or m.approval or not m.ready or m.command_pending is not None:
+            return False
+        m.sessions['requested']=True
+        return self.request_command('/sessions','Listing sessions','session')
+
+    def switch_session(self,name):
+        # A switch is the same launch against another durable session: the
+        # Guile owner of this one checkpoints and exits, a new one opens the
+        # other. The curses process, preferences and identity stay put.
+        m=self.model
+        if not name or not name.replace('-','').replace('_','').isalnum():raise ValueError('use /session NAME')
+        if m.approval or not m.ready or m.command_pending is not None:
+            m.notice='Finish approval before switching sessions.' if m.approval else 'Turn running; switch sessions when ready.'
+            return False
+        if name==m.session.get('name'):
+            m.notice='Already in session '+name;return False
+        if any(item.get('name')==name and item.get('status')=='running' for item in m.sessions['items']):
+            m.notice='Session '+name+' is open in another process';return False
+        identity=m.source_identity;tab=m.panel_tab
+        self.child.close()
+        self.child=Child(with_session(self.child.args,name),self.child.cwd)
+        self.model=Model();self.model.source_identity=identity;self.model.panel_tab=tab
+        self.model.notice='Opening session '+name+'…'
+        self.anchor=None;self.menu=False;self.palette_draft=None
+        return True
+
+    def settle(self):
+        # A pane entered while another host command was pending asks again
+        # once the session is idle, so quick Tab cycling still fills the tab.
+        m=self.model
+        if not m.ready or m.command_pending is not None:return
+        if m.panel_tab=='model':self.request_model_list()
+        if m.panel_tab=='session' and not m.sessions['items'] and not m.sessions['requested'] and not m.sessions['error']:
+            self.request_sessions()
+
     def request_model_list(self):
         # Entering the Model tab lists once per provider; errors wait for a
         # deliberate retry instead of polling the provider.
@@ -627,12 +679,12 @@ class Terminal:
         m=self.model
         active=(self.menu or m.draft.startswith('/')) and self.completion_dismissed!=m.draft
         name,separator,_=m.draft.partition(' ')
-        if separator and name not in ENUMS and name not in ('/theme','/model') and not self.menu:active=False
-        query=(self.menu,m.draft,tuple(m.themes),tuple(m.models['items']))
+        if separator and name not in ENUMS and name not in ('/theme','/model','/session') and not self.menu:active=False
+        query=(self.menu,m.draft,tuple(m.themes),tuple(m.models['items']),tuple(s.get('name','') for s in m.sessions['items']))
         if query!=self.completion_query:
             self.completion_index=0
             self.completion_query=query
-        self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items']) if active else []
+        self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items'],[s.get('name','') for s in m.sessions['items']]) if active else []
         self.completion_index=min(self.completion_index,max(0,len(self.completion_choices)-1))
         return active
 
@@ -694,6 +746,10 @@ class Terminal:
                 elif kind=='tab':
                     self.model.panel_tab=value
                     if value=='model':self.request_model_list()
+                    if value=='session':self.request_sessions()
+                elif kind=='session':
+                    try:self.switch_session(value)
+                    except ValueError as error:self.model.notice=str(error)
                 elif kind=='model':
                     try:self.request_model(value)
                     except ValueError as error:self.model.notice=str(error)
@@ -1199,6 +1255,22 @@ class Terminal:
             title('SESSION');line(str(m.session.get('name','default')))
             line(str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting')))
             line('Mode: '+m.session.get('mode','manual'));line('Turn: '+str(m.session.get('turn','unknown')))
+            line('');title('SESSIONS')
+            plain=c.get('ascii') or not self.unicode
+            marks={'current':('▶ ','> '),'running':('● ','* '),'idle':('○ ','- ')}
+            if m.sessions['error']:
+                for part in wrap('Session list unavailable: '+m.sessions['error'],width,words=True):line(part,11)
+            elif not m.sessions['items']:
+                line('Listing sessions…' if m.sessions['requested'] else 'Tab here again to list sessions',4)
+            for item in m.sessions['items']:
+                status=str(item.get('status','idle'));name=str(item.get('name',''))
+                updated=str(item.get('updated') or '')[:16].replace('T',' ')
+                rows.append([(marks.get(status,marks['idle'])[1 if plain else 0],2 if status=='current' else 3 if status=='running' else 4,True),
+                             (name,2 if status=='current' else 1,status=='current'),
+                             (' · open elsewhere' if status=='running' else '',3,False)])
+                if status=='idle':actions[len(rows)-1]=('session',name)
+                line('    '+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
+            if m.sessions['items']:line('Click an idle session or /session NAME to switch',4)
             line('');title('LATEST RECEIPT')
             if m.receipt:
                 line('Status: '+str(m.receipt.get('status','unknown')))
@@ -1399,6 +1471,8 @@ class Terminal:
         if name=='/theme' and not value:self.cycle_theme();return True
         if name=='/mode' and value:
             self.request_mode(value);return True
+        if name=='/session' and value:
+            self.switch_session(value);return True
         if name in keys:
             self.child.ui({'action':'patch','patch':{keys[name]:value}});return True
         if name=='/motion':
@@ -1457,6 +1531,7 @@ class Terminal:
                 tabs=self.tabs()
                 m.panel_tab=tabs[(tabs.index(m.panel_tab)+1)%len(tabs)] if m.panel_tab in tabs else tabs[0]
                 if m.panel_tab=='model':self.request_model_list()
+                if m.panel_tab=='session':self.request_sessions()
         elif key=='\x1b':
             if m.approval:self.child.send('n');m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None;self.menu=False
             elif self.menu:self.menu=False
@@ -1521,6 +1596,7 @@ class Terminal:
         self.draw()
         while self.child.process.poll() is None:
             changed=self.child.poll(self.model)
+            if changed:self.settle()
             key=self.read_key()
             if key is not None:
                 if not self.key(key):break
@@ -1574,7 +1650,12 @@ def main():
             finally:
                 terminal.stop_mouse()
                 terminal.restore_colors()
-        return curses.wrapper(run)
+        try:return curses.wrapper(run)
+        except curses.error as error:
+            if 'setupterm' not in str(error):raise
+            print('shift: this terminal is unknown to curses (TERM='+os.environ.get('TERM','unset')+'); '
+                  'set TERM or use --print.',file=sys.stderr)
+            return 2
     except KeyboardInterrupt:
         return 130
     finally:
