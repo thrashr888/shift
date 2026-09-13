@@ -65,7 +65,6 @@ class LaunchTests(unittest.TestCase):
         cases = [
             ([], True, True, "tui"),
             (["hello there"], True, True, "tui"),
-            (["--tui"], True, True, "tui"),
             (["--resume", "saved", "continue"], True, True, "tui"),
             (["--new-session", "new"], True, True, "tui"),
             (["--watch", "--no-watch", "--no-mcp"], True, True, "tui"),
@@ -82,7 +81,7 @@ class LaunchTests(unittest.TestCase):
             (["session-fork", "parent", "child"], True, True, "backend"),
             (["--help"], True, True, "backend"),
             (["-h"], True, True, "backend"),
-            (["--tui", "--help"], True, True, "backend"),
+            (["--tui"], True, True, "backend"),
             (["--repl"], True, True, "backend"),
             (["--unknown"], True, True, "backend"),
             (["--agent"], True, True, "backend"),
@@ -93,7 +92,7 @@ class LaunchTests(unittest.TestCase):
             "--mode", "--model", "--allow-run", "--set", "--receipt", "--mcp-port",
         ):
             cases.append(([option, "--help"], True, True, "tui"))
-            cases.append(([option, "--tui"], False, False, "backend"))
+            cases.append(([option, "--print"], False, False, "backend"))
         for args, tty_in, tty_out, expected in cases:
             with self.subTest(args=args, stdin=tty_in, stdout=tty_out):
                 master, slave = pty.openpty()
@@ -149,10 +148,10 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(set(result.stdout.splitlines()), {"one", "child"})
         result = self.cli("--resume", "child", text="/quit\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        result = self.cli("--tui", "--help")
+        result = self.cli("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Interactive terminals open curses", result.stdout)
-        for flag in ("--repl", "--mcp-stdio"):
+        self.assertIn("Interactive terminals open the curses interface", result.stdout)
+        for flag in ("--repl", "--mcp-stdio", "--tui"):
             result = self.cli(flag)
             self.assertEqual(result.returncode, 2)
             self.assertIn(f"Unknown argument: {flag}", result.stderr)
@@ -160,7 +159,7 @@ class LaunchTests(unittest.TestCase):
     def test_real_default_curses_positional_prompt_and_resume(self):
         for options in (
             ["--session", "terminal", "startup prompt"],
-            ["--tui", "--resume", "terminal"],
+            ["--resume", "terminal"],
         ):
             with self.subTest(options=options):
                 master, slave = pty.openpty()

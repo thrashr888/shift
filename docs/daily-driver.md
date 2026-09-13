@@ -1,8 +1,8 @@
 # Daily-driver foundation
 
 This is the first implementation slice of [the agreed plan](daily-driver-plan.md).
-The terminal UI is the interactive default and shares the scripted session loop. Dynamic skills,
-cross-session trace recall, extension packs, and model-tested automatic approval
+The terminal UI is the interactive default and shares the scripted session loop.
+Cross-session trace recall, extension packs, and model-tested automatic approval
 remain later work.
 
 ## Projects and settings
@@ -189,6 +189,60 @@ those modules and fall back to source, with a note, when a file is newer than it
 compiled form. `bin/shift` runs `make build` itself before launching, so the cache
 is refreshed after a pull without any notes about stale modules.
 
+## Skills
+
+A skill is a folder with a `SKILL.md` in the Agent Skills format: YAML
+frontmatter with `name` (1–64 lowercase letters, digits or hyphens, equal to the
+folder name) and a one-line `description` (≤1024 characters), then Markdown
+instructions (≤32 KiB), with any supporting files beside it. Shift reads skills
+from `.shift/skills/` and `.agents/skills/` in the project (both committable),
+then `~/.config/shift/skills/` and `~/.agents/skills/`; a project skill shadows
+a user skill of the same name. Skills other agents already installed in
+`.agents/skills` therefore work unchanged. Nothing in a skill is evaluated, and
+`disable-model-invocation: true` is the only optional field that matters: it
+keeps a skill out of the model's index so only you can load it.
+
+The model sees a `<skills>` index of names and descriptions in its system
+message and loads a body with the read-only `skill` tool, which returns the
+instructions and the folder; `read` accepts paths under a valid skill folder so
+supporting files are reachable without widening the project boundary. `/skills`
+lists every skill with its source, validity and loaded state; `/skill NAME`
+(Tab-completes) sends a skill with your next prompt, wrapped in a
+`<skill name="…">` block that stays in history. The Session tab's `SKILLS`
+section shows the same list with `●` for loaded skills; clicking an unloaded row
+runs `/skill NAME`. The receipt records `skills` loaded in the turn, and
+`receipt.skills` lands on the turn span. Loading a skill never changes tool
+policy: the `skill` tool is read-only, so plan mode allows it and manual mode
+asks like any read.
+
+## Background jobs
+
+`run` accepts `background: true`: the command starts, the tool returns at once
+with a job id (`job-N`), and the process keeps running under the session with
+its output streaming to `runs/job-N.log` in the session directory. Foreground
+runs keep the 600 s ceiling; a background job may set `timeout_seconds` up to
+3600, and at most four jobs run at once. The approval prompt and the run
+allowlist apply exactly as for a foreground run. The `job` tool takes `action`
+`list`, `wait` (blocks up to `timeout_seconds`, default 60), `output` (the
+bounded tail so far) or `cancel`; `/jobs` and `/jobs cancel ID` are the user
+forms. When a job finishes, the ledger gets one run record carrying the job id,
+the receipt of the turn it finished in lists it, and the model receives a
+one-line harness note at its next request, in this turn or the next. Jobs die
+with the process: `/cancel` leaves them running, but quitting kills them, and
+nothing is daemonized.
+
+The Log tab shows a `RUNNING` block above the run history while jobs run, with
+elapsed time and the last output line, and each finished job joins the history
+as a `[job]` entry. Pane command rows run as background jobs, so the interface
+never blocks on `make test` and the output lands under the row when the job
+ends.
+
+In one model round, read-only tool calls (`read`, `rg`, `status`, `diff`,
+`traces`, and `job list`/`output`) that the policy already allows without asking
+execute concurrently, four at a time, before their results are recorded and
+returned in the model's order; their spans carry `tool.parallel`. Mutations,
+runs and anything that could prompt stay sequential.
+
 ## Print mode and unattended runs
 
 ```
@@ -277,8 +331,8 @@ For clients that launch their own dedicated process:
 ./bin/shift --mcp --session client
 ```
 
-This serves the same tools over stdio, reserving stdout for JSON-RPC. `bin/shift-mcp`
-is a compatibility launcher for that command. Configure an HTTP-capable client
+This serves the same tools over stdio, reserving stdout for JSON-RPC; `bin/shift-mcp`
+runs exactly that command. Configure an HTTP-capable client
 with the URL above to attach to an existing terminal session instead.
 
 The older Python supervisor remains at `extensions/shift/shift_mcp.py` for existing
@@ -316,7 +370,7 @@ Launch `bin/shift` from your project, or `make` in the Shift checkout (the optio
 `SHIFT_ARGS` make variable forwards CLI options). It requires Python 3 with curses and
 an interactive terminal. It uses the existing Guile session, tool permissions,
 streaming, receipts, and cancellation; it does not start a separate agent.
-`--tui` remains a compatibility alias, not a required flag. There is no separate
+There is no separate
 interactive REPL mode. Redirected/scripted input, `--print`, MCP, help, and session
 maintenance still use their non-screen paths. No additional model is loaded by
 the frontend. For a no-model demo, run:
@@ -336,6 +390,10 @@ composer. Explicit `/place` preferences still win under any theme: left/right us
 the side-pane arrangement, top/bottom the full-width transcript with a telemetry
 band, and a multi-line wordmark then shares its header rows with session details.
 Side panes dock from 96 columns when height permits; telemetry bands from 72.
+The tab strip keeps whole labels: when Work, Diff, Session, Model, Log and the
+panes do not fit, it shows the page holding the active tab and `‹ ›` arrows to
+the right of the names; Tab past the last visible tab turns the page, and the
+arrows are clickable.
 Narrow or short views use an overlay only when explicitly opened. Auto avoids
 overlays. Thin cyan separators and a restrained, unlabeled composer frame keep
 navigation separate from the conversation.
@@ -402,11 +460,12 @@ Busy turns, pending approvals and sessions open elsewhere refuse the switch.
 as data rather than code: each pane has a `name`, a `title`, and up to 24 rows
 of `text`, a live `field` (`session.name`, `session.model`, `usage.prompt`,
 `receipt.status`, `source.loaded` and the rest of the documented list), or a
-`command` argv. Clicking a command row runs that row; `/pane run NAME` runs
-every command row and `/pane run NAME ROW` one of them, through the same `run`
-machinery as the agent's runs, but only when the session's run allowlist already
-permits it; otherwise the pane reports which `/allow-run` prefix is missing.
-Output shows under the row and in the Log tab, bounded like other runs. Panes
+`command` argv. Clicking a command row runs that row as a background job;
+`/pane run NAME` starts every command row and `/pane run NAME ROW` one of them,
+through the same `run` machinery as the agent's runs, but only when the
+session's run allowlist already permits it; otherwise the pane reports which
+`/allow-run` prefix is missing. Output lands under the row and in the Log tab
+when the job ends, bounded like other runs. Panes
 never load Python, and the agent's `ui` tool can edit them only under the same
 validation as colors.
 
@@ -505,7 +564,11 @@ the cached identity. No inference request is made for these measurements.
 | Tab outside suggestions | Select Work, Diff, Session, Model or Log in a side pane/overlay |
 | Click a Model row or `/model PROVIDER/MODEL` | Switch models when idle; `/model list` refreshes the tab |
 | Click an idle Session row or `/session NAME` | Switch durable sessions when idle; running sessions are marked, not switchable |
-| Click a pane command or `/pane run NAME [ROW]` | Run a user-owned pane's allowlisted commands |
+| Click a pane command or `/pane run NAME [ROW]` | Start a user-owned pane's allowlisted commands as background jobs |
+| Click a Session-tab skill or `/skill NAME` | Send a skill's instructions with the next prompt; `/skills` lists them |
+| `/jobs`, `/jobs cancel ID` | List background jobs or stop one; the Log tab shows them running |
+| `/mouse off` | Release mouse tracking for the terminal's own selection (`on` takes it back) |
+| Click `‹` or `›` in the tab strip | Turn the page when the tabs do not fit |
 | `/copy`, `/copy N`, or click a SHIFT label | Copy the last reply, the N-th from last, or that block to the clipboard |
 | `/terminal on` | Sync the terminal's default colors and cursor to the theme (`off` restores) |
 | Shift+Tab or click mode badge | Cycle manual -> plan -> autopilot -> manual when idle |

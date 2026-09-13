@@ -208,8 +208,8 @@
              keep-alive))
     (unless (and (list? tools)
                  (every (lambda (tool)
-                          (memq tool '(read rg write edit shell traces live_eval extension
-                                       status diff apply_patch run ui)))
+                          (memq tool '(read rg skill write edit shell traces live_eval extension
+                                       status diff apply_patch run job ui)))
                         tools))
       (error "agent-tools contains an unsupported tool" tools)))
   (let ((rounds (module-ref module 'agent-max-tool-rounds)))

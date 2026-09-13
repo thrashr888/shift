@@ -39,8 +39,8 @@ In a terminal the process remains interactive after the answer; with redirected
 stdin it exits naturally at end-of-file. The initial turn uses the same tools,
 streaming, tracing, approvals, and durable checkpoint path as a typed prompt.
 
-Interactive terminals open the curses interface automatically; `--tui` remains
-a compatibility alias. There is no public `--repl` mode. Use `--print`/`-p` for
+Interactive terminals open the curses interface automatically. There is no
+public `--repl` mode. Use `--print`/`-p` for
 one answer, or redirect/pipeline input for the scriptable Guile command loop:
 
 ```sh
@@ -94,7 +94,6 @@ to watch off; pass `--watch` to opt in there.
 ```sh
 ./bin/shift
 make
-./bin/shift --tui  # compatibility alias
 ```
 
 The TUI uses Python 3's standard-library curses adapter around the same Guile
@@ -103,7 +102,8 @@ themes, and Ctrl+C cancels the active turn. Acid keeps a split transcript/output
 layout; `/place bottom` gives any theme a full-width transcript with bottom
 telemetry. Tab switches the Work, Diff, Session, Model and Log pane views, where
 Model lists and switches the provider's models, Session lists durable sessions
-with a status mark and switches between them, Log keeps bash run output, and a
+with a status mark, loaded skills and MCP peers and switches between sessions,
+Log keeps bash run output and running background jobs, and a
 `panes` preference or a project's `.shift/panes.scm` pane pack adds tabs of your own built
 from text, live fields and allowlisted commands; `/copy` puts a reply on the
 clipboard; MCP peers appear with their calls;
@@ -351,8 +351,12 @@ OpenAI cache outcomes are explicit in completed LLM spans: search traces for
 `llm.prompt_cache.status` or inspect the compact `cache=hit|miss` annotation.
 The trace also records cached and uncached prompt-token counts.
 
-The model can call `read`, `rg`, `write`, `edit`, `shell`, `traces`,
-`live_eval`, and `extension`. The `traces` tool searches the complete local
+The model can call `read`, `rg`, `skill`, `write`, `edit`, `shell`, `traces`,
+`live_eval`, `extension`, and the coding built-in's `status`, `diff`,
+`apply_patch`, `run` and `job`. Skills are `SKILL.md` folders under
+`.shift/skills`, `.agents/skills` or the user config; the model loads one by
+name and never gains authority from it. `run` with `background: true` starts a
+job that reports back when it finishes. The `traces` tool searches the complete local
 trace file while retaining only a bounded set of current-session hits. Hits are
 compact and carry stable span IDs; an exact `span_id` lookup returns the full
 stored span. This lets the agent follow generation decisions and tool evidence
@@ -382,7 +386,7 @@ or `--no-mcp` to disable it.
 that live session. Mutating requests serialize; status remains available.
 
 Clients that prefer to launch a dedicated process can use `./bin/shift --mcp`
-(stdio). `bin/shift-mcp` is now a compatibility launcher for it. The existing
+(stdio); `bin/shift-mcp` runs exactly that. The existing
 Codex project registration still uses this dedicated-process entry point;
 use an HTTP URL in client configuration to attach to an existing terminal.
 
@@ -519,10 +523,7 @@ extensions/README.md          artifact contract
 test/*                        Scheme runtime tests plus MCP integration test
 ```
 
-The internal Guile module namespace remains `(live-agent ...)` for now. The old
-`bin/lisp-agent` and `bin/lisp-agent-mcp` paths are compatibility shims, and a
-pre-existing `.lisp-agent/` directory is used only when `.shift/` does not yet
-exist.
+The internal Guile module namespace remains `(live-agent ...)`.
 
 Journal and trace attribute values larger than 4 KiB are truncated. Tool output
 is bounded at 64 KiB, writes at 256 KiB, and edited source files at 512 KiB;

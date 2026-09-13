@@ -19,7 +19,7 @@
                    (equal? prefix (take argv (length prefix)))))
             prefixes)))
 (define* (tool-decision mode name arguments #:optional (run-allow '()))
-  (let ((read-only? (or (member name '("read" "rg" "traces" "status" "diff"))
+  (let ((read-only? (or (member name '("read" "rg" "traces" "status" "diff" "skill" "job"))
                         (and (string=? name "ui") (equal? (json-object-ref arguments "action" "get") "get"))
                         (and (string=? name "extension")
                              (equal? (json-object-ref arguments "action" #f) "list"))))

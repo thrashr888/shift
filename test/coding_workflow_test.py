@@ -119,7 +119,7 @@ class CodingWorkflow(unittest.TestCase):
             ('(define agent-model "demo")', '(define agent-model "fake")'),
             ("http://127.0.0.1:11434", f"http://127.0.0.1:{self.server.server_port}"),
             ("(define agent-tools '(read rg))",
-             "(define agent-tools '(read rg write edit apply_patch status diff run))"),
+             "(define agent-tools '(read rg skill write edit apply_patch status diff run job))"),
             ("(define agent-max-tool-rounds 1)", "(define agent-max-tool-rounds 6)"),
             ("(define agent-compaction-threshold 12)", "(define agent-compaction-threshold 80)"),
         ):
@@ -184,7 +184,7 @@ class CodingWorkflow(unittest.TestCase):
     edit_notes = tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"})
 
     def test_agent_ui_patch_is_immediate_durable_and_does_not_change_permissions(self):
-        self.agent.write_text(self.agent.read_text().replace('status diff run))', 'status diff run ui))'))
+        self.agent.write_text(self.agent.read_text().replace('status diff run job))', 'status diff run job ui))'))
         plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
                 tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
         code, out, err = self.print_mode("Make this mine", plan, "--mode", "autopilot")
@@ -753,7 +753,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
         self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
         out = self.shift("/mode autopilot\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
-        self.assertIn("tools read rg write edit apply_patch status diff run · show-work off", out)
+        self.assertIn("tools read rg skill write edit apply_patch status diff run job · show-work off", out)
         self.assertNotIn("tool>", out)
         self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
         out = self.shift("/work on\nlook\n/quit\n", plan, session="repl")
@@ -786,6 +786,76 @@ class CodingWorkflow(unittest.TestCase):
             if span["name"] == "agent.turn":
                 return span
         self.fail("no agent.turn span")
+
+    def test_skills_are_indexed_loaded_and_receipted(self):
+        skill = self.project / ".agents/skills/greet"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: greet\ndescription: Greet politely\n---\nAlways start with hello.\n")
+        (skill / "extra.md").write_text("supporting file\n")
+        (self.project / ".agents/skills/hidden").mkdir()
+        (self.project / ".agents/skills/hidden/SKILL.md").write_text(
+            "---\nname: hidden\ndescription: User only\ndisable-model-invocation: true\n---\nquiet\n")
+        output = self.shift(
+            "/mode autopilot\nsay hi\n/skills\n/quit\n",
+            plan=[tool_call("skill", {"name": "greet"}), tool_call("read", {"path": str(skill / "extra.md")}),
+                  tool_call("skill", {"name": "hidden"}), answer("hello")],
+        )
+        system = Provider.last_messages[0]["content"]
+        self.assertIn("<skills>", system)
+        self.assertIn("- greet: Greet politely", system)
+        self.assertNotIn("hidden", system)
+        results = self.tool_results()
+        self.assertIn("Always start with hello.", results[0])
+        self.assertIn("supporting file", results[1])
+        self.assertIn("user-only", results[2])
+        self.assertIn("loaded  greet  agents  Greet politely", output)
+        self.assertIn("        hidden  agents  User only", output)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(receipt["skills"], ["greet"])
+        # A user-queued skill rides along with the next prompt and is receipted too.
+        self.shift("/skill hidden\nnext task\n/quit\n", plan=[answer("ok")])
+        user = [m for m in Provider.last_messages if m.get("role") == "user"][-1]["content"]
+        self.assertTrue(user.startswith('<skill name="hidden">\nSkill hidden (') and user.endswith('quiet\n</skill>\n\nnext task'), user)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(receipt["skills"], ["hidden"])
+
+    def test_background_jobs_return_at_once_and_report_back(self):
+        output = self.shift(
+            "/mode autopilot\nrun the suite\n/jobs\n/quit\n",
+            plan=[tool_call("run", {"argv": ["sh", "-c", "echo started; sleep 0.2; echo finished"], "background": True}),
+                  tool_call("read", {"path": "notes.txt"}),
+                  tool_call("job", {"action": "wait", "id": "job-1", "timeout_seconds": 10}),
+                  answer("done")],
+        )
+        results = self.tool_results()
+        self.assertIn("started as job-1", results[0])
+        self.assertIn("exit 0", results[2])
+        self.assertIn("finished", results[2])
+        # Two parallel-safe reads in one round come back in the model's order and are traced as parallel.
+        self.assertIn("job-1  exit", output)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual([run["status"] for run in receipt["runs"]], ["exit"])
+        self.assertTrue(any("Note from the harness: job job-1 finished" in m.get("content", "")
+                            for m in Provider.last_messages if m.get("role") == "user")
+                        or "exit 0" in results[2])
+
+    def test_parallel_reads_keep_their_order_and_trace_it(self):
+        (self.project / "b.txt").write_text("bravo\n")
+        Provider.plan = []
+        self.shift(
+            "/mode autopilot\nread both\n/quit\n",
+            plan=[sse([{"choices": [{"index": 0, "delta": {"tool_calls": [
+                        {"index": 0, "id": "call_a", "type": "function", "function": {"name": "read", "arguments": json.dumps({"path": "notes.txt"})}},
+                        {"index": 1, "id": "call_b", "type": "function", "function": {"name": "read", "arguments": json.dumps({"path": "b.txt"})}}]}}]},
+                       {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}]),
+                  answer("done")],
+        )
+        tools = [m for m in Provider.last_messages if m.get("role") == "tool"]
+        self.assertEqual([m["tool_call_id"] for m in tools], ["call_a", "call_b"])
+        self.assertIn("alpha port 8080", tools[0]["content"])
+        self.assertIn("bravo", tools[1]["content"])
+        traces = (self.state() / "traces.jsonl").read_text()
+        self.assertEqual(traces.count('"tool.parallel":true'), 2)
 
     def test_receipt_reports_the_turn_in_every_form(self):
         cached = {"prompt_tokens": 1200, "completion_tokens": 30, "prompt_tokens_details": {"cached_tokens": 1000}}

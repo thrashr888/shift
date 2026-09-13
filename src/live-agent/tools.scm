@@ -8,6 +8,7 @@
   #:use-module (live-agent diff)
   #:use-module (live-agent builtins)
   #:export (make-tool-result
+            read-roots
             coding-tool-names
             function-tool
             string-parameter
@@ -77,7 +78,7 @@
 
 ;; Implemented by the trusted (shift coding) built-in; the names are stable
 ;; runtime data so ceilings and policy can refer to them even when disabled.
-(define coding-tool-names '("status" "diff" "apply_patch" "run"))
+(define coding-tool-names '("status" "diff" "apply_patch" "run" "job"))
 
 (define max-tool-output (* 64 1024))
 (define max-write-input (* 256 1024))
@@ -95,6 +96,9 @@
 (define (inside-root? path root)
   (or (string=? path root)
       (string-prefix? (string-append root "/") path)))
+;; Directories outside the project that `read` may enter: the process sets
+;; this to the valid skill folders, and nothing else widens the boundary.
+(define read-roots (make-parameter (lambda () '())))
 
 (define (require-string arguments key)
   (let ((value (json-object-ref arguments key #f)))
@@ -111,7 +115,10 @@
            (if (absolute-file-name? requested)
                requested
                (string-append root "/" requested)))))
-    (unless (inside-root? candidate root)
+    (unless (or (inside-root? candidate root)
+                (and (string=? label "read")
+                     (let loop ((roots ((read-roots))))
+                       (and (pair? roots) (or (inside-root? candidate (car roots)) (loop (cdr roots)))))))
       (error (string-append label " path escapes the project root") requested))
     (list root candidate)))
 
@@ -357,7 +364,7 @@
              (if glob (list "--glob" glob) '())
              (list "--" query candidate)))
            (error-template
-            (string-append "/tmp/lisp-agent-rg-error-"
+            (string-append "/tmp/shift-rg-error-"
                            (number->string (getpid)) "-XXXXXX"))
            (error-port (mkstemp error-template))
            (error-path (port-filename error-port))
@@ -456,6 +463,12 @@
                    (cons "patch" (json-object (cons "type" "object")
                                               (cons "description" "UI keys returned by get, with replacement values")))
                    (cons "scope" (string-parameter "user or project, for save"))) '("action")))
+   ((string=? name "skill")
+    (function-tool
+     "skill"
+     "Load one of the skills listed in the system prompt. Returns its instructions and its folder, whose files you can read. Load a skill before following it."
+     (json-object (cons "name" (string-parameter "Skill name from the skills list")))
+     '("name")))
    ((string=? name "read")
     (function-tool
      "read"

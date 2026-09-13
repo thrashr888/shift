@@ -1,6 +1,7 @@
 .lisp-agent/
 .shift/*
 !.shift/panes.scm
+!.shift/skills/
 .env
 __pycache__/
 *.pyc

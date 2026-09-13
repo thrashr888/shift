@@ -1,4 +1,4 @@
-(use-modules (srfi srfi-64) (ice-9 textual-ports) (rnrs bytevectors)
+(use-modules (srfi srfi-64) (srfi srfi-1) (ice-9 textual-ports) (rnrs bytevectors)
              (live-agent json) (live-agent tools) (live-agent changes) (live-agent sha256) (shift coding))
 
 (test-begin "coding")
@@ -264,5 +264,37 @@
     (lambda (status code bytes) (list status code (utf8->string bytes)))))
 (test-assert "run has a provider schema" (json-object? (coding-tool-schema "run")))
 
+;; Background jobs: start, list, wait, output, cancel, timeout, ledger and notices.
+(define observed '())
+(job-observer! (lambda (event) (set! observed (cons event observed))))
+(define started (run-tool (args (cons "argv" (json-array "sh" "-c" "echo one; sleep 0.3; echo two")) (cons "background" #t))))
+(test-assert "a background run returns at once with a job id"
+  (and (tool-result-success? started) (string-contains (output started) "started as job-")))
+(define job-id (let ((text (output started))) (substring text (+ 11 (string-contains text "started as ")) (+ 11 (string-contains text "started as ") (string-length "job-1")))))
+(test-assert "the job lists as running" (string-contains (output (coding-execute "job" (args (cons "action" "list")) plain plain-ledger 7)) "running"))
+(define waited (coding-execute "job" (args (cons "action" "wait") (cons "id" job-id) (cons "timeout_seconds" 10)) plain plain-ledger 7))
+(test-assert "wait returns the finished job with its output" (and (tool-result-success? waited) (string-contains (output waited) "exit 0") (string-contains (output waited) "two")))
+(test-assert "the finished job is one ledger run record with its id"
+  (let ((record (last (ledger-runs plain-ledger)))) (equal? (json-object-ref record "job") job-id)))
+(test-assert "the observer saw the finished event with a pane-free tag"
+  (any (lambda (e) (and (equal? (json-object-ref e "event") "finished") (equal? (json-object-ref e "id") job-id))) observed))
+(test-equal "wait consumed the notice" '() (take-job-notices))
+(define slow (run-tool (args (cons "argv" (json-array "sleep" "30")) (cons "background" #t))))
+(define slow-id (let ((text (output slow))) (substring text (+ 11 (string-contains text "started as ")) (+ 11 (string-contains text "started as ") (string-length "job-2")))))
+(test-assert "cancel stops a running job" (string-contains (output (coding-execute "job" (args (cons "action" "cancel") (cons "id" slow-id)) plain plain-ledger 7)) "cancelled"))
+(let loop ((n 0)) (when (and (< n 50) (null? (take-job-notices))) (usleep 100000) (loop (+ n 1))))
+(test-assert "a cancelled job records cancelled" (equal? (json-object-ref (last (ledger-runs plain-ledger)) "status") "cancelled"))
+(define timed (run-tool (args (cons "argv" (json-array "sleep" "30")) (cons "background" #t) (cons "timeout_seconds" 1))))
+(define timed-id (let ((text (output timed))) (substring text (+ 11 (string-contains text "started as ")) (+ 11 (string-contains text "started as ") (string-length "job-3")))))
+(define timed-out (coding-execute "job" (args (cons "action" "wait") (cons "id" timed-id) (cons "timeout_seconds" 10)) plain plain-ledger 7))
+(test-assert "a job past its deadline is killed and reported" (and (not (tool-result-success? timed-out)) (string-contains (output timed-out) "timeout")))
+(test-assert "background timeouts stop at one hour"
+  (let ((r (run-tool (args (cons "argv" (json-array "true")) (cons "background" #t) (cons "timeout_seconds" 3601)))))
+    (and (not (tool-result-success? r)) (string-contains (output r) "through 3600"))))
+(test-assert "foreground timeouts still stop at ten minutes"
+  (let ((r (run-tool (args (cons "argv" (json-array "true")) (cons "timeout_seconds" 601)))))
+    (and (not (tool-result-success? r)) (string-contains (output r) "through 600"))))
+(stop-jobs! "test end")
 (system* "rm" "-rf" plain repo)
 (test-end "coding")
+

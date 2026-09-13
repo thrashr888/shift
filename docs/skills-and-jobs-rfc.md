@@ -1,7 +1,7 @@
 # RFC: skills, background jobs, and a composable sidebar
 
-Status: draft, September 13, 2026. Decisions below are proposed defaults; the
-open questions at the end are the ones that change the work.
+Status: implemented September 13, 2026, except the `source` rows in section 3.
+The decisions at the end record what changed from the draft.
 
 ## Summary
 
@@ -16,20 +16,21 @@ owns data.
   alive under the session, with output streaming into the Log tab and the
   ledger, completion notices reaching the model, and pane commands running the
   same way so the interface never blocks on `make test`.
-- **The sidebar stays at five built-in tabs.** Skills join the Session tab and
-  jobs join the Log tab. A `tabs` preference decides which tabs show and in
-  what order, and built-in sections become pane rows so a project can compose
-  its own sidebar in `.shift/panes.scm`.
+- **The sidebar stays at five built-in tabs and paginates.** Skills join the
+  Session tab and jobs join the Log tab. When tabs overflow the strip, it shows
+  the ones that fit plus `‹ ›` arrows instead of shrinking labels, and later
+  built-in sections become pane rows so a project can compose its own sidebar
+  in `.shift/panes.scm`.
 
 ## 1. Skills
 
 ### Format and discovery
 
 A skill is a directory with a `SKILL.md` whose YAML frontmatter has `name`
-(1–64 characters, `[a-z0-9-]`) and `description` (≤1024 characters). Optional
-fields are read and kept as metadata: `license`, `compatibility`, `metadata`,
-`allowed-tools`, `disable-model-invocation`. The body is Markdown, ≤32 KiB.
-Supporting files may sit beside it. Nothing in a skill is evaluated.
+(1–64 characters, `[a-z0-9-]`) and `description` (≤1024 characters).
+`disable-model-invocation: true` is honored; every other frontmatter field is
+ignored. The body is Markdown, ≤32 KiB. Supporting files may sit beside it.
+Nothing in a skill is evaluated.
 
 Discovery, in precedence order when names collide:
 
@@ -56,10 +57,9 @@ lives in history as a tool result, so it survives compaction like any other
 evidence. `disable-model-invocation: true` hides a skill from the tool; only
 the user can load it.
 
-`allowed-tools` is recorded on the trace and shown in the sidebar but not
-honored: policy is process-owned data (`policy.scm`), and a skill cannot grant
-or request authority. This is the deliberate difference from Pi, where a skill
-runs with the process's permissions.
+A skill cannot grant or request authority: policy is process-owned data
+(`policy.scm`). This is the deliberate difference from Pi, where a skill runs
+with the process's permissions.
 
 ### User commands
 
@@ -159,14 +159,13 @@ session" and Log is "what ran". So:
 
 ### A more flexible solution
 
-Two steps, both data rather than layout code:
+Two steps:
 
-1. **A `tabs` preference** replaces the tab-related half of `sections`: an
-   ordered list of tab names, built-in or pane, that controls which tabs show
-   in the strip and in what order, for example `("work" "log" "shift")`.
-   Hidden tabs remain reachable with `/tab NAME` and the command palette, and
-   `sections` keeps only its Work-tab meaning (the context meter and the checks
-   band). Theme packs may set `tabs` the way QDOS sets its placement.
+1. **Pagination in the strip.** Labels stay whole. When they overflow, the
+   strip shows the tabs that fit and `‹ ›` arrows to the right of the names;
+   the active tab's page is always the one shown, Tab past the last visible
+   tab turns the page, and the arrows are clickable. This replaces the
+   first-letter shrinking, which stopped being readable past five tabs.
 2. **Sections as pane rows.** Built-in sidebar content becomes rows a pane can
    name: `(source sessions)`, `(source peers)`, `(source skills)`,
    `(source runs)`, `(source receipt)`, `(source models)`. The built-in Session
@@ -176,9 +175,8 @@ Two steps, both data rather than layout code:
    names; the field list already comes from `ui.scm`, and the source list will
    too.
 
-Step 1 ships with skills and jobs because it is small. Step 2 follows once
-skills and jobs exist as sources, so the built-in tabs are rewritten once, not
-twice.
+Pagination ships first because it is small. Step 2 follows once skills and jobs
+exist as sources, so the built-in tabs are rewritten once, not twice.
 
 ## Implementation order
 
@@ -192,21 +190,15 @@ twice.
    ledger records, completion notices, `/jobs`, Log tab `RUNNING`, pane
    commands as jobs, receipt fields, docs.
 4. Parallel read-only tool calls behind the audited records.
-5. The `tabs` preference, then `source` rows.
+5. `source` rows, so built-in tabs become default panes.
 
 Each step leaves `make test` green and is usable on its own.
 
-## Open questions
+## Decisions (September 13)
 
-1. Read `.agents/skills` and `~/.agents/skills` alongside Shift's own folders
-   for interoperability, or only Shift's? The draft reads both.
-2. Should a project skill body require a one-time approval in manual mode even
-   when the model is otherwise in autopilot for that project? The draft says
-   no: the mode decides, as it does for `read`.
-3. Job ceilings: one hour and four concurrent jobs per session. Higher, or
-   configurable through a setting?
-4. Should pane commands become background jobs by default, or keep foreground
-   runs with `(job "make" "test")` as an explicit row kind? The draft makes
-   every pane command a job.
-5. Ship parallel read-only tool calls with jobs, since both need the same
-   audit, or leave them for a later slice?
+1. Read `.agents/skills` in the project and `~/.agents/skills` globally as well
+   as Shift's own folders.
+2. Job ceilings stay at one hour and four concurrent jobs per session.
+3. Every pane command runs as a background job; there is no separate row kind.
+4. Parallel read-only tool calls ship with jobs.
+5. Tab-strip pagination ships now, ahead of skills.

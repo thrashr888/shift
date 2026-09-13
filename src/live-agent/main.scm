@@ -28,6 +28,7 @@
   #:use-module (live-agent recovery)
   #:use-module (live-agent runtime)
   #:use-module (live-agent session)
+  #:use-module (live-agent skills)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:export (main))
@@ -59,7 +60,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("ui" "read" "rg" "write" "edit" "shell" "traces" "live_eval" "extension")
+  (append '("ui" "read" "rg" "skill" "write" "edit" "shell" "traces" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -110,6 +111,7 @@
 (define last-receipt #f)
 
 (define (reset-turn-usage!)
+  (set! turn-skills '())
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
@@ -135,7 +137,7 @@
     "       shift --list-sessions [--state-dir PATH]\n"
     "       shift --check-panes [FILE]        lint a pane pack (default .shift/panes.scm)\n"
     "       shift session-fork PARENT CHILD\n"
-    "\nInteractive terminals open curses (--tui is a compatibility alias).\n"
+    "\nInteractive terminals open the curses interface.\n"
     "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
 
 (define (parse-arguments args)
@@ -146,9 +148,6 @@
      ((null? rest)
       (values agent state-dir watch? session-name session-mode list?
               initial-prompt fork-parent fork-child))
-     ((string=? (car rest) "--tui")
-      (loop (cdr rest) agent state-dir watch? session-name session-mode list?
-            initial-prompt fork-parent fork-child))
      ((and (pair? (cdr rest)) (string=? (car rest) "--agent"))
       (loop (cddr rest) (cadr rest) state-dir watch?
             session-name session-mode list? initial-prompt fork-parent fork-child))
@@ -271,6 +270,9 @@
     "  /extension-load NAME         enable an artifact as a generation\n"
     "  /extension-disable NAME      remove its exact active patch\n"
     "  /extension-export NAME       save all active patches as an artifact\n"
+    "  /skills           list skills (SKILL.md folders) and which are loaded\n"
+    "  /skill NAME       send a skill's instructions with the next prompt\n"
+    "  /jobs             list background jobs; /jobs cancel ID stops one\n"
     "  /traces [QUERY]   list recent spans or search all session traces\n"
     "  /trace SPAN_ID    inspect one full span returned by trace search\n"
     "  /compact          summarize older history and retain recent turns\n"
@@ -494,6 +496,55 @@
                                "")))))
            spans)))))))
 
+;; Skills: the model loads one through the `skill` tool; the user queues one
+;; with /skill NAME and it rides along with the next prompt. Both are recorded
+;; on the receipt. Policy never changes because a skill was loaded.
+(define turn-skills '())
+(define queued-skills '())
+(define (emit-skills!) (when (ui-connected?) (ui-emit! "skills" (skills-json))))
+(define (execute-skill arguments)
+  (let ((name (json-object-ref arguments "name" #f)))
+    (unless (string? name) (error "name must be a string"))
+    (let ((body (skill-load! name)))
+      (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
+      (emit-skills!)
+      (make-tool-result #t body))))
+(define (queue-skill! name)
+  (let ((body (skill-load! name #:by-model #f)))
+    (set! queued-skills
+      (append (filter (lambda (entry) (not (string=? (car entry) name))) queued-skills) (list (cons name body))))
+    (emit-skills!)
+    (format #f "Skill ~a will be sent with your next prompt" name)))
+(define (with-queued-skills text)
+  (if (null? queued-skills)
+      text
+      (let ((queued queued-skills))
+        (set! queued-skills '())
+        (for-each (lambda (entry) (unless (member (car entry) turn-skills) (set! turn-skills (cons (car entry) turn-skills)))) queued)
+        (string-append
+         (string-join (map (lambda (entry) (string-append "<skill name=\"" (car entry) "\">\n" (cdr entry) "\n</skill>")) queued) "\n\n")
+         "\n\n" text))))
+(define (show-jobs)
+  (let ((all (if (builtin-enabled? 'coding) ((builtin-ref 'coding 'job-list)) '())))
+    (if (null? all)
+        (display "No background jobs in this session.\n")
+        (for-each (lambda (job) (display (job-line job)) (newline)) all))))
+(define (job-line job)
+  (let ((event ((builtin-ref 'coding 'job-event) job "running")))
+    (format #f "~a  ~a  ~a  ~as  ~a" (json-object-ref event "id") (json-object-ref event "status")
+            (string-join (json-array-items (json-object-ref event "argv")) " ")
+            (/ (round (/ (json-object-ref event "elapsed_ms") 100.0)) 10.0) (json-object-ref event "log"))))
+(define (show-skills)
+  (let ((items (skill-index)))
+    (if (null? items)
+        (display "No skills. Add SKILL.md folders under .shift/skills, .agents/skills or ~/.config/shift/skills.\n")
+        (for-each
+         (lambda (r)
+           (format #t "~a ~a  ~a  ~a~%"
+                   (cond ((not (assq-ref r 'valid)) "invalid") ((skill-loaded? (assq-ref r 'name)) "loaded ") (else "       "))
+                   (assq-ref r 'name) (assq-ref r 'source)
+                   (or (assq-ref r 'description) (assq-ref r 'error))))
+         items))))
 (define (execute-traces tracer arguments)
   (catch #t
     (lambda ()
@@ -622,9 +673,9 @@
 ;; validation as a slash command or a settings file.
 (define (apply-cli-overrides!)
   (when cli-mode
-    (unless (member cli-mode '("manual" "plan" "autopilot" "accept" "auto"))
+    (unless (member cli-mode '("manual" "plan" "autopilot"))
       (error "--mode must be manual, plan, or autopilot" cli-mode))
-    (setting-set! 'mode (legacy-mode (string->symbol cli-mode))))
+    (setting-set! 'mode (string->symbol cli-mode)))
   (when cli-model (model-select! cli-model))
   (for-each (lambda (entry) (setting-set-json! (car entry) (cdr entry))) cli-settings)
   (unless (null? cli-allow-runs)
@@ -779,7 +830,7 @@
   (catch #t
     (lambda ()
       (estimate-input-tokens
-        (cons (make-message "system" (generation-ref generation 'agent-system-prompt)) history)
+        (cons (make-message "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block))) history)
         (filter within-process-tool-ceiling?
                 (map tool-name (generation-ref generation 'agent-tools)))))
     (lambda _ #f)))
@@ -872,7 +923,7 @@
     (let loop ((rows (json-array-items (json-object-ref pane "rows"))) (index 0) (ran 0))
       (if (null? rows)
           (if (and only (= ran 0)) (error "no command row at that index" only)
-              (format #f "Pane ~a ran ~a command~a" name ran (if (= ran 1) "" "s")))
+              (format #f "Pane ~a started ~a job~a" name ran (if (= ran 1) "" "s")))
           (let ((row (car rows)))
             (if (or (not (json-object-ref row "command" #f)) (and only (not (= only index))))
                 (loop (cdr rows) (+ index 1) ran)
@@ -880,21 +931,19 @@
                        (allowed (run-allowed? argv (setting-ref generation 'run-allow))))
                   (unless allowed
                     (error (format #f "pane command is not allowlisted; /allow-run ~s first" (string-join argv " "))))
-                  (let* ((outcome ((builtin-ref 'coding 'coding-execute) "run"
-                                   (json-object (cons "argv" (apply json-array argv)))
-                                   (getcwd) ledger turn (coding-context generation #f)))
-                         (output (tool-result-output outcome))
-                         (excerpt (ui-output-excerpt output)))
-                    (ui-emit! "pane-output"
-                      (json-object (cons "pane" name) (cons "index" index)
-                                   (cons "argv" (apply json-array argv))
-                                   (cons "ok" (tool-result-success? outcome))
-                                   (cons "output" (car excerpt)) (cons "truncated" (cdr excerpt))
-                                   (cons "at" (strftime "%H:%M" (localtime (current-time))))))
-                    (loop (cdr rows) (+ index 1) (+ ran 1))))))))))
+                  ;; Pane commands are background jobs: the interface never
+                  ;; blocks, and the output lands under the row when it finishes.
+                  ((builtin-ref 'coding 'start-job!)
+                   (json-object (cons "argv" (apply json-array argv)) (cons "background" #t)
+                                (cons "timeout_seconds" 3600))
+                   (getcwd) ledger turn (coding-context generation #f)
+                   `((pane . ,name) (index . ,index)))
+                  (loop (cdr rows) (+ index 1) (+ ran 1)))))))))
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions"))
+        (and (= (length parts) 2) (string=? (car parts) "/skill")
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (cadr parts)))
         (and (<= 3 (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts))
              (or (= (length parts) 3) (string-every char-numeric? (cadddr parts))))
@@ -925,8 +974,8 @@
        (show-context generation))
       ((string=? command "/mode")
        (when value
-         (unless (member value '("manual" "plan" "autopilot" "accept" "auto")) (error "use /mode manual|plan|autopilot"))
-         (setting-set! 'mode (legacy-mode (string->symbol value))))
+         (unless (member value '("manual" "plan" "autopilot")) (error "use /mode manual|plan|autopilot"))
+         (setting-set! 'mode (string->symbol value)))
        (format #t "Mode: ~a~%" (setting-ref generation 'mode))
        (when (eq? (setting-ref generation 'mode) 'autopilot)
          (display "Autopilot runs every tool without asking, shell runs included; plan is read-only and manual asks each time.\n")))
@@ -1011,6 +1060,12 @@
     'continue)
    ((string=? line "/generations") (show-generations runtime) 'continue)
    ((string=? line "/extensions") (show-extensions runtime) 'continue)
+   ((string=? line "/skills") (show-skills) 'continue)
+   ((string=? line "/jobs") (show-jobs) 'continue)
+   ((string-prefix? "/jobs cancel " line)
+    (display ((builtin-ref 'coding 'cancel-job!) (trimmed-command-argument line "/jobs cancel "))) (newline) 'continue)
+   ((string-prefix? "/skill " line)
+    (display (queue-skill! (trimmed-command-argument line "/skill "))) (newline) 'continue)
    ((string=? line "/traces") (show-traces tracer) 'continue)
    ((string-prefix? "/traces " line)
     (show-traces tracer (trimmed-command-argument line "/traces "))
@@ -1494,10 +1549,11 @@
     (format #t "Allowed for this session: ~a~%" (string-join argv " "))))
 
 (define (run-preview arguments)
-  (format #f "run ~a  (cwd ~a, timeout ~as)~%"
+  (format #f "run ~a  (cwd ~a, timeout ~as~a)~%"
           (string-join (run-argv-of arguments) " ")
           (json-object-ref arguments "cwd" ".")
-          (json-object-ref arguments "timeout_seconds" 120)))
+          (json-object-ref arguments "timeout_seconds" 120)
+          (if (json-object-ref arguments "background" #f) ", background job" "")))
 
 (define* (authorize-tool runtime generation name arguments #:optional (preview #f))
   (let* ((run? (string=? name "run"))
@@ -1764,8 +1820,49 @@
                       (string-append "Committed diff unavailable: "
                                      (caught-error-detail key arguments))))))))
 
+;; Read-only calls in the same round run concurrently, at most four at a time,
+;; before the sequential pass records, traces and appends their results in
+;; the model's order. Only calls the policy already allows without asking are
+;; prefetched; mutations, runs and anything that could prompt stay sequential.
+(define parallel-tool-names '("read" "rg" "status" "diff" "traces"))
+(define (prefetchable? generation name arguments enabled-tools)
+  (and (member name enabled-tools)
+       (or (member name parallel-tool-names)
+           (and (string=? name "job")
+                (member (json-object-ref arguments "action" "list") '("list" "output"))))
+       (not (json-object-ref arguments "invalid_json" #f))
+       (eq? 'allow (tool-decision (setting-ref generation 'mode) name arguments
+                                  (setting-ref generation 'run-allow)))))
+(define (execute-read-only-call tracer generation name arguments)
+  (catch #t
+    (lambda ()
+      (cond
+       ((string=? name "traces") (execute-traces tracer arguments))
+       ((member name coding-tool-names)
+        ((builtin-ref 'coding 'coding-execute) name arguments (getcwd) ledger (current-turn)
+         (coding-context generation #f)))
+       (else (execute-tool name arguments (getcwd) (generation-ref generation 'agent-shell-policy) (lambda _ #t)))))
+    (lambda (key . arguments)
+      (if (cancelled? key)
+          (apply throw key arguments)
+          (make-tool-result #f (format #f "tool failed (~a): ~s" key arguments))))))
+(define (prefetch-tool-calls tracer generation calls enabled-tools)
+  (let ((safe (filter (lambda (call) (prefetchable? generation (tool-call-name call) (tool-call-arguments call) enabled-tools)) calls)))
+    (if (< (length safe) 2)
+        '()
+        (let batch ((remaining safe) (done '()))
+          (if (null? remaining)
+              done
+              (let* ((now (if (> (length remaining) 4) (take remaining 4) remaining))
+                     (threads (map (lambda (call)
+                                     (call-with-new-thread
+                                      (lambda () (execute-read-only-call tracer generation (tool-call-name call) (tool-call-arguments call)))))
+                                   now)))
+                (batch (drop remaining (length now))
+                       (append done (map (lambda (call thread) (cons call (join-thread thread))) now threads)))))))))
 (define (execute-tool-calls runtime tracer parent generation provider calls
                             messages enabled-tools)
+  (define prefetched (prefetch-tool-calls tracer generation calls enabled-tools))
   (let loop ((remaining calls) (result messages))
     (if (null? remaining)
         result
@@ -1810,6 +1907,7 @@
                                              (and (string=? name "run")
                                                   (run-preview (tool-call-arguments call)))))
                         (unavailable-result name))
+                       ((assq call prefetched) => cdr)
                        (else
                         ;; This write-ahead record is deliberately retained if
                         ;; cancellation or process death interrupts execution.
@@ -1829,6 +1927,8 @@
                              ((string=? name "extension")
                               (execute-extension
                                runtime generation (tool-call-arguments call)))
+                             ((string=? name "skill")
+                              (execute-skill (tool-call-arguments call)))
                              ((string=? name "traces")
                               (execute-traces tracer (tool-call-arguments call)))
                              ((member name coding-tool-names)
@@ -1867,6 +1967,7 @@
               (emit-ui-diff! (current-turn)))
             (trace-end! span (if ok? "OK" "ERROR")
                         `((output.value . ,output)
+                          ,@(if (assq call prefetched) '((tool.parallel . #t)) '())
                           ,@(change-attributes outcome)))
             (runtime-record!
              runtime 'tool-result
@@ -2028,7 +2129,7 @@
          (keep-alive (setting-ref generation 'agent-keep-alive))
          (system
           (make-message
-           "system" (generation-ref generation 'agent-system-prompt)))
+           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block))))
          (transformed-line
           (generation-call generation 'agent-transform-user line))
          (selected
@@ -2046,7 +2147,7 @@
                  "Authoritative project context selected by agent-select-context "
                  "for this turn. Prefer it over earlier answers when they conflict.\n\n"
                  context-text)))))
-         (user-message (make-message "user" transformed-line))
+         (user-message (make-message "user" (with-queued-skills transformed-line)))
          (cache-prefix (append (list system) history))
          (cache-cohort
           "session")
@@ -2070,7 +2171,7 @@
            system history context-messages user-message)))
     ;; Calibration belongs to this turn and its tool-bearing requests, not to
     ;; another model, a previous turn, or the separate summarizer request.
-    (let loop ((messages working) (round 0)
+    (let loop ((messages (with-job-notices working)) (round 0)
                (previous-estimate #f) (previous-prompt #f))
       (define raw-estimate (estimate-input-tokens messages enabled-tools))
       (set! last-estimate
@@ -2135,11 +2236,12 @@
                                      (turn . ,turn-count)))
                   (error "turn token budget exceeded" turn-tokens budget)))
               (loop
-               (with-limit-nudge
+               (with-job-notices
+                (with-limit-nudge
                 runtime generation turn-count (+ round 1) max-rounds
                 (execute-tool-calls
                  runtime tracer parent generation provider calls with-assistant
-                 enabled-tools))
+                 enabled-tools)))
                (+ round 1)
                (if prompt-reported? raw-estimate previous-estimate)
                (if prompt-reported? prompt previous-prompt))))))))
@@ -2159,6 +2261,16 @@
               (inexact->exact (round (* 100 (/ turn-tokens budget))))))
      (else #f))))
 
+;; Finished background jobs reach the model as one ephemeral note at the next
+;; provider request, in this turn or the next; the ledger has the record.
+(define (with-job-notices messages)
+  (let ((notices (if (builtin-enabled? 'coding) ((builtin-ref 'coding 'take-job-notices)) '())))
+    (if (null? notices)
+        messages
+        (append messages
+                (list (json-object (cons "role" "user") (cons "ephemeral" #t)
+                                   (cons "content" (string-append "Note from the harness: " (string-join notices "; ")
+                                                                  ". Use the job tool to read output you still need."))))))))
 (define (with-limit-nudge runtime generation turn-count next-round max-rounds messages)
   (let ((reason (and (not turn-nudged?)
                      (limit-nudge-reason generation next-round max-rounds))))
@@ -2300,6 +2412,7 @@
              (rounds . ,turn-rounds))
    #:tool-calls turn-tool-calls
    #:ledger ledger
+   #:skills (reverse turn-skills)
    #:trace-id (trace-trace-id span) #:span-id (trace-span-id span)
    #:session-name (tracer-session-name tracer)
    #:session-id (and (tracer-session-name tracer) (tracer-session-id tracer))))
@@ -2455,12 +2568,13 @@
         (cons "mcp" (if mcp-running? (format #f "http://127.0.0.1:~a/mcp" mcp-port) json-null))
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
         (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
-        (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral")))))
+        (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral"))))
+      (emit-skills!))
     (define (register-host!)
       (ui-host-handler!
         (lambda (command)
           (unless (host-command-allowed? command)
-            (error "only /mode manual|plan|autopilot, /model list, /model PROVIDER/MODEL, /sessions, or /pane run NAME is supported"))
+            (error "only /mode manual|plan|autopilot, /model list, /model PROVIDER/MODEL, /sessions, /pane run NAME, or /skill NAME is supported"))
           (unless (try-mutex lock) (error "Session busy; finish the turn or pending approval before changing mode or model"))
           (dynamic-wind
             (lambda () #t)
@@ -2470,6 +2584,8 @@
                  (let ((parts (string-tokenize command)))
                    (run-pane! runtime (caddr parts) turn-count
                               (and (= (length parts) 4) (string->number (cadddr parts))))))
+                ((string-prefix? "/skill " command)
+                 (queue-skill! (trimmed-command-argument command "/skill ")))
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
                  (let ((summaries (session-summaries (dirname (dirname (session-directory session))) (session-name session))))
@@ -2672,7 +2788,6 @@
                    (make-tracer
                     runtime-state-directory
                     (or (getenv "SHIFT_OTEL_ENDPOINT")
-                        (getenv "LISP_AGENT_OTEL_ENDPOINT")
                         (getenv "PHOENIX_COLLECTOR_ENDPOINT"))
                     (and session (session-id session))
                     (and session (session-name session))))))
@@ -2680,6 +2795,33 @@
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
         (ui-init! state-directory (and session runtime-state-directory))
+        (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)))
+        (when (builtin-enabled? 'coding)
+          ((builtin-ref 'coding 'job-observer!)
+           (lambda (event)
+             (ui-emit! "job" event)
+             (let ((pane (json-object-ref event "pane" #f)))
+               (when (and (string? pane) (equal? (json-object-ref event "event") "finished"))
+                 ;; The pane row and the Log tab parse the same header a foreground run prints.
+                 (let* ((tail (json-object-ref event "tail" ""))
+                        (status (json-object-ref event "status" "exit")) (code (json-object-ref event "code" 0))
+                        (status-text (cond ((equal? status "exit") (format #f "exit ~a" code))
+                                           ((equal? status "signal") (format #f "killed by signal ~a" code))
+                                           ((equal? status "timeout") (format #f "timeout after ~as (killed)" code))
+                                           (else status)))
+                        (excerpt (ui-output-excerpt
+                                  (format #f "run ~a · ~a · ~as · ~a lines · log ~a~%~a"
+                                          (string-join (json-array-items (json-object-ref event "argv" (json-array))) " ")
+                                          status-text (/ (round (/ (json-object-ref event "elapsed_ms" 0) 100.0)) 10.0)
+                                          (length (filter (lambda (l) (not (string-null? l))) (string-split tail #\newline)))
+                                          (json-object-ref event "log" "") tail))))
+                   (ui-emit! "pane-output"
+                     (json-object (cons "pane" pane) (cons "index" (json-object-ref event "index" 0))
+                                  (cons "argv" (json-object-ref event "argv" (json-array)))
+                                  (cons "ok" (json-object-ref event "ok" #f))
+                                  (cons "output" (car excerpt)) (cons "truncated" (cdr excerpt))
+                                  (cons "at" (strftime "%H:%M" (localtime (current-time))))))))))))
+        (read-roots skill-directories)
         (load-dotenv! (string-append (getcwd) "/.env"))
         (unless (try-transition "startup options" apply-cli-overrides!)
           (exit 2))
@@ -2722,6 +2864,7 @@
                      (repl runtime tracer watch? session checkpoint! initial-prompt))
                    (lambda ()
                      (stop-watcher!)
+                     (when (builtin-enabled? 'coding) ((builtin-ref 'coding 'stop-jobs!) "killed by exit"))
                      (ui-stop!)
                      (trace-close! tracer)
                      (unless (or mcp-stdio? control-port)

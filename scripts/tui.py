@@ -48,18 +48,20 @@ COMMANDS = {
     '/model':'Inspect or choose a model', '/context':'Context usage and limit', '/settings':'Session settings',
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
     '/receipt':'Last turn receipt',
-    '/session':'Current session, or switch to NAME', '/undo':'Undo last turn edits', '/quit':'Exit session',
+    '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
+    '/jobs':'List background jobs (cancel ID stops one)',
+    '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
 
 
-def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=()):
+def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=(), skills=()):
     query=draft.strip()
     if not query.startswith('/'):
         return [(name,description) for name,description in COMMANDS.items()
                 if palette and query.casefold() in (name+' '+description).casefold()]
     name,separator,value=draft.partition(' ')
     if separator:
-        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else tuple('run '+pane for pane in panes) if name=='/pane' else ENUMS.get(name,())
+        choices=themes if name=='/theme' else ('list',)+tuple(models) if name=='/model' else tuple(sessions) if name=='/session' else tuple('run '+pane for pane in panes) if name=='/pane' else tuple(skills) if name=='/skill' else ENUMS.get(name,())
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
 
@@ -100,11 +102,8 @@ def frontend_arguments(argv):
     index=0
     while index<len(argv):
         option=argv[index]
-        if option=='--tui':
-            index+=1
-            continue
         if option in ('--print','-p','--mcp','--mcp-stdio','--list-sessions','--fork-session'):
-            raise ValueError('--tui cannot be combined with print, MCP stdio, or session maintenance.')
+            raise ValueError('the terminal interface cannot be combined with print, MCP stdio, or session maintenance.')
         count=VALUE_OPTIONS.get(option,0)
         args.extend(argv[index:index+count+1])
         index+=count+1
@@ -319,6 +318,8 @@ class Model:
         self.runs=deque(maxlen=50)
         self.sessions={'items':[],'error':None,'requested':False}
         self.peers={}
+        self.skills=[]
+        self.jobs={}
         self.pane_output={}
         self.replies=[]
         self.approval_preview=''
@@ -415,6 +416,22 @@ class Model:
                     self.sessions.update(error=self.notice,requested=False)
         elif kind == 'sessions':
             self.sessions={'items':[dict(item) for item in value.get('sessions',[])],'error':None,'requested':False}
+        elif kind == 'job':
+            job_id=clean(str(value.get('id','')));argv=' '.join(clean(str(p)) for p in value.get('argv',[]))
+            if value.get('event')=='finished':
+                self.jobs.pop(job_id,None)
+                if value.get('pane'):return  # the pane-output event that follows carries this job
+                entry=run_entry({'output':str(value.get('tail','')),'ok':value.get('ok'),'turn':value.get('turn','?'),'id':None,'truncated':False})
+                status=clean(str(value.get('status','')));code=value.get('code')
+                entry.update(kind='job',command=job_id+' · '+argv,at=time.strftime('%H:%M'),
+                             status={'exit':'exit '+str(code),'signal':'killed by signal '+str(code),'timeout':'timeout'}.get(status,status),
+                             seconds=str(round(int(value.get('elapsed_ms') or 0)/1000,1)),log=clean(str(value.get('log',''))))
+                self.runs.append(entry);self.panel_scroll['log']=10**9
+                self.notice=job_id+' finished: '+entry['status']
+            else:
+                self.jobs[job_id]={'argv':argv,'elapsed':int(value.get('elapsed_ms') or 0),'tail':clean(str(value.get('tail','')).splitlines()[-1] if str(value.get('tail','')).strip() else '')}
+        elif kind == 'skills':
+            self.skills=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'peer':
             peer=self.peers.setdefault(str(value.get('id','')),{'name':'client','version':'','calls':0,'last':'','at':''})
             stamp=time.strftime('%H:%M')
@@ -755,7 +772,8 @@ class Terminal:
             self.completion_index=0
             self.completion_query=query
         self.completion_choices=suggestions(m.draft,m.themes,self.menu,m.models['items'],[s.get('name','') for s in m.sessions['items']],
-                                            [str(p.get('name','')) for p in m.config.get('panes',[]) if isinstance(p,dict)]) if active else []
+                                            [str(p.get('name','')) for p in m.config.get('panes',[]) if isinstance(p,dict)],
+                                            [str(k.get('name','')) for k in m.skills if k.get('valid',True)]) if active else []
         self.completion_index=min(self.completion_index,max(0,len(self.completion_choices)-1))
         return active
 
@@ -822,6 +840,7 @@ class Terminal:
                     try:self.switch_session(value)
                     except ValueError as error:self.model.notice=str(error)
                 elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value.split()[0],'pane')
+                elif kind=='skill':self.request_command('/skill '+value,'Loading skill '+value,'skill')
                 elif kind=='copy':self.copy_reply_at(value)
                 elif kind=='model':
                     try:self.request_model(value)
@@ -1025,13 +1044,27 @@ class Terminal:
         pane=self.pane(tab)
         return str(pane.get('title',tab)).upper() if pane else tab.upper()
 
-    def tab_labels(self,width,gap):
-        # Labels shrink to their first letters before the strip would overflow.
-        labels=[self.tab_label(tab) for tab in self.tabs()]
-        for size in (12,4,3,2):
-            labels=[label[:size] for label in labels]
-            if sum(len(label)+gap for label in labels)-gap<=width:break
-        return labels
+    def tab_page(self,width,gap,arrows):
+        # Labels stay whole. When they overflow, the strip shows one page of
+        # tabs plus arrows: the page holding the active tab, so Tab past the
+        # last visible tab turns the page. Returns (page, previous, next) where
+        # previous/next name the tab an arrow selects, or None at either end.
+        tabs=self.tabs();labels=[self.tab_label(tab) for tab in tabs]
+        if sum(len(label)+gap for label in labels)-gap<=width:return list(zip(tabs,labels)),None,None
+        room=max(1,width-arrows);pages=[];page=[];used=0
+        for tab,label in zip(tabs,labels):
+            need=len(label)+(gap if page else 0)
+            if page and used+need>room:pages.append(page);page=[];used=0;need=len(label)
+            page.append((tab,label));used+=need
+        if page:pages.append(page)
+        index=next((i for i,items in enumerate(pages) if any(tab==self.model.panel_tab for tab,_ in items)),0)
+        return (pages[index],pages[index-1][-1][0] if index else None,pages[index+1][0][0] if index+1<len(pages) else None)
+
+    def tab_arrows(self,y,x,previous,following):
+        # ‹ › to the right of the names; a dim arrow marks the end of the strip.
+        left,right=('<','>') if (self.model.config.get('ascii') or not self.unicode) else ('‹','›')
+        self.button(y,x,left,1,('tab',previous),3 if previous else 4,bool(previous))
+        self.button(y,x+2,right,1,('tab',following),3 if following else 4,bool(following))
 
     def telemetry(self):
         m=self.model
@@ -1138,14 +1171,14 @@ class Terminal:
             self.put(strip_y+1,0,self.rule(cols),cols,3)
             if panel and mode=='docked':
                 x=panel.x+2
-                tabs=self.tabs()
-                labels=[self.tab_label(tab) for tab in tabs]
+                labels=[self.tab_label(tab) for tab in self.tabs()]
                 roomy=sum(len(label)+4 for label in labels)-2<=panel.w-2
-                if not roomy:labels=self.tab_labels(panel.w-2,1)
-                for tab,label in zip(tabs,labels):
+                page,previous,following=self.tab_page(panel.w-2,1,4)
+                for tab,label in page:
                     text=(' '+label+' ') if roomy else label
                     self.button(strip_y,x,text,len(text),('tab',tab),12 if m.panel_tab==tab else 4,m.panel_tab==tab)
                     x+=len(text)+(2 if roomy else 1)
+                if previous or following:self.tab_arrows(strip_y,x,previous,following)
         if c['branding']=='subtitle':
             x=logo_width+6 if large else 2
             self.put(1 if large else 2,x,c['identity'],cols-x-2,4)
@@ -1174,10 +1207,12 @@ class Terminal:
         self.put(2,0,('=' if c.get('ascii') else '═')*cols,cols,1)
         if panel and mode=='docked' and c['placement'] in ('left','right'):
             x=panel.x
-            for tab,label in zip(self.tabs(),self.tab_labels(panel.w-1,1)):
+            page,previous,following=self.tab_page(panel.w-1,1,4)
+            for tab,label in page:
                 text=label+' '
                 self.button(3,x,text,len(text),('tab',tab),12 if tab==m.panel_tab else 3)
                 x+=len(text)
+            if previous or following:self.tab_arrows(3,x,previous,following)
             start=panel.w+1 if c['placement']=='left' else 0
             width=cols-panel.w-2
         else:start=0;width=cols
@@ -1376,12 +1411,20 @@ class Terminal:
                     if not selected:actions[len(rows)-1]=('model',name)
                 line('');line('Click a model or /model NAME (Tab completes)',4)
         elif m.panel_tab=='log':
-            title('LOG · bash runs')
-            if not m.runs:line('No bash runs yet',4)
+            title('LOG · bash runs'+(' · '+str(len(m.jobs))+' running' if m.jobs else ''))
+            if m.jobs:
+                line('');title('RUNNING')
+                for job_id,job in m.jobs.items():
+                    mark='● ' if self.unicode and not c.get('ascii') else '* '
+                    rows.append([(mark,3,True),(job_id,1,True),(' · '+str(round(job['elapsed']/1000,1))+'s',4,False)])
+                    for part in wrap(job['argv'],width,words=True)[:2]:rows.append([('  '+part,1,False)])
+                    if job['tail']:line('  '+job['tail'],4)
+                line('/jobs cancel ID stops one',4)
+            if not m.runs and not m.jobs:line('No bash runs yet',4)
             for run in m.runs:
                 line('')
                 # Status first: commands can be long and would push it off the row.
-                tag={'peer':'[peer] ','pane':'[pane] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
                 rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
                              ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
                 for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
@@ -1418,10 +1461,22 @@ class Terminal:
             for peer in m.peers.values():
                 rows.append([(('● ' if self.unicode and not c.get('ascii') else '* '),3,True),(peer['name']+(' '+peer['version'] if peer['version'] else ''),1,True)])
                 line('    '+str(peer['calls'])+' calls'+(' · last '+peer['last'] if peer['last'] else '')+(' · '+peer['at'] if peer['at'] else ''),4)
+            line('');title('SKILLS')
+            if not m.skills:line('No skills; add SKILL.md folders under .shift/skills or .agents/skills',4)
+            for skill in m.skills:
+                name=clean(str(skill.get('name','')));valid=skill.get('valid',True);loaded=bool(skill.get('loaded'))
+                mark=('● ' if loaded else '○ ') if self.unicode and not c.get('ascii') else ('* ' if loaded else '- ')
+                rows.append([(mark,2 if loaded else 11 if not valid else 4,True),(name,2 if loaded else 1,loaded),
+                             ('  '+clean(str(skill.get('source',''))),4,False)])
+                if valid and not loaded:actions[len(rows)-1]=('skill',name)
+                detail=clean(str(skill.get('error') or skill.get('description') or ''))
+                for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if not valid else 4)
+            if any(s.get('valid',True) and not s.get('loaded') for s in m.skills):line('Click a skill or /skill NAME to send it with the next prompt',4)
             line('');title('LATEST RECEIPT')
             if m.receipt:
                 line('Status: '+str(m.receipt.get('status','unknown')))
                 line('Duration: '+str(m.receipt.get('duration_ms','unknown'))+' ms')
+                if m.receipt.get('skills'):line('Skills: '+', '.join(clean(str(n)) for n in m.receipt['skills']))
                 for run in m.receipt.get('runs',[]):
                     line(' '.join(run.get('command',[])))
                     line('exit '+str(run.get('exit_code','unknown')),2 if run.get('success') else 11)
@@ -1781,7 +1836,7 @@ class Terminal:
 
 def main():
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        print('shift --tui requires a terminal; omit --tui for scripted input or use --print.',file=sys.stderr);return 2
+        print('shift needs a terminal for its interface; use --print for one answer or redirect input for the command loop.',file=sys.stderr);return 2
     try:args=frontend_arguments(sys.argv[1:])
     except ValueError as error:
         print(error,file=sys.stderr);return 2

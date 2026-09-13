@@ -541,13 +541,14 @@ class Bridge(unittest.TestCase):
         self.wait(lambda:self.model.command_pending is None and self.model.pane_output.get('shift'))
         entry=self.model.pane_output['shift'][1]
         self.assertTrue(entry['ok']);self.assertEqual(entry['lines'],['pane says hi'])
-        self.assertEqual(self.model.runs[-1]['kind'],'pane');self.assertIn('Pane shift ran 1 command',self.model.notice)
+        self.assertEqual(self.model.runs[-1]['kind'],'pane');self.assertIn('Pane shift started 1 job',self.model.notice)
         terminal.request_command('/pane run shift 0','Running pane shift','pane')
         self.wait(lambda:self.model.command_pending is None)
         self.assertIn('no command row at that index',self.model.notice)
         terminal.request_command('/pane run shift 1','Running pane shift','pane')
         self.wait(lambda:self.model.command_pending is None)
-        self.assertIn('Pane shift ran 1 command',self.model.notice);self.assertEqual(len(self.model.runs),2)
+        self.assertIn('Pane shift started 1 job',self.model.notice)
+        self.wait(lambda:len(self.model.runs)==2);self.assertEqual(self.model.jobs,{})
 
     def test_mcp_peers_are_listed_with_their_calls(self):
         import socket,urllib.request
@@ -1087,11 +1088,11 @@ class PTY(unittest.TestCase):
                 process.wait(timeout=5)
 
     def test_option_values_and_literal_prompt_do_not_select_a_mode(self):
-        for name in ('--tui','--print','-p','--mcp','session-fork'):
+        for name in ('--print','-p','--mcp','session-fork'):
             with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='shift-tui-argv-') as tmp:
                 master,slave=pty.openpty()
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=subprocess.Popen([str(ROOT/'bin/shift'),'--tui',
+                process=subprocess.Popen([str(ROOT/'bin/shift'),
                     '--agent',str(ROOT/'test/session-agent.scm'),'--no-watch',
                     '--state-dir',tmp+'/state','--session',name,'session-fork'],
                     stdin=slave,stdout=slave,stderr=slave,start_new_session=True,
@@ -1128,7 +1129,7 @@ class PTY(unittest.TestCase):
             master,slave=pty.openpty()
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
             before=termios.tcgetattr(slave)
-            process=subprocess.Popen([sys.executable,str(ROOT/'scripts/tui.py'),'--tui',
+            process=subprocess.Popen([sys.executable,str(ROOT/'scripts/tui.py'),
                 '--agent',str(ROOT/'test/session-agent.scm'),'--no-watch','--session','pty',
                 '--state-dir',tmp+'/state'],stdin=slave,stdout=slave,stderr=slave,
                 env={**os.environ,'TERM':'xterm-256color','XDG_CONFIG_HOME':tmp+'/config'},start_new_session=True)
@@ -1364,6 +1365,75 @@ class SessionSwitcher(unittest.TestCase):
         self.assertEqual([c[0] for c in terminal.completion_choices],['/session task'])
 
 
+class TabStrip(unittest.TestCase):
+    """Whole labels and a page of tabs with arrows, never first-letter stubs."""
+    PANES=[{'name':name,'title':name.upper(),'rows':[{'text':'x'}]} for name in ('alpha','bravo','charlie','delta')]
+    def strip(self,cols,tab,theme='acid'):
+        terminal=terminal_view(30,cols,Mock());m=terminal.model
+        m.config['panes']=[dict(p) for p in self.PANES];m.config['theme']=theme
+        if theme=='qdos':m.config.update(placement='left',density='compact',border='double')
+        m.control('ready');m.panel_tab=tab;terminal.draw()
+        return terminal,[a[1] for _,a in terminal.hits if a[0]=='tab']
+
+    def test_wide_strip_shows_every_whole_label(self):
+        terminal,tabs=self.strip(200,'work')
+        self.assertEqual(tabs,['work','diff','session','model','log','alpha','bravo','charlie','delta'])
+        self.assertIn('CHARLIE','\n'.join(terminal.screen.line(y) for y in range(8)))
+
+    def test_narrow_strip_pages_around_the_active_tab(self):
+        terminal,tabs=self.strip(96,'work')
+        self.assertLess(len(set(tabs)),9);self.assertIn('work',tabs)
+        text='\n'.join(terminal.screen.line(y) for y in range(6))
+        self.assertIn('›',text);self.assertNotIn('SES ',text)
+        following=next(a[1] for r,a in terminal.hits if a[0]=='tab' and r.w==1 and a[1] is not None)
+        terminal.pointer(next(r for r,a in terminal.hits if a==('tab',following)).x,3,'press')
+        terminal.draw();_,paged=self.strip(96,following)
+        self.assertIn(following,paged);self.assertNotIn('work',paged)
+        terminal,tabs=self.strip(96,'delta')
+        self.assertIn('delta',tabs);self.assertIn('‹','\n'.join(terminal.screen.line(y) for y in range(6)))
+
+    def test_qdos_strip_pages_too(self):
+        terminal,tabs=self.strip(100,'delta','qdos')
+        self.assertIn('delta',tabs);self.assertIn('‹','\n'.join(terminal.screen.line(y) for y in range(6)))
+
+
+class Skills(unittest.TestCase):
+    def test_skills_show_in_session_tab_and_load_by_click(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
+        m.control('ready')
+        m.event({'type':'skills','value':[
+            {'name':'release','description':'Cut a release','source':'project','valid':True,'loaded':False,'model':True},
+            {'name':'review','description':'Review a diff','source':'agents','valid':True,'loaded':True,'model':False},
+            {'name':'broken','description':'','error':'frontmatter needs name','source':'user','valid':False,'loaded':False,'model':False}]})
+        m.panel_tab='session';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('SKILLS',text);self.assertIn('○ release  project',text);self.assertIn('● review  agents',text)
+        self.assertIn('frontmatter needs name',text)
+        self.assertTrue(any(a==('skill','release') for _,a in terminal.hits))
+        self.assertFalse(any(a==('skill','broken') for _,a in terminal.hits))
+        r=next(r for r,a in terminal.hits if a==('skill','release'));terminal.pointer(r.x,r.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/skill release','request_id':1})
+        m.event({'type':'receipt','value':{'status':'ok','duration_ms':5,'runs':[],'skills':['release']}})
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('Skills: release',text)
+        self.assertIn('/skill release',[c[0] for c in tui.suggestions('/skill re',[],False,[],[],[],['release','review'])])
+
+
+class Jobs(unittest.TestCase):
+    def test_jobs_show_as_running_then_join_the_log(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':2}})
+        m.control('ready');m.panel_tab='log'
+        m.event({'type':'job','value':{'event':'running','id':'job-1','argv':['make','test'],'status':'running','elapsed_ms':1500,'tail':'compiling\nlinking','turn':2,'log':'runs/job-1.log'}})
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('1 running',text);self.assertIn('RUNNING',text);self.assertIn('job-1 · 1.5s',text);self.assertIn('make test',text);self.assertIn('linking',text)
+        m.event({'type':'job','value':{'event':'finished','id':'job-1','argv':['make','test'],'status':'exit','code':0,'ok':True,'elapsed_ms':4200,'tail':'compiling\nlinking\nok','turn':2,'log':'runs/job-1.log'}})
+        self.assertEqual(m.jobs,{});self.assertEqual(m.notice,'job-1 finished: exit 0')
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertNotIn('RUNNING',text);self.assertIn('[job] exit 0 · 4.2s',text);self.assertIn('job-1 · make test',text);self.assertIn('ok',text)
+        self.assertIn('/jobs',[c[0] for c in tui.suggestions('/jo',[])])
+
+
 class UserPanes(unittest.TestCase):
     PANE={'name':'shift','title':'SHIFT','rows':[{'text':'Checkout health'},{'field':'session.name'},{'field':'source.loaded'},
                                                   {'command':['git','status','--short']},{'command':['make','test']}]}
@@ -1415,13 +1485,13 @@ class UserPanes(unittest.TestCase):
         self.assertEqual(terminal.child.ui.call_args.args[0]['command'],'/pane run shift 3')
         self.assertRaises(ValueError,terminal.local,'/pane run shift x')
 
-    def test_pane_labels_abbreviate_when_six_tabs_do_not_fit(self):
+    def test_pane_tabs_page_with_whole_labels_when_six_do_not_fit(self):
         terminal=self.pane();terminal.screen.size=(30,96);terminal.draw()
         strip=terminal.screen.line(5)
-        self.assertIn('WORK DIFF SESS MODE LOG SHIF',strip)
+        self.assertIn('LOG SHIFT ‹ ›',strip);self.assertNotIn('SESS ',strip)
         terminal.model.config.update(theme='qdos',placement='left');terminal.screen.size=(40,128);terminal.draw()
         strip=terminal.screen.line(3)
-        self.assertIn('WORK DIFF SESS MODE LOG SHIF ',strip);self.assertNotIn('SHIdemo',strip)
+        self.assertIn('SHIFT',strip);self.assertNotIn('SHIF ',strip);self.assertNotIn('SHIdemo',strip)
         self.assertIn('main | demo',strip)
 
 
@@ -1574,17 +1644,17 @@ class TerminfoRepeat(unittest.TestCase):
 class Arguments(unittest.TestCase):
     def test_values_are_preserved_before_filtering_flags(self):
         for option in tui.VALUE_OPTIONS:
-            for value in ('--tui','--print','-p','--mcp','--list-sessions','session-fork'):
-                self.assertEqual(tui.frontend_arguments(['--tui',option,value]),[option,value])
-        self.assertEqual(tui.frontend_arguments(['--tui','explain --print and --tui']),['explain --print and --tui'])
-        self.assertEqual(tui.frontend_arguments(['--tui','session-fork']),['session-fork'])
+            for value in ('--print','-p','--mcp','--list-sessions','session-fork'):
+                self.assertEqual(tui.frontend_arguments([option,value]),[option,value])
+        self.assertEqual(tui.frontend_arguments(['explain --print and -p']),['explain --print and -p'])
+        self.assertEqual(tui.frontend_arguments(['session-fork']),['session-fork'])
 
     def test_real_incompatible_options_are_rejected(self):
         for option in ('--print','-p','--mcp','--list-sessions','--fork-session'):
-            with self.assertRaises(ValueError):tui.frontend_arguments(['--tui',option,'task'])
+            with self.assertRaises(ValueError):tui.frontend_arguments([option,'task'])
 
     def test_unsupported_double_dash_does_not_start_a_frontend(self):
-        result=subprocess.run([str(ROOT/'bin/shift'),'--','--tui'],
+        result=subprocess.run([str(ROOT/'bin/shift'),'--','--watch'],
                               input='',text=True,capture_output=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.assertNotIn('requires a terminal',result.stderr)
@@ -1592,7 +1662,7 @@ class Arguments(unittest.TestCase):
 
     def test_piped_flag_values_reach_backend_validation(self):
         with tempfile.TemporaryDirectory(prefix='shift-argv-pipe-') as tmp:
-            for value in ('--tui','--print','--mcp'):
+            for value in ('--watch','--print','--mcp'):
                 result=subprocess.run([str(ROOT/'bin/shift'),'--agent',str(ROOT/'test/session-agent.scm'),
                     '--state-dir',tmp+'/state','--session',value],input='/quit\n',
                     text=True,capture_output=True,timeout=15,

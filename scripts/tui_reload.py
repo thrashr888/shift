@@ -13,7 +13,7 @@ from tui_identity import identity
 HELPERS = {'suggestions', 'cell_width', 'clip', 'wrap', 'composer_view', 'layout'}
 METHODS = {
     'put', 'mark_phase', 'brand_line', 'paint_marks', 'border_glyphs', 'box', 'rule',
-    'spans', 'metadata', 'header', 'body_rows', 'inspector', 'draw', 'tabs',
+    'spans', 'metadata', 'header', 'body_rows', 'inspector', 'draw', 'tabs', 'tab_page', 'tab_arrows',
     'diff_rows', 'framed_diff', 'group_rows', 'active_group', 'telemetry', 'telemetry_notes', 'meter',
     'qdos_header', 'hit', 'button', 'contains',
     'completion', 'close_completion', 'open_palette', 'accept_completion',

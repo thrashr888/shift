@@ -1,0 +1,49 @@
+(use-modules (srfi srfi-64) (ice-9 textual-ports) (live-agent skills) (live-agent json))
+(test-begin "skills")
+(define root (string-append "/tmp/shift-skills-" (number->string (getpid))))
+(define (write-skill dir name text)
+  (system* "mkdir" "-p" (string-append dir "/" name))
+  (call-with-output-file (string-append dir "/" name "/SKILL.md") (lambda (p) (display text p))))
+(setenv "HOME" (string-append root "/home"))
+(setenv "XDG_CONFIG_HOME" (string-append root "/config"))
+(system* "mkdir" "-p" (string-append root "/project") (string-append root "/home"))
+(write-skill (string-append root "/project/.shift/skills") "release"
+  "---\nname: release\ndescription: Cut a release: bump, changelog, tag.\n---\n# Release\n\nRun make release.\n")
+(write-skill (string-append root "/project/.agents/skills") "review"
+  "---\nname: review\ndescription: >\n  Review a diff for\n  correctness.\ndisable-model-invocation: true\n---\nBody\n")
+(write-skill (string-append root "/config/shift/skills") "release"
+  "---\nname: release\ndescription: user copy, shadowed\n---\nuser body\n")
+(write-skill (string-append root "/home/.agents/skills") "notes"
+  "---\nname: notes\ndescription: \"Write notes\"\n---\nnotes body\n")
+(write-skill (string-append root "/project/.shift/skills") "Bad_Name"
+  "---\nname: Bad_Name\ndescription: x\n---\n")
+(write-skill (string-append root "/project/.shift/skills") "renamed"
+  "---\nname: other\ndescription: x\n---\n")
+(skills-init! (string-append root "/project"))
+(define (names) (map (lambda (r) (assq-ref r 'name)) (skill-index)))
+(test-equal "project skills come first, then .agents, user and global .agents"
+  '("Bad_Name" "release" "renamed" "review" "notes") (names))
+(test-equal "a project skill shadows the user copy of the same name" "project"
+  (assq-ref (skill-find "release") 'source))
+(test-equal "folded descriptions join into one line" "Review a diff for correctness."
+  (assq-ref (skill-find "review") 'description))
+(test-equal "quoted descriptions lose their quotes" "Write notes" (assq-ref (skill-find "notes") 'description))
+(test-assert "folder names must be lowercase" (not (assq-ref (skill-find "Bad_Name") 'valid)))
+(test-assert "frontmatter name must match the folder" (string-prefix? "frontmatter name other" (assq-ref (skill-find "renamed") 'error)))
+(test-assert "the prompt block lists valid model-invocable skills only"
+  (let ((block (skills-prompt-block)))
+    (and (string-contains block "- release: Cut a release") (string-contains block "- notes:")
+         (not (string-contains block "review")) (not (string-contains block "Bad_Name")))))
+(test-assert "loading returns the body with the directory" 
+  (string-contains (skill-load! "release") "Run make release."))
+(test-assert "loaded state is tracked" (skill-loaded? "release"))
+(test-error "user-only skills refuse model loads" #t (skill-load! "review"))
+(test-assert "the user can load a user-only skill" (string-contains (skill-load! "review" #:by-model #f) "Body"))
+(test-error "invalid skills cannot load" #t (skill-load! "renamed"))
+(test-equal "valid directories are the read roots" 3 (length (skill-directories)))
+(test-equal "json carries loaded and validity" #t
+  (json-object-ref (car (filter (lambda (o) (equal? (json-object-ref o "name") "release")) (json-array-items (skills-json)))) "loaded"))
+(write-skill (string-append root "/project/.shift/skills") "fresh" "---\nname: fresh\ndescription: new\n---\n")
+(test-assert "the index notices a new skill without a restart" (skill-find "fresh"))
+(system* "rm" "-rf" root)
+(test-end "skills")

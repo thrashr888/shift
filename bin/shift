@@ -6,7 +6,6 @@ export SHIFT_INSTALL_ROOT="$project_root"
 # Classify options without mistaking their values for launch modes. The curses
 # child re-enters this launcher with pipes; never wrap that backend in curses.
 launch_tui=no
-explicit_tui=no
 backend_only=no
 classify_launch() {
   if [ "${1-}" = "session-fork" ]; then
@@ -15,7 +14,6 @@ classify_launch() {
   fi
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --tui) explicit_tui=yes ;;
       --print|-p|--mcp|--list-sessions|--fork-session|-h|--help)
         backend_only=yes
         return ;;
@@ -34,7 +32,7 @@ classify_launch() {
 classify_launch "$@"
 if [ "$backend_only" = no ] && [ -z "${SHIFT_CONTROL_FD-}" ] &&
    [ -z "${SHIFT_UI_EVENT_FD-}" ] && [ -z "${SHIFT_UI_COMMAND_FD-}" ]; then
-  if [ "$explicit_tui" = yes ] || { [ -t 0 ] && [ -t 1 ]; }; then
+  if [ -t 0 ] && [ -t 1 ]; then
     launch_tui=yes
   fi
 fi
@@ -43,13 +41,7 @@ if [ "$launch_tui" = yes ]; then
 fi
 working_root=$(pwd -P)
 export SHIFT_PROJECT_ROOT="$working_root"
-# Compatibility for older extensions and trace bridge processes.
-export LISP_AGENT_PROJECT_ROOT="$project_root"
-
 state_root="$working_root/.shift"
-if [ ! -e "$state_root" ] && [ -d "$working_root/.lisp-agent" ]; then
-  state_root="$working_root/.lisp-agent"
-fi
 
 if [ "${1-}" = "session-fork" ]; then
   shift

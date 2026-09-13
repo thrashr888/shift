@@ -1,5 +1,6 @@
 (define-module (shift tracing)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 threads)
   #:use-module (ice-9 ftw)
   #:use-module (ice-9 popen)
   #:use-module (ice-9 textual-ports)
@@ -18,6 +19,8 @@
             trace-search
             trace-close!
             session-id-of span-id-of trace-id-of usage-attributes))
+
+(define write-lock (make-mutex))
 
 (define-record-type <tracer>
   (%make-tracer path session-id session-name bridge)
@@ -144,6 +147,8 @@
                  (attributes->json
                   (append (trace-span-attributes span) attributes)))))
          (line (json-write value)))
+    ;; Spans end from worker threads too; one writer at a time keeps lines whole.
+    (with-mutex write-lock
     (let ((port (open-file (tracer-path tracer) "a")))
       (dynamic-wind
         (lambda () #t)
@@ -151,7 +156,7 @@
         (display line port)
         (newline port)
           (force-output port))
-        (lambda () (close-port port))))
+        (lambda () (close-port port)))))
     (let ((bridge (tracer-bridge tracer)))
       (when bridge
         (catch #t

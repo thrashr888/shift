@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-
-project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-echo "lisp-agent-mcp is deprecated; use ./bin/shift-mcp" >&2
-exec "$project_root/bin/shift-mcp" "$@"
