@@ -8,6 +8,8 @@ This is intentionally not a production coding agent yet. The first question is
 whether changing agent behavior *inside a running session* feels materially
 better than editing and restarting a conventional extension.
 
+![The Shift terminal interface in the Acid theme, with the project's SHIFT pane open beside an empty transcript](docs/assets/tui-acid.png)
+
 ## Website
 
 The [Shift website](https://thrashr888.github.io/shift/) includes whole-page

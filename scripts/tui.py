@@ -1358,7 +1358,8 @@ class Terminal:
                         for text in entry['lines'][:40]:
                             for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
                         if len(entry['lines'])>40 or entry['truncated']:line('  … more in the Log tab'+(' and the full log' if entry['truncated'] else ''),4)
-            line('');line('Commands run only when /allow-run permits them',4)
+            line('')
+            for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
         elif m.panel_tab=='model':
             current=str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting'))
             title('MODEL');line(current);line('')
