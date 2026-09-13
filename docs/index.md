@@ -15,6 +15,7 @@ One line per document, then the open work those documents still describe.
 | [gaps-with-pi.md](gaps-with-pi.md) | The asymmetric comparison with Pi, refreshed September 13. |
 | [review-2026-09-04.md](review-2026-09-04.md) | The September 4 runtime review; its seven findings are fixed. |
 | [ablation-2026-09-04.md](ablation-2026-09-04.md) | Evidence for those fixes and the built-in ablation. |
+| [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | Draft RFC for skills, background jobs, concurrent read-only tools, and a composable sidebar. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
 Pane packs have a published reference at
@@ -25,11 +26,12 @@ Pane packs have a published reference at
 Collected from the documents above on September 13, 2026. Each item names the
 document that explains why it matters.
 
-- **Skills.** Dynamic local skills the model can list and load
-  ([daily-driver-plan](daily-driver-plan.md), [gaps-with-pi](gaps-with-pi.md)).
+- **Skills.** Dynamic local skills the model can list and load; designed in
+  [skills-and-jobs-rfc](skills-and-jobs-rfc.md).
 - **Background jobs and concurrency.** A bounded job model for long `run`
-  commands, concurrent read-only tool execution, and subagent fan-out
-  ([dogfooding](dogfooding.md), [subagents](subagents.md)).
+  commands and concurrent read-only tool execution, designed in
+  [skills-and-jobs-rfc](skills-and-jobs-rfc.md); subagent fan-out stays open
+  ([subagents](subagents.md)).
 - **Project trace recall.** Cross-session search over a project's traces
   ([daily-driver-plan](daily-driver-plan.md)).
 - **Diagnostics.** LSP or compiler JSON alongside exit status
