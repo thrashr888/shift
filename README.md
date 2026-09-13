@@ -10,13 +10,6 @@ better than editing and restarting a conventional extension.
 
 ![The Shift terminal interface in the Acid theme, with the project's SHIFT pane open beside an empty transcript](docs/assets/tui-acid.png)
 
-## Website
-
-The [Shift website](https://thrashr888.github.io/shift/) includes whole-page
-theme and display-name customization and a local-only, simulated terminal
-playground. See [website preview and publishing](docs/website.md) for local setup
-and the manually triggered GitHub Pages workflow. A push alone does not deploy.
-
 ## Principle: making it mine
 
 Shift should become the user's own instrument. Identity, appearance, layout, and
