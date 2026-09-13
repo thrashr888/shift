@@ -22,7 +22,7 @@ from tui_reload import Reloader
 from tui_identity import identity
 
 ROOT = Path(__file__).resolve().parents[1]
-MODES = ('manual','plan','accept','auto')
+MODES = ('manual','plan','autopilot')
 KEY_SEQUENCES = {
     '[A':curses.KEY_UP, '[B':curses.KEY_DOWN, '[C':curses.KEY_RIGHT, '[D':curses.KEY_LEFT,
     'OA':curses.KEY_UP, 'OB':curses.KEY_DOWN, 'OC':curses.KEY_RIGHT, 'OD':curses.KEY_LEFT,
@@ -291,7 +291,7 @@ class Model:
     def __init__(self):
         self.config = dict(theme='acid', identity=os.environ.get('USER', 'shift'), branding='subtitle',
                            wordmark=['shift ///'], sidebar='auto', placement='right', density='comfortable', border='thin',
-                           ascii=False, metrics=True, motion=True, background='#170626', foreground='#f4edff', accent='#b6ff00',
+                           ascii=False, metrics=True, motion=True, terminal_colors=True, background='#170626', foreground='#f4edff', accent='#b6ff00',
                            secondary='#45f6ff', muted='#ae7deb', panel='#1e0c32',
                            positive='#64fff2', negative='#ff6588',
                            added_background='#074e4a', removed_background='#45152f',
@@ -649,7 +649,7 @@ class Terminal:
         if mode is None:
             current=m.session.get('mode','manual')
             mode=MODES[(MODES.index(current)+1)%len(MODES)] if current in MODES else MODES[0]
-        if mode not in MODES:raise ValueError('use /mode manual|plan|accept|auto')
+        if mode not in MODES:raise ValueError('use /mode manual|plan|autopilot')
         return self.request_command('/mode '+mode,'Changing mode to '+mode)
 
     def request_model(self,name):
@@ -933,11 +933,14 @@ class Terminal:
             self.marks.append((y,x+sum(cell_width(ch) for ch in visible[:mark]),1))
 
     def paint_marks(self,phase):
+        # The active stroke is accent and bold, the others muted: a color
+        # step every terminal shows, since bold/dim alone are invisible on
+        # block glyphs in some (Ghostty renders both like the plain glyph).
         for y,x,height in self.marks:
             for i in range(3):
                 active=phase is None or i==phase
                 for row in range(height):
-                    self.put(y+row,x+i*height+height-row-1,'/' if height==1 else '█',1,2,active,not active)
+                    self.put(y+row,x+i*height+height-row-1,'/' if height==1 else '█',1,2 if active else 4,active)
         self.last_phase=phase
 
     def border_glyphs(self):
@@ -1650,7 +1653,9 @@ class Terminal:
         elif key in ('\n','\r',curses.KEY_ENTER):
             line=m.draft
             if line.startswith('/mode ') and (m.approval or not m.ready):
-                self.request_mode(line[6:]);return True
+                try:self.request_mode(line[6:])
+                except ValueError as error:m.notice=str(error)
+                return True
             if line.startswith('/model ') and line[7:].strip() and (m.approval or not m.ready):
                 try:self.request_model(line[7:].strip())
                 except ValueError as error:m.notice=str(error)

@@ -252,7 +252,7 @@ class StructuredViews(unittest.TestCase):
         m=terminal.model
         m.config['placement']=placement
         for kind,value in [
-            ('session',{'name':'main','model':'local fixture','mode':'accept','turn':1}),
+            ('session',{'name':'main','model':'local fixture','mode':'autopilot','turn':1}),
             ('turn-start',{'turn':1}),
             ('transcript',{'role':'user','text':'Trace the run allowlist.'}),
             ('transcript',{'role':'assistant','text':'I will trace settings and add source labels.','stream':True}),
@@ -623,7 +623,8 @@ class WorkingMark(unittest.TestCase):
             calls=terminal.put.call_args_list
             self.assertEqual(len(calls),9)
             for index,call in enumerate(calls):
-                self.assertEqual(call.args[-2],index//3==phase)
+                active=index//3==phase
+                self.assertEqual(call.args[-2],2 if active else 4);self.assertEqual(call.args[-1],active)
                 self.assertEqual(call.args[2],'█')
             self.assertEqual([terminal.screen.line(i) for i in range(40)],before)
         terminal.model.config.update(branding='replace',identity='thrashr888')
@@ -736,7 +737,7 @@ class Interaction(unittest.TestCase):
             self.m.session['mode']=mode
             self.m.command_pending=None
             self.t.key(tui.curses.KEY_BTAB)
-            self.assertEqual(self.t.child.ui.call_args.args[0]['command'],'/mode '+tui.MODES[(index+1)%4])
+            self.assertEqual(self.t.child.ui.call_args.args[0]['command'],'/mode '+tui.MODES[(index+1)%len(tui.MODES)])
         self.t.child.ui.reset_mock()
         for state in ('working','needs_approval'):
             self.m.command_pending=None;self.m.control(state)
@@ -787,12 +788,12 @@ class Interaction(unittest.TestCase):
         self.t.child.ui.assert_not_called()
         for key in ' a':self.t.key(key)
         self.t.draw()
-        self.assertEqual([c[0] for c in self.t.completion_choices],['/mode accept','/mode auto'])
-        self.click('complete',1)
-        self.assertEqual(self.m.draft,'/mode auto')
+        self.assertEqual([c[0] for c in self.t.completion_choices],['/mode autopilot'])
+        self.click('complete',0)
+        self.assertEqual(self.m.draft,'/mode autopilot')
         self.t.child.ui.assert_not_called()
         self.t.key('\n')
-        self.assertEqual(self.t.child.ui.call_args.args[0]['command'],'/mode auto')
+        self.assertEqual(self.t.child.ui.call_args.args[0]['command'],'/mode autopilot')
         self.m.draft='unfinished';self.m.cursor=3;self.t.open_palette()
         self.assertEqual(self.m.draft,'')
         for key in 'theme':self.t.key(key)
@@ -1145,7 +1146,7 @@ class PTY(unittest.TestCase):
                 hit_view.draw()
                 region=next(r for r,a in reversed(hit_view.hits) if a[0]=='mode')
                 os.write(master,f'\x1b[<0;{region.x+1};{region.y+1}M\x1b[<0;{region.x+1};{region.y+1}m'.encode())
-                wait_for(lambda:b'ACCEPT' in data)
+                wait_for(lambda:b'AUTOPILOT' in data)
                 os.write(master,b'\x1b[<0;14;40M\x1b[<0;14;40m')
                 wait_for(lambda:b'COMMANDS:' in data)
                 os.write(master,b'\x1b')
@@ -1179,7 +1180,7 @@ class ModelPicker(unittest.TestCase):
     def picker(self):
         terminal=terminal_view(40,128,Mock())
         m=terminal.model
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'qwen3.8:27b-mlx','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'qwen3.8:27b-mlx','mode':'autopilot','turn':1}})
         m.control('ready');terminal.draw()
         return terminal
 
@@ -1227,7 +1228,7 @@ class ModelPicker(unittest.TestCase):
         terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/model ollama/gemma:2b','request_id':1})
         self.assertIn('Selecting ollama/gemma:2b',m.notice)
         m.event({'type':'session-command-result','value':{'request_id':1,'ok':True,'message':'ollama/gemma:2b · thinking #f · effort default · fast off'}})
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'gemma:2b','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'gemma:2b','mode':'autopilot','turn':1}})
         terminal.draw();text=self.text(terminal)
         self.assertIn('▶ ollama/gemma:2b',text);self.assertIn('main | gemma:2b',text)
         self.assertFalse(any(a==('model','ollama/gemma:2b') for _,a in terminal.hits))
@@ -1267,7 +1268,7 @@ class RunLog(unittest.TestCase):
 
     def test_log_tab_shows_each_run_with_status_and_output_and_follows_the_latest(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
         m.event({'type':'turn-start','value':{'turn':1}})
         m.event({'type':'tool','value':{'turn':1,'id':3,'name':'run','summary':'make test','at':'17:16'}})
         m.event(self.run_result())
@@ -1287,7 +1288,7 @@ class RunLog(unittest.TestCase):
     def test_bottom_placement_shows_run_output_inline_and_folds_with_ctrl_o(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model
         m.config['placement']='bottom'
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
         m.event({'type':'turn-start','value':{'turn':1}})
         m.event({'type':'transcript','value':{'role':'user','text':'Check the port'}})
         m.event({'type':'tool','value':{'turn':1,'id':3,'name':'run','summary':'make test','at':'17:16'}})
@@ -1311,7 +1312,7 @@ class SessionSwitcher(unittest.TestCase):
     def tab(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model
         terminal.child.args=['--agent','a.scm','--session','main','--no-watch'];terminal.child.cwd=None
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':3}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':3}})
         m.control('ready');m.panel_tab='session'
         m.event({'type':'sessions','value':{'current':'main','sessions':[
             {'name':'main','turns':2,'updated':'2026-09-12T20:00:35Z','status':'current'},
@@ -1364,7 +1365,7 @@ class UserPanes(unittest.TestCase):
         terminal=terminal_view(40,128,Mock());m=terminal.model
         m.config['panes']=[dict(self.PANE)]
         m.source_identity={'process':{'label':'abc1234'},'loaded':{'label':'abc1234'},'presentation':'p'}
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
         m.control('ready');m.panel_tab='shift';terminal.draw()
         return terminal
 
@@ -1409,7 +1410,7 @@ class UserPanes(unittest.TestCase):
 class Peers(unittest.TestCase):
     def test_peer_events_show_in_session_tab_and_log(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model
-        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'accept','turn':1}})
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
         m.control('ready')
         m.event({'type':'peer','value':{'event':'connected','id':'ab12','name':'claude-code','version':'2.1'}})
         self.assertIn('Peer connected: claude-code 2.1',m.notice)

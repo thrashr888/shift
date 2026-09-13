@@ -611,9 +611,9 @@
 ;; validation as a slash command or a settings file.
 (define (apply-cli-overrides!)
   (when cli-mode
-    (unless (member cli-mode '("manual" "plan" "accept" "auto"))
-      (error "--mode must be manual, plan, accept, or auto" cli-mode))
-    (setting-set! 'mode (string->symbol cli-mode)))
+    (unless (member cli-mode '("manual" "plan" "autopilot" "accept" "auto"))
+      (error "--mode must be manual, plan, or autopilot" cli-mode))
+    (setting-set! 'mode (legacy-mode (string->symbol cli-mode))))
   (when cli-model (model-select! cli-model))
   (for-each (lambda (entry) (setting-set-json! (car entry) (cdr entry))) cli-settings)
   (unless (null? cli-allow-runs)
@@ -882,7 +882,7 @@
                     (loop (cdr rows) (+ index 1) (+ ran 1))))))))))
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
-    (or (member command '("/mode manual" "/mode plan" "/mode accept" "/mode auto" "/sessions"))
+    (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions"))
         (and (= (length parts) 3) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/model")
@@ -911,10 +911,12 @@
          (setting-set! 'context-limit (string->number (caddr parts))))
        (show-context generation))
       ((string=? command "/mode")
-       (when value (setting-set! 'mode (string->symbol value)))
+       (when value
+         (unless (member value '("manual" "plan" "autopilot" "accept" "auto")) (error "use /mode manual|plan|autopilot"))
+         (setting-set! 'mode (legacy-mode (string->symbol value))))
        (format #t "Mode: ~a~%" (setting-ref generation 'mode))
-       (when (eq? (setting-ref generation 'mode) 'auto)
-         (display "Auto is conservative: read-only tools run; other tools require approval until model approval evaluation is complete.\n")))
+       (when (eq? (setting-ref generation 'mode) 'autopilot)
+         (display "Autopilot runs every tool without asking, shell runs included; plan is read-only and manual asks each time.\n")))
       ((string=? command "/effort")
        (when value (setting-set! 'effort (string->symbol value))) (show-model generation))
       ((string=? command "/fast")
@@ -2445,7 +2447,7 @@
       (ui-host-handler!
         (lambda (command)
           (unless (host-command-allowed? command)
-            (error "only /mode manual|plan|accept|auto, /model list, /model PROVIDER/MODEL, /sessions, or /pane run NAME is supported"))
+            (error "only /mode manual|plan|autopilot, /model list, /model PROVIDER/MODEL, /sessions, or /pane run NAME is supported"))
           (unless (try-mutex lock) (error "Session busy; finish the turn or pending approval before changing mode or model"))
           (dynamic-wind
             (lambda () #t)

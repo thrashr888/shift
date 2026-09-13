@@ -2,8 +2,9 @@
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
   #:export (tool-decision run-argv-of run-allowed?))
-;; No live-image binding can override this decision. Auto remains conservative
-;; until an approval model has passed held-out evaluation; it does not guess.
+;; No live-image binding can override this decision. Three modes: manual asks
+;; before each tool except allowlisted runs, plan permits reads only, and
+;; autopilot runs everything without asking. Nothing infers approval.
 (define (run-argv-of arguments)
   (let ((value (json-object-ref arguments "argv" #f)))
     (if (and (json-array? value) (every string? (json-array-items value)))
@@ -25,8 +26,7 @@
         (allowed-run? (and (string=? name "run")
                            (run-allowed? (run-argv-of arguments) run-allow))))
     (case mode
-      ((manual) 'ask)
+      ((manual) (if allowed-run? 'allow 'ask))
       ((plan) (if read-only? 'allow 'deny))
-      ((accept) (if (or read-only? allowed-run? (member name '("write" "edit" "apply_patch" "ui"))) 'allow 'ask))
-      ((auto) (if (or read-only? allowed-run? (string=? name "ui")) 'allow 'ask))
+      ((autopilot) 'allow)
       (else 'deny))))

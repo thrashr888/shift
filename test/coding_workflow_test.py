@@ -187,7 +187,7 @@ class CodingWorkflow(unittest.TestCase):
         self.agent.write_text(self.agent.read_text().replace('status diff run))', 'status diff run ui))'))
         plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
                 tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
-        code, out, err = self.print_mode("Make this mine", plan, "--mode", "accept")
+        code, out, err = self.print_mode("Make this mine", plan, "--mode", "autopilot")
         self.assertEqual(code, 0, err)
         state = json.loads(self.tool_results()[-1])
         self.assertEqual(state["config"]["identity"], "thrashr888")
@@ -220,7 +220,7 @@ class CodingWorkflow(unittest.TestCase):
             wait_for(lambda:bool(model.approval_prompt))
             wait_for(lambda:bool(model.approval_preview))
             approval_prompt=model.approval_prompt
-            child.ui({'action':'session-command','command':'/mode auto','request_id':41})
+            child.ui({'action':'session-command','command':'/mode autopilot','request_id':41})
             model.command_pending=41
             wait_for(lambda:model.command_pending is None)
             self.assertIn('busy',model.notice)
@@ -261,7 +261,11 @@ class CodingWorkflow(unittest.TestCase):
             self.assertIn('rejected',model.notice)
             self.assertTrue(model.approval)
             terminal.key('\x15')
-            for key in '/mode auto\n':terminal.key(key)
+            for key in '/mode nonsense\n':terminal.key(key)
+            self.assertIn('use /mode manual|plan|autopilot',model.notice)
+            self.assertTrue(model.approval)
+            terminal.key('\x15')
+            for key in '/mode autopilot\n':terminal.key(key)
             self.assertIn('Finish approval',model.notice)
             self.assertTrue(model.approval)
             self.assertEqual(model.session['mode'],'manual')
@@ -286,7 +290,7 @@ class CodingWorkflow(unittest.TestCase):
         from tui_test import tui, terminal_view
         from unittest.mock import patch
         with patch.dict(os.environ, self.env):
-            child = tui.Child(self.command()[1:] + ['--mode', 'accept'], cwd=self.project)
+            child = tui.Child(self.command()[1:] + ['--mode', 'autopilot'], cwd=self.project)
         model = tui.Model()
         terminal = terminal_view(40, 128, child); terminal.model = model
         def wait_for(predicate):
@@ -383,7 +387,7 @@ class CodingWorkflow(unittest.TestCase):
             answer("The source was updated and checked.",usage={"prompt_tokens":1234,"completion_tokens":12}),
         ]
         with patch.dict(os.environ,self.env):
-            child=tui.Child(self.command()[1:]+['--mode','accept','--allow-run','python3'],cwd=self.project)
+            child=tui.Child(self.command()[1:]+['--mode','autopilot','--allow-run','python3'],cwd=self.project)
         model=RecordingModel()
         terminal=terminal_view(40,128,child);terminal.model=model
         def wait_for(predicate):
@@ -433,7 +437,7 @@ class CodingWorkflow(unittest.TestCase):
                        tool_call('read',{'path':'notes.txt'}),answer('visible answer'),
                        tool_call('read',{'path':'notes.txt'}),answer('quiet again')]
         with patch.dict(os.environ,self.env):
-            child=tui.Child(self.command()[1:]+['--mode','accept','--set','show-work=false'],cwd=self.project)
+            child=tui.Child(self.command()[1:]+['--mode','autopilot','--set','show-work=false'],cwd=self.project)
         terminal=terminal_view(40,128,child);model=terminal.model
         def wait_for(predicate):
             end=time.monotonic()+10
@@ -475,7 +479,7 @@ class CodingWorkflow(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-q", "-m", "base")
         (self.project / "theirs.txt").write_text("user work\nuser edit\n")
-        out = self.shift("/mode accept\nchange the port\n/quit\n",
+        out = self.shift("/mode autopilot\nchange the port\n/quit\n",
                          [self.edit_notes, tool_call("status", {}), answer("changed")])
         status = self.tool_results()[-1]
         self.assertIn("git ", status)
@@ -492,7 +496,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("Nothing to undo", self.shift("/undo\n/quit\n"))
 
     def test_non_git_project_edit_diff_status_and_undo(self):
-        self.shift("/mode accept\nchange the port\n/quit\n",
+        self.shift("/mode autopilot\nchange the port\n/quit\n",
                    [self.edit_notes, tool_call("diff", {"scope": "turn"}), tool_call("status", {}), answer("ok")])
         diff, status = self.tool_results()[-2:]
         self.assertIn("+alpha port 9443", diff)
@@ -507,7 +511,7 @@ class CodingWorkflow(unittest.TestCase):
 
     def test_patch_conflict_writes_nothing_and_the_turn_continues(self):
         bad = "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-nope\n+x\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+created\n"
-        self.shift("/mode accept\npatch it\n/quit\n", [tool_call("apply_patch", {"patch": bad}), answer("continued")])
+        self.shift("/mode autopilot\npatch it\n/quit\n", [tool_call("apply_patch", {"patch": bad}), answer("continued")])
         result = self.tool_results()[-1]
         self.assertIn("hunk 1 does not match notes.txt at line 1", result)
         self.assertIn('expected "nope", found "alpha port 8080"', result)
@@ -532,7 +536,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual((self.project / "notes.txt").read_text(), "alpha port 8080\nedited in an editor\n")
 
     def test_failing_run_is_reported_and_the_turn_is_checkpointed(self):
-        self.shift("/mode accept\nrun tests\ny\n/quit\n",
+        self.shift("/mode manual\nrun tests\ny\n/quit\n",
                    [tool_call("run", {"argv": ["sh", "-c", "echo 1 test failed; exit 1"]}), answer("tests failed")])
         result = self.tool_results()[-1]
         self.assertIn("· exit 1 ·", result)
@@ -552,7 +556,7 @@ class CodingWorkflow(unittest.TestCase):
             self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, cwd=self.project, env=self.env,
         )
-        process.stdin.write("/mode accept\nrun it\ny\n")
+        process.stdin.write("/mode manual\nrun it\ny\n")
         process.stdin.flush()
         deadline = time.time() + 15
         while time.time() < deadline:
@@ -579,7 +583,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual([e["kind"] for e in self.ledger() if e["kind"] == "run"], [])
 
     def test_interrupted_mutation_is_restored_from_the_pre_image(self):
-        self.shift("/mode accept\nchange the port\n/quit\n", [self.edit_notes, answer("ok")])
+        self.shift("/mode autopilot\nchange the port\n/quit\n", [self.edit_notes, answer("ok")])
         before = "alpha port 9443\n"
         crashed = "alpha port 1\n"
         self.assertEqual((self.project / "notes.txt").read_text(), before)
@@ -612,7 +616,7 @@ class CodingWorkflow(unittest.TestCase):
         (self.project / "second.txt").write_text("alpha\n")
         patch = ("--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-alpha port 8080\n+alpha port 9443\n"
                  "--- a/second.txt\n+++ b/second.txt\n@@ -1 +1,2 @@\n alpha\n+beta\n")
-        self.shift("/mode accept\npatch\n/quit\n", [tool_call("apply_patch", {"patch": patch}), answer("ok")])
+        self.shift("/mode autopilot\npatch\n/quit\n", [tool_call("apply_patch", {"patch": patch}), answer("ok")])
         self.assertEqual((self.project / "second.txt").read_text(), "alpha\nbeta\n")
         (self.project / "second.txt").write_text("alpha\nbeta\nuser addition\n")
         out = self.shift("/undo\n/quit\n")
@@ -649,30 +653,35 @@ class CodingWorkflow(unittest.TestCase):
     def test_print_mode_allow_run_executes_without_a_prompt(self):
         code, out, err = self.print_mode(
             "run it", [tool_call("run", {"argv": ["sh", "-c", "echo ran"]}), answer("ok")],
-            "--mode", "accept", "--allow-run", "sh -c", "--allow-run", "make check")
+            "--mode", "autopilot", "--allow-run", "sh -c", "--allow-run", "make check")
         self.assertEqual(code, 0, err)
         self.assertNotIn("Approve", out + err)
         self.assertIn("· exit 0 ·", self.tool_results()[-1])
         settings = json.loads((self.state("p") / "settings.json").read_text())
         self.assertEqual(settings["run-allow"], [["sh", "-c"], ["make", "check"]])
-        self.assertEqual(settings["mode"], "accept")
+        self.assertEqual(settings["mode"], "autopilot")
 
     def test_print_mode_denies_runs_that_are_not_allowlisted(self):
         code, out, err = self.print_mode(
             "run it", [tool_call("run", {"argv": ["sh", "-c", "echo ran"]}), answer("ok")],
-            "--mode", "accept")
+            "--mode", "manual")
         self.assertEqual(code, 0, err)
         self.assertIn("tool unavailable in this turn: run", self.tool_results()[-1])
+        code, out, err = self.print_mode(
+            "run it", [tool_call("run", {"argv": ["sh", "-c", "echo ran"]}), answer("ok")],
+            "--mode", "autopilot", session="p2")
+        self.assertEqual(code, 0, err)
+        self.assertIn("ran", self.tool_results()[-1])
 
     def test_round_limit_and_token_budget_end_the_turn_with_a_reason(self):
         read = tool_call("read", {"path": "notes.txt"})
         code, out, err = self.print_mode("loop", [read, read, answer("never")],
-                                         "--mode", "accept", "--set", "agent-max-tool-rounds=1")
+                                         "--mode", "autopilot", "--set", "agent-max-tool-rounds=1")
         self.assertEqual(code, 1)
         self.assertIn("tool round limit reached", err)
         spent = tool_call("read", {"path": "notes.txt"}, usage={"prompt_tokens": 5000, "completion_tokens": 20})
         code, out, err = self.print_mode("spend", [spent, answer("never")],
-                                         "--mode", "accept", "--set", "turn-token-budget=2048", session="b")
+                                         "--mode", "autopilot", "--set", "turn-token-budget=2048", session="b")
         self.assertEqual(code, 1)
         self.assertIn("turn token budget exceeded", err)
         journal = (self.state("b") / "events.scm-log").read_text()
@@ -726,7 +735,7 @@ class CodingWorkflow(unittest.TestCase):
 
     def test_show_work_covers_tool_echo_and_the_receipt(self):
         plan = [tool_call("read", {"path": "notes.txt"}), answer("seen")]
-        code, out, err = self.print_mode("look", plan, "--mode", "accept")
+        code, out, err = self.print_mode("look", plan, "--mode", "autopilot")
         self.assertEqual(code, 0, err)
         self.assertEqual(out, "seen\n")
         self.assertIn("tool> read notes.txt", err)
@@ -736,14 +745,14 @@ class CodingWorkflow(unittest.TestCase):
         self.assertNotIn("Approve", out + err)
         self.assertIn("✗ tool unavailable in this turn: read", err)
         self.assertIn("turn 1 · fake · generation 1", err)
-        code, out, err = self.print_mode("look", plan, "--mode", "accept", "--set", "show-work=false",
+        code, out, err = self.print_mode("look", plan, "--mode", "autopilot", "--set", "show-work=false",
                                          "--receipt", str(self.project / "quiet.json"), session="quiet")
         self.assertEqual(out, "seen\n")
         self.assertNotIn("tool>", err)
         self.assertNotIn("turn 1 ·", err, "show-work off hides the receipt text too")
         self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
         self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
-        out = self.shift("/mode accept\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
+        out = self.shift("/mode autopilot\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
         self.assertIn("tools read rg write edit apply_patch status diff run · show-work off", out)
         self.assertNotIn("tool>", out)
         self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
@@ -756,7 +765,7 @@ class CodingWorkflow(unittest.TestCase):
                 "function": {"name": "edit", "arguments": '{"path":"notes.txt","old_text":"unterminated'}}
         bad = sse([{"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]},
                    {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}])
-        code, out, err = self.print_mode("edit it", [bad, answer("retrying")], "--mode", "accept")
+        code, out, err = self.print_mode("edit it", [bad, answer("retrying")], "--mode", "autopilot")
         self.assertEqual(code, 0, err)
         self.assertEqual(out, "retrying\n")
         result = self.tool_results()[-1]
@@ -784,7 +793,7 @@ class CodingWorkflow(unittest.TestCase):
                 tool_call("run", {"argv": ["sh", "-c", "echo ran; exit 3"]}, usage={"prompt_tokens": 1500, "completion_tokens": 20}),
                 answer("done", usage={"prompt_tokens": 1600, "completion_tokens": 5})]
         receipt_file = self.project / "receipt.json"
-        code, out, err = self.print_mode("edit and run", plan, "--mode", "accept", "--allow-run", "sh -c",
+        code, out, err = self.print_mode("edit and run", plan, "--mode", "autopilot", "--allow-run", "sh -c",
                                          "--receipt", str(receipt_file))
         self.assertEqual(code, 0, err)
         self.assertEqual(out, "done\n", "the receipt must not touch stdout")
@@ -817,7 +826,7 @@ class CodingWorkflow(unittest.TestCase):
     def test_failed_and_cancelled_turns_still_get_a_receipt(self):
         read = tool_call("read", {"path": "notes.txt"})
         code, out, err = self.print_mode("loop", [self.edit_notes, read, read, answer("never")],
-                                         "--mode", "accept", "--set", "agent-max-tool-rounds=2")
+                                         "--mode", "autopilot", "--set", "agent-max-tool-rounds=2")
         self.assertEqual(code, 1)
         self.assertIn("status   failed · tool round limit reached", err)
         self.assertIn("changed  notes.txt (+1 −1)", err)
@@ -863,7 +872,7 @@ class CodingWorkflow(unittest.TestCase):
     def test_limit_nudge_asks_the_model_to_finish_once_and_is_not_persisted(self):
         read = tool_call("read", {"path": "notes.txt"})
         code, out, err = self.print_mode("look", [read, read, answer("done")],
-                                         "--mode", "accept", "--set", "agent-max-tool-rounds=5")
+                                         "--mode", "autopilot", "--set", "agent-max-tool-rounds=5")
         self.assertEqual(code, 0, err)
         self.assertIn("shift> 3 tool rounds remain in this turn; asked the model to finish", err)
         last = Provider.last_messages[-1]
@@ -876,7 +885,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("read result", history.lower() if "read result" in history.lower() else "read result")
         self.assertIn("turn-nudge", (self.state("p") / "events.scm-log").read_text())
         spent = tool_call("read", {"path": "notes.txt"}, usage={"prompt_tokens": 900, "completion_tokens": 10})
-        code, out, err = self.print_mode("spend", [spent, read, answer("done")], "--mode", "accept",
+        code, out, err = self.print_mode("spend", [spent, read, answer("done")], "--mode", "autopilot",
                                          "--set", "turn-token-budget=1024", session="budget")
         self.assertEqual(code, 0, err)
         self.assertIn("token budget is 89% spent; asked the model to finish", err)

@@ -124,7 +124,7 @@
     (cons "wordmark" (json-array "shift ///"))
     (cons "branding" "subtitle") (cons "sidebar" "auto") (cons "placement" "right")
     (cons "density" "comfortable") (cons "border" "thin") (cons "ascii" #f) (cons "metrics" #t) (cons "motion" #t)
-    (cons "terminal_colors" #f) (cons "panes" (json-array))
+    (cons "terminal_colors" #t) (cons "panes" (json-array))
     (cons "sections" (json-array "files" "context" "checks" "session"))
     (cons "background" "#170626") (cons "foreground" "#f4edff") (cons "accent" "#b6ff00")
     (cons "secondary" "#45f6ff") (cons "muted" "#ae7deb") (cons "panel" "#1e0c32")

@@ -3,7 +3,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
   #:use-module (live-agent generation)
-  #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
+  #:export (legacy-mode settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
             settings-show settings-object setting-source load-dotenv!))
 
 ;; Data only: never evaluate persisted preferences as Scheme. Live image code
@@ -42,7 +42,7 @@
     ((agent-stream? fast show-work) (boolean? value))
     ((agent-thinking) (or (boolean? value) (memq value '(low medium high))))
     ((agent-keep-alive) (or (string? value) (number? value)))
-    ((mode) (memq value '(manual plan accept auto)))
+    ((mode) (memq value '(manual plan autopilot)))
     ((effort) (memq value '(default low medium high max)))
     ((context-limit) (or (not value) (and (integer? value) (>= value 1024))))
     ((output-reserve) (and (integer? value) (>= value 1024) (<= value 65536)))
@@ -54,9 +54,14 @@
     ((run-backend) (memq value '(local agentkernel)))
     ((run-sandbox) (or (not value) (and (string? value) (not (string-null? value)))))
     (else #f)))
+;; Saved settings from before autopilot: accept already allowed edits and
+;; becomes autopilot; auto was conservative and becomes manual.
+(define (legacy-mode symbol)
+  (case symbol ((accept) 'autopilot) ((auto) 'manual) (else symbol)))
 (define (decode key value)
   (cond
-   ((and (string? value) (memq key '(agent-provider agent-thinking mode effort run-backend)))
+   ((and (string? value) (eq? key 'mode)) (legacy-mode (string->symbol value)))
+   ((and (string? value) (memq key '(agent-provider agent-thinking effort run-backend)))
     (string->symbol value))
    ((and (eq? key 'run-allow) (json-array? value))
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))

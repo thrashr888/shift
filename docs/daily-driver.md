@@ -92,15 +92,16 @@ local traces, with Claude token counts exported to Phoenix.
 
 | Mode | Tool behavior |
 | --- | --- |
-| `/mode manual` (default) | Ask before each model tool execution. |
+| `/mode manual` (default) | Ask before each model tool execution, except runs already on the allowlist. |
 | `/mode plan` | Allow reads/search/traces, `status`, `diff`, and extension listing; deny mutations. |
-| `/mode accept` | Also allow constrained project writes/edits/patches; ask for shell, `run`, and live changes. |
-| `/mode auto` | Conservative prototype: allow reads, ask for everything else. |
+| `/mode autopilot` | Run every tool without asking: writes, patches, live changes and any shell command. |
 
 The same policy gates model tools, selected context reads, and recovery retries.
 Shell `deny` and process tool ceilings still apply. Mode is process-owned data;
 `live_eval` cannot change it. Explicit terminal slash commands are user operations.
-Auto does not run a model classifier or silently infer approval from prompt words.
+Autopilot is an explicit choice; nothing infers approval from prompt words.
+Settings saved before autopilot existed still load: `accept` becomes autopilot
+(it already allowed edits) and the conservative `auto` becomes manual.
 
 ## File changes
 
@@ -165,8 +166,8 @@ exact argv to this session's allowlist; `/run allow cargo test` adds a prefix,
 `/run deny cargo test` removes it, and `/run list` shows them with their settings
 source (`user`, `project`, `session`, or `default`). Terminal changes are session
 preferences; lists replace lower-priority lists rather than merging them. Allowlisted prefixes
-run without asking in accept and auto, never in manual, and match exact leading
-elements only. `/settings save` promotes the list like any other preference. MCP
+run without asking in manual, where every other tool still asks; autopilot never
+asks. Prefixes match exact leading elements only. `/settings save` promotes the list like any other preference. MCP
 callers cannot approve or extend it.
 
 The `coding` built-in provides `status`, `diff`, `apply_patch`, and `run`. `apply_patch`
@@ -191,7 +192,7 @@ is refreshed after a pull without any notes about stale modules.
 ## Print mode and unattended runs
 
 ```
-./bin/shift --print "Add a test for the parser" --mode accept --allow-run "pytest" \
+./bin/shift --print "Add a test for the parser" --mode autopilot \
   --model claude/claude-sonnet-5 --set agent-max-tool-rounds=40 --set turn-token-budget=400000 \
   --session task-17
 ```
@@ -203,8 +204,9 @@ status is 0 for a completed turn, 1 for a failed or cancelled one, and 2 for a
 startup error. `--receipt FILE` writes the turn's receipt as one JSON object
 to FILE, which is how the eval driver reads a task's outcome. It
 implies `--no-watch` and starts no MCP endpoint. Approval prompts cannot be
-answered, so anything that would ask is denied; use `--mode accept` for edits and
-`--allow-run "ARGV PREFIX"` (repeatable) for the commands the task may run. These
+answered, so anything that would ask is denied; use `--mode autopilot` for edits
+and runs, or stay in manual with `--allow-run "ARGV PREFIX"` (repeatable) for the
+only commands the task may run. These
 flags seed the session's settings exactly as `/mode`, `/run allow`, `/model`, and
 `/settings` would, and `--set KEY=JSON` accepts any settings key.
 
@@ -380,12 +382,12 @@ until you re-enter the tab or type `/model list`. Choosing another model of the
 current provider keeps its endpoint and key source, so a local OpenAI-compatible
 server stays selected; choosing another provider restores that provider's defaults.
 
-**Terminal colors.** `/terminal on` (the `terminal_colors` preference) makes the
+**Terminal colors.** The `terminal_colors` preference, on by default, makes the
 surrounding terminal follow the pack: default background, foreground and cursor
-color via OSC 11/10/12 whenever the theme changes, reset on exit or `/terminal off`.
-Ghostty, kitty and iTerm2 honor these; the setting is off by default because it
-recolors the whole tab, not only Shift's cells. The generated Ghostty themes remain
-the way to match the full 16-color palette.
+color via OSC 11/10/12 whenever the theme loads or changes, reset on exit.
+`/terminal off` stops it for terminals you would rather keep as they are; Ghostty,
+kitty and iTerm2 honor the sequences. The generated Ghostty themes remain the way
+to match the full 16-color palette.
 
 **Session.** Besides the current session, receipt, exact telemetry and source
 identity, the tab lists every durable session under the state directory with a
@@ -472,7 +474,7 @@ the cached identity. No inference request is made for these measurements.
 | Click an idle Session row or `/session NAME` | Switch durable sessions when idle; running sessions are marked, not switchable |
 | Click a pane command or `/pane run NAME` | Run a user-owned pane's allowlisted commands |
 | `/terminal on` | Sync the terminal's default colors and cursor to the theme (`off` restores) |
-| Shift+Tab or click mode badge | Cycle manual -> plan -> accept -> auto -> manual when idle |
+| Shift+Tab or click mode badge | Cycle manual -> plan -> autopilot -> manual when idle |
 | Click sidebar hint / Work, Diff, Session | Toggle inspector / select pane without submitting the draft |
 | Wheel / trackpad | Scroll the pane under the pointer; navigate suggestions over a popup |
 | Ctrl+W | Fold/unfold tool work groups |
@@ -507,8 +509,8 @@ visible. Pending previews are separately framed and scrollable; completed approv
 questions, tool JSON and legacy prompt chatter are not duplicated in the transcript.
 Command completion never answers an approval; Escape first dismisses completion.
 The agent's `ui` tool supports get/patch/undo/reload/save. Manual mode
-asks for tool approval; plan mode permits only get. Accept and auto modes allow
-validated UI changes. Mode switching is an explicit user-only `/mode` operation,
+asks for tool approval; plan mode permits only get. Autopilot allows validated UI
+changes. Mode switching is an explicit user-only `/mode` operation,
 not a presentation preference or agent UI action. Busy turns and pending approvals
 reject mode changes visibly without changing their decision or consuming input.
 The draft and cursor survive mode clicks and Shift+Tab.
@@ -598,7 +600,7 @@ The frontend does not force a different `TERM`. Terminal capabilities and fonts
 still control the final appearance; curses cannot reproduce the mocks' font
 rasterization, antialiasing or gradients.
 
-The `///` mark cycles one bold slash against two dim slashes at four
+The `///` mark cycles one accent, bold slash against two muted slashes at four
 steps per second only while the session is `WORKING`. A trailing mark beside a
 multi-line wordmark uses cell-based strokes at the wordmark's height; custom
 single-line identities and ASCII keep literal `///`. Animation never changes the

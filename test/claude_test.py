@@ -228,11 +228,11 @@ class ClaudeTests(unittest.TestCase):
         self.assertFalse((self.project / "forbidden.txt").exists())
         self.assertIn("denied", json.dumps(self.server.requests[1][1]))
 
-    def test_accept_edits_and_manual_denial(self):
+    def test_autopilot_edits_and_manual_denial(self):
         self.server.action = ("write", {"path": "allowed.txt", "content": "expected"})
         self.run_cli("/mode manual\nwrite the file\nn\n/quit\n")
         self.assertFalse((self.project / "allowed.txt").exists())
-        self.run_cli("/reset\n/mode accept\nwrite the file\n/quit\n")
+        self.run_cli("/reset\n/mode autopilot\nwrite the file\n/quit\n")
         self.assertEqual((self.project / "allowed.txt").read_text(), "expected")
 
     def test_compaction_precedes_request_and_preserves_turn(self):
@@ -350,7 +350,7 @@ class ClaudeTests(unittest.TestCase):
             {"path": "forbidden.txt", "content": "unexpected"},
         )
         self.server.truncated = True
-        result = self.run_cli("/mode accept\nwrite the file\n/quit\n")
+        result = self.run_cli("/mode autopilot\nwrite the file\n/quit\n")
         self.assertIn("missing message_stop", result.stderr)
         self.assertFalse((self.project / "forbidden.txt").exists())
         checkpoint = json.loads(
