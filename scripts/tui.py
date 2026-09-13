@@ -41,7 +41,8 @@ COMMANDS = {
     '/theme':'Cycle theme, or choose a name', '/mode':'Execution policy', '/name':'Personal identity',
     '/brand':'Wordmark style', '/place':'Inspector position', '/sidebar':'Inspector visibility',
     '/density':'Transcript spacing', '/border':'Frame style', '/motion':'Working animation',
-    '/terminal':'Sync terminal colors to the theme', '/pane':'Run a user-owned pane (run NAME)',
+    '/terminal':'Sync terminal colors to the theme', '/pane':'Run a user-owned pane (run NAME [ROW])',
+    '/copy':'Copy the last reply to the clipboard (or the N-th from last)',
     '/ui':'Live presentation settings', '/work':'Automatic work display', '/help':'Session command help',
     '/model':'Inspect or choose a model', '/context':'Context usage and limit', '/settings':'Session settings',
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
@@ -318,6 +319,7 @@ class Model:
         self.sessions={'items':[],'error':None,'requested':False}
         self.peers={}
         self.pane_output={}
+        self.replies=[]
         self.approval_preview=''
         self.command_request=0
         self.command_pending=None
@@ -455,8 +457,10 @@ class Model:
                 if self.streaming_role!=role or not value.get('stream'):
                     self.flush_transcript()
                     self.output(role+'> ')
+                    if role=='assistant':self.replies.append('')
                 self.streaming_role=role
                 self.output(text)
+                if role=='assistant' and self.replies:self.replies[-1]+=text
             if value.get('end') or not value.get('stream'):
                 self.flush_transcript()
         elif kind == 'usage':
@@ -693,6 +697,31 @@ class Terminal:
         if m.panel_tab=='session' and not m.sessions['items'] and not m.sessions['requested'] and not m.sessions['error']:
             self.request_sessions()
 
+    def copy_text(self,text,what):
+        # OSC 52 reaches the terminal's clipboard, including over SSH; a local
+        # pbcopy/xclip follows for terminals that refuse clipboard writes.
+        import base64
+        payload=base64.b64encode(text.encode()).decode()
+        sys.stdout.write('\x1b]52;c;'+payload+'\x1b\\');sys.stdout.flush()
+        for command in (['pbcopy'],['xclip','-selection','clipboard'],['wl-copy']):
+            if shutil.which(command[0]):
+                try:subprocess.run(command,input=text.encode(),timeout=2,check=False,env={**os.environ,'LC_CTYPE':'UTF-8'})
+                except (OSError,subprocess.SubprocessError):pass
+                break
+        self.model.notice='Copied '+what+' ('+str(len(text))+' chars)'
+
+    def copy_reply(self,back=1):
+        replies=self.model.replies
+        if back<1 or back>len(replies):
+            self.model.notice='No reply to copy' if not replies else 'Only '+str(len(replies))+' replies to copy from';return False
+        self.copy_text(replies[-back].strip(),'reply' if back==1 else 'reply '+str(back)+' from last');return True
+
+    def copy_reply_at(self,source):
+        # A SHIFT label's source line index maps to the n-th assistant reply.
+        m=self.model
+        index=sum(1 for line in list(m.lines)[:max(0,source-m.lines.origin+1)] if line.startswith('assistant> '))
+        return self.copy_reply(len(m.replies)-index+1) if 0<index<=len(m.replies) else self.copy_reply(len(m.replies)+1)
+
     def request_model_list(self):
         # Entering the Model tab lists once per provider; errors wait for a
         # deliberate retry instead of polling the provider.
@@ -781,7 +810,8 @@ class Terminal:
                 elif kind=='session':
                     try:self.switch_session(value)
                     except ValueError as error:self.model.notice=str(error)
-                elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value,'pane')
+                elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value.split()[0],'pane')
+                elif kind=='copy':self.copy_reply_at(value)
                 elif kind=='model':
                     try:self.request_model(value)
                     except ValueError as error:self.model.notice=str(error)
@@ -1312,7 +1342,7 @@ class Terminal:
                     argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
                     mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
                     rows.append([(mark,2,True),(argv,1,True),((' · '+entry['status']+(' · '+entry['at'] if entry['at'] else '')) if entry else ' · click to run',2 if entry and entry['ok'] else 11 if entry else 4,False)])
-                    actions[len(rows)-1]=('pane',m.panel_tab)
+                    actions[len(rows)-1]=('pane',m.panel_tab+' '+str(index))
                     if entry:
                         for text in entry['lines'][:40]:
                             for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
@@ -1497,6 +1527,9 @@ class Terminal:
         if sticky:self.spans(session.y,session.x+2,sticky,session.w-4)
         for i,parts in enumerate(lines[start:min(end,start+height-(1 if sticky else 0))]):
             self.spans(session.y+i+(1 if sticky else 0),session.x+2,parts,session.w-4)
+            position=positions[start+i] if start+i<len(positions) else None
+            if position and position[1]==-1 and parts and parts[0][0]=='SHIFT':
+                self.hit(session.y+i+(1 if sticky else 0),session.x+2,5,('copy',position[0]))
         if not lines and session.h:
             for i,text in enumerate(('What would you like to work on?','Type a task below to start.','Ctrl+P shows commands.')):
                 if i+1<session.h:self.put(session.y+1+i,session.x+2,text,session.w-4,1 if i==0 else 4,i==0)
@@ -1579,9 +1612,13 @@ class Terminal:
         if name=='/session' and value:
             self.switch_session(value);return True
         if name=='/pane':
-            action,_,pane=value.partition(' ')
-            if action!='run' or not self.pane(pane.strip()):raise ValueError('use /pane run NAME')
-            self.request_command('/pane run '+pane.strip(),'Running pane '+pane.strip(),'pane');return True
+            parts=value.split()
+            if len(parts) not in (2,3) or parts[0]!='run' or not self.pane(parts[1]) or (len(parts)==3 and not parts[2].isdigit()):
+                raise ValueError('use /pane run NAME [ROW]')
+            self.request_command('/pane run '+' '.join(parts[1:]),'Running pane '+parts[1],'pane');return True
+        if name=='/copy':
+            if value and not value.isdigit():raise ValueError('use /copy or /copy N (N-th reply from the last)')
+            self.copy_reply(int(value) if value else 1);return True
         if name=='/terminal':
             if value not in ('on','off'):raise ValueError('use /terminal on|off')
             self.child.ui({'action':'patch','patch':{'terminal_colors':value=='on'}});return True

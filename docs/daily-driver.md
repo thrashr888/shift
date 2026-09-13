@@ -402,13 +402,20 @@ Busy turns, pending approvals and sessions open elsewhere refuse the switch.
 as data rather than code: each pane has a `name`, a `title`, and up to 24 rows
 of `text`, a live `field` (`session.name`, `session.model`, `usage.prompt`,
 `receipt.status`, `source.loaded` and the rest of the documented list), or a
-`command` argv. Command rows are clickable, and `/pane run NAME` runs every
-command row through the same `run` machinery as the agent's runs, but only when
-the session's run allowlist already permits it; otherwise the pane reports which
-`/allow-run` prefix is missing. Output shows under the row and in the Log tab,
-bounded like other runs. Panes live with the other presentation preferences
-(`/ui save project` shares them with a project), never load Python, and the
-agent's `ui` tool can edit them only under the same validation as colors.
+`command` argv. Clicking a command row runs that row; `/pane run NAME` runs
+every command row and `/pane run NAME ROW` one of them, through the same `run`
+machinery as the agent's runs, but only when the session's run allowlist already
+permits it; otherwise the pane reports which `/allow-run` prefix is missing.
+Output shows under the row and in the Log tab, bounded like other runs. Panes
+never load Python, and the agent's `ui` tool can edit them only under the same
+validation as colors.
+
+A project ships its panes in `.shift/panes.json`, a JSON array of panes that
+loads whenever Shift runs in that folder and reloads within half a second when
+it changes; this repository's own file adds a SHIFT tab with checkout health,
+`git status`, `git log` and `make test`. The file is committable (`.gitignore`
+keeps the rest of `.shift/` private). Explicit `panes` preferences, for example
+from `/ui`, take precedence over the file; an invalid file is reported and skipped.
 
 ```text
 /ui {"action":"patch","patch":{"panes":[{"name":"shift","title":"SHIFT","rows":[
@@ -425,6 +432,13 @@ listed in the Session tab's PEERS section with their name, version, call count
 and last tool, and every tool call they make lands in the Log tab as a `[peer]`
 entry with its outcome. Peers get the same four read-mostly tools as before;
 they cannot change settings or approve anything.
+
+**Copying replies.** `/copy` puts the last reply on the clipboard, `/copy 2` the
+one before, and clicking a `SHIFT` role label copies that block. The text goes
+out as OSC 52, which Ghostty, kitty, iTerm2 and tmux forward to the system
+clipboard even over SSH, and also through `pbcopy`, `xclip` or `wl-copy` when
+one is installed. Mouse tracking keeps drag-selection for the terminal's own
+modified-drag convention.
 
 **Log.** Every `run` tool call appends its command, exit status, duration and
 combined output, bounded to 300 lines or 16 KiB per run with the ledger log path
@@ -472,7 +486,8 @@ the cached identity. No inference request is made for these measurements.
 | Tab outside suggestions | Select Work, Diff, Session, Model or Log in a side pane/overlay |
 | Click a Model row or `/model PROVIDER/MODEL` | Switch models when idle; `/model list` refreshes the tab |
 | Click an idle Session row or `/session NAME` | Switch durable sessions when idle; running sessions are marked, not switchable |
-| Click a pane command or `/pane run NAME` | Run a user-owned pane's allowlisted commands |
+| Click a pane command or `/pane run NAME [ROW]` | Run a user-owned pane's allowlisted commands |
+| `/copy`, `/copy N`, or click a SHIFT label | Copy the last reply, the N-th from last, or that block to the clipboard |
 | `/terminal on` | Sync the terminal's default colors and cursor to the theme (`off` restores) |
 | Shift+Tab or click mode badge | Cycle manual -> plan -> autopilot -> manual when idle |
 | Click sidebar hint / Work, Diff, Session | Toggle inspector / select pane without submitting the draft |

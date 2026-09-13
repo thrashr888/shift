@@ -109,8 +109,9 @@ layout; `/place bottom` gives any theme a full-width transcript with bottom
 telemetry. Tab switches the Work, Diff, Session, Model and Log pane views, where
 Model lists and switches the provider's models, Session lists durable sessions
 with a status mark and switches between them, Log keeps bash run output, and a
-`panes` preference adds tabs of your own built from text, live fields and
-allowlisted commands; MCP peers attached with `--mcp-port` appear with their calls;
+`panes` preference or a project's `.shift/panes.json` adds tabs of your own built
+from text, live fields and allowlisted commands; `/copy` puts a reply on the
+clipboard; MCP peers appear with their calls;
 Ctrl+W/Ctrl+O fold real work/diffs.
 Acid uses a lowercase pixel wordmark and deep-purple RGB palette on capable
 terminals, with indexed-color/ASCII/monochrome fallbacks. For example:

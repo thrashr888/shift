@@ -1,5 +1,6 @@
 .lisp-agent/
-.shift/
+.shift/*
+!.shift/panes.json
 .env
 __pycache__/
 *.pyc

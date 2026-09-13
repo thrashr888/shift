@@ -70,6 +70,18 @@
   (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "field" "env.HOME")))))))))
 (test-error "pane commands are argv lists" #t
   (patch (cons "panes" (json-array (json-object (cons "name" "x") (cons "title" "X") (cons "rows" (json-array (json-object (cons "command" "rm -rf /")))))))))
+(call-with-output-file (string-append root "/project/panes.json")
+  (lambda (p) (display "[{\"name\":\"proj\",\"title\":\"PROJ\",\"rows\":[{\"text\":\"from the project\"}]}]" p)))
+(patch (cons "panes" (json-array)))
+(test-equal "a project's panes.json loads when the session has no panes of its own" "proj"
+  (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))
+(patch (cons "panes" (json-array pane)))
+(test-equal "explicit panes win over the project file" "shift"
+  (json-object-ref (car (json-array-items (json-object-ref (config) "panes"))) "name"))
+(patch (cons "panes" (json-array)))
+(call-with-output-file (string-append root "/project/panes.json") (lambda (p) (display "[{\"name\":\"log\"}]" p)))
+(test-error "an invalid project panes.json is rejected, not loaded" #t (ui-action! (json-object (cons "action" "reload"))))
+(delete-file (string-append root "/project/panes.json"))
 (patch (cons "terminal_colors" #t))
 (test-equal "terminal color sync is a boolean preference" #t (json-object-ref (config) "terminal_colors"))
 (test-error "terminal color sync must be boolean" #t (patch (cons "terminal_colors" "yes")))

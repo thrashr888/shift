@@ -1,0 +1,41 @@
+[
+  {
+    "name": "shift",
+    "title": "SHIFT",
+    "rows": [
+      {
+        "text": "Shift checkout health"
+      },
+      {
+        "field": "source.loaded"
+      },
+      {
+        "field": "session.model"
+      },
+      {
+        "field": "usage.prompt"
+      },
+      {
+        "command": [
+          "git",
+          "status",
+          "--short"
+        ]
+      },
+      {
+        "command": [
+          "git",
+          "log",
+          "--oneline",
+          "-3"
+        ]
+      },
+      {
+        "command": [
+          "make",
+          "test"
+        ]
+      }
+    ]
+  }
+]

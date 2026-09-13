@@ -542,6 +542,12 @@ class Bridge(unittest.TestCase):
         entry=self.model.pane_output['shift'][1]
         self.assertTrue(entry['ok']);self.assertEqual(entry['lines'],['pane says hi'])
         self.assertEqual(self.model.runs[-1]['kind'],'pane');self.assertIn('Pane shift ran 1 command',self.model.notice)
+        terminal.request_command('/pane run shift 0','Running pane shift','pane')
+        self.wait(lambda:self.model.command_pending is None)
+        self.assertIn('no command row at that index',self.model.notice)
+        terminal.request_command('/pane run shift 1','Running pane shift','pane')
+        self.wait(lambda:self.model.command_pending is None)
+        self.assertIn('Pane shift ran 1 command',self.model.notice);self.assertEqual(len(self.model.runs),2)
 
     def test_mcp_peers_are_listed_with_their_calls(self):
         import socket,urllib.request
@@ -1377,9 +1383,9 @@ class UserPanes(unittest.TestCase):
         self.assertEqual(terminal.tabs()[-1],'shift');self.assertIn('SHIFT',terminal.screen.line(5))
         self.assertIn('Checkout health',text);self.assertIn('name: main',text);self.assertIn('loaded: abc1234',text)
         self.assertIn('▶ git status --short · click to run',text)
-        row=next(r for r,a in terminal.hits if a==('pane','shift'))
+        row=next(r for r,a in terminal.hits if a==('pane','shift 3'))
         terminal.pointer(row.x+3,row.y,'press')
-        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/pane run shift','request_id':1})
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/pane run shift 3','request_id':1})
         terminal.model.event({'type':'session-command-result','value':{'request_id':1,'ok':False,'error':'pane command is not allowlisted; /allow-run "make test" first'}})
         self.assertIn('not allowlisted',terminal.model.notice)
 
@@ -1396,6 +1402,18 @@ class UserPanes(unittest.TestCase):
         m.draft='/pane ';terminal.draw()
         self.assertEqual([c[0] for c in terminal.completion_choices],['/pane run shift'])
         m.draft='/pane run nope';self.assertRaises(ValueError,terminal.local,m.draft)
+
+    def test_each_command_row_runs_on_its_own(self):
+        terminal=self.pane()
+        rows=[a for _,a in terminal.hits if a[0]=='pane']
+        self.assertEqual(rows,[('pane','shift 3'),('pane','shift 4')])
+        row=next(r for r,a in terminal.hits if a==('pane','shift 4'))
+        terminal.pointer(row.x+3,row.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/pane run shift 4','request_id':1})
+        terminal.model.command_pending=None
+        terminal.model.draft='/pane run shift 3';terminal.key('\n')
+        self.assertEqual(terminal.child.ui.call_args.args[0]['command'],'/pane run shift 3')
+        self.assertRaises(ValueError,terminal.local,'/pane run shift x')
 
     def test_pane_labels_abbreviate_when_six_tabs_do_not_fit(self):
         terminal=self.pane();terminal.screen.size=(30,96);terminal.draw()
@@ -1430,6 +1448,45 @@ class ChildArguments(unittest.TestCase):
         self.assertEqual(tui.child_arguments(base)[1:],['--watch','--mcp-port','7331',*base])
         self.assertEqual(tui.child_arguments(base+['--no-mcp'])[1:],['--watch',*base,'--no-mcp'])
         self.assertEqual(tui.child_arguments(['--mcp-port','7345',*base])[1:],['--watch','--mcp-port','7345',*base])
+
+
+class CopyReplies(unittest.TestCase):
+    def conversation(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'transcript','value':{'role':'user','text':'first question'}})
+        m.event({'type':'transcript','value':{'role':'assistant','text':'First ','stream':True}})
+        m.event({'type':'transcript','value':{'role':'assistant','text':'answer.','stream':True}})
+        m.event({'type':'transcript','value':{'role':'assistant','text':'','stream':True,'end':True}})
+        m.event({'type':'transcript','value':{'role':'user','text':'second question'}})
+        m.event({'type':'transcript','value':{'role':'assistant','text':'Second answer\nwith two lines.'}})
+        m.control('ready');terminal.draw()
+        return terminal
+
+    def test_copy_command_sends_osc52_and_uses_a_local_clipboard_tool(self):
+        terminal=self.conversation();m=terminal.model
+        self.assertEqual(m.replies,['First answer.','Second answer\nwith two lines.'])
+        writes=[]
+        with patch.object(tui.sys,'stdout',Mock(write=writes.append,flush=lambda:None)), \
+             patch.object(tui.shutil,'which',lambda name:'/usr/bin/pbcopy' if name=='pbcopy' else None), \
+             patch.object(tui.subprocess,'run') as run:
+            m.draft='/copy';terminal.key('\n')
+            self.assertEqual(writes[-1],'\x1b]52;c;'+__import__('base64').b64encode(b'Second answer\nwith two lines.').decode()+'\x1b\\')
+            run.assert_called_once();self.assertEqual(run.call_args.kwargs['input'],b'Second answer\nwith two lines.')
+            self.assertEqual(m.notice,'Copied reply (29 chars)')
+            m.draft='/copy 2';terminal.key('\n')
+            self.assertIn('First answer.',writes[-1] and __import__('base64').b64decode(writes[-1][7:-2]).decode())
+            self.assertEqual(m.notice,'Copied reply 2 from last (13 chars)')
+            m.draft='/copy 9';terminal.key('\n');self.assertIn('Only 2 replies',m.notice)
+
+    def test_clicking_a_shift_label_copies_that_reply(self):
+        terminal=self.conversation();m=terminal.model
+        labels=[(r,a) for r,a in terminal.hits if a[0]=='copy']
+        self.assertEqual(len(labels),2)
+        with patch.object(tui.sys,'stdout',Mock(write=lambda s:None,flush=lambda:None)), patch.object(tui.shutil,'which',lambda name:None):
+            first=labels[0][0];terminal.pointer(first.x+1,first.y,'press')
+            self.assertEqual(m.notice,'Copied reply 2 from last (13 chars)')
+            second=labels[1][0];terminal.pointer(second.x+1,second.y,'press')
+            self.assertEqual(m.notice,'Copied reply (29 chars)')
 
 
 class TerminalColors(unittest.TestCase):
