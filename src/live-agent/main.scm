@@ -287,6 +287,7 @@
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
     "  /judge [off|shadow|on|report]  the autopilot judge: setting, model, counts, or shadow agreement\n"
+    "  /sandbox [NAME|off]  run commands in an agentkernel sandbox; run-host prefixes stay on the host\n"
     "  /mcp [connect|disconnect|tools NAME]  MCP servers from .shift/mcp.scm and the user config\n"
     "  /allow-mcp SERVER__TOOL [project|user]  let an MCP tool run without asking\n"
     "  /traces [QUERY]   list recent spans or search all session traces\n"
@@ -1174,6 +1175,20 @@
     (display (allow-run-command! (trimmed-command-argument line "/allow-run "))) (newline) 'continue)
    ((string-prefix? "/learn " line)
     (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
+   ((or (string=? line "/sandbox") (string-prefix? "/sandbox " line))
+    (let ((generation (runtime-current runtime)) (value (if (string=? line "/sandbox") "" (trimmed-command-argument line "/sandbox "))))
+      (cond
+       ((string-null? value)
+        (format #t "runs: ~a~a~%host prefixes: ~a~%"
+                (setting-ref generation 'run-backend)
+                (if (eq? (setting-ref generation 'run-backend) 'agentkernel) (format #f " sandbox ~a" (setting-ref generation 'run-sandbox)) "")
+                (string-join (map (lambda (p) (string-join p " ")) (setting-ref generation 'run-host)) ", ")))
+       ((string=? value "off") (settings-set! (list (cons 'run-backend 'local))) (display "runs: local\n"))
+       ((string-every (lambda (c) (or (char-alphabetic? c) (char-numeric? c) (memv c '(#\- #\_)))) value)
+        (settings-set! (list (cons 'run-backend 'agentkernel) (cons 'run-sandbox value)))
+        (format #t "runs: agentkernel sandbox ~a; host prefixes stay on the host~%" value))
+       (else (error "use /sandbox, /sandbox NAME, or /sandbox off"))))
+    'continue)
    ((string=? line "/judge")
     (let ((generation (runtime-current runtime)) (endpoint (judge-endpoint (runtime-current runtime))))
       (format #t "judge ~a · model ~a/~a · this session: ~a judged, ~a blocked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint) turn-judged turn-blocked))
@@ -1756,8 +1771,10 @@
 (define* (authorize-tool runtime generation name arguments #:optional (preview #f))
   (let* ((run? (string=? name "run"))
          (judge-setting (setting-ref generation 'judge))
+         (sandboxed? (and run? (run-sandboxed? generation arguments)))
+         (preview (if (and sandboxed? preview) (string-append preview "  in agentkernel sandbox " (setting-ref generation 'run-sandbox) "\n") preview))
          (policy (tool-decision (setting-ref generation 'mode) name arguments
-                                (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow)))
+                                (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow) sandboxed?))
          (rule (and (eq? policy 'judge)
                     (judge-rules name arguments (getcwd) (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow))))
          (decision (cond ((not (eq? policy 'judge)) policy)
@@ -1848,7 +1865,11 @@
   `((traceparent . ,(and span (trace-trace-id span) (trace-span-id span)
                          (format #f "00-~a-~a-01" (trace-trace-id span) (trace-span-id span))))
     (backend . ,(setting-ref generation 'run-backend))
-    (sandbox . ,(setting-ref generation 'run-sandbox))))
+    (sandbox . ,(setting-ref generation 'run-sandbox))
+    (host . ,(setting-ref generation 'run-host))))
+(define (run-sandboxed? generation arguments)
+  (and (builtin-enabled? 'coding)
+       (eq? 'sandbox ((builtin-ref 'coding 'run-placement) (run-argv-of arguments) (coding-context generation #f)))))
 
 (define (handle-run-command runtime line)
   (let* ((generation (runtime-current runtime))

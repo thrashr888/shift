@@ -40,7 +40,9 @@ stdin it exits naturally at end-of-file. The initial turn uses the same tools,
 streaming, tracing, approvals, and durable checkpoint path as a typed prompt.
 Autopilot is not "allow everything": fixed rules refuse the destructive cases
 and a separate judge model reviews the rest against your own words, with a
-shadow mode that records its verdicts beside yours before you trust it.
+shadow mode that records its verdicts beside yours before you trust it. With
+`/sandbox NAME`, runs execute in an agentkernel sandbox and need neither, while
+`run-host` prefixes such as `cargo tauri` and `codesign` stay on the host.
 
 Interactive terminals open the curses interface automatically. There is no
 public `--repl` mode. Use `--print`/`-p` for

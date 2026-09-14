@@ -35,7 +35,6 @@ Packaging:
   - **Export and promotion.** Session export and sharing, and a reviewed path from
     an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
   - **Judge evals.** An evals `judge` subcommand that replays `judge.jsonl` through a candidate model and reports agreement ([autopilot-judge-rfc](autopilot-judge-rfc.md)).
-  - **Sandbox routing.** Run in agentkernel by default with a host allowlist for macOS-only steps such as `cargo tauri build`, `codesign` and `xcodebuild` ([daily-driver](daily-driver.md)).
   - **Packs.** File/URL extension packs ([daily-driver-plan](daily-driver-plan.md)).
 Evals/Quality:
   - **Stable-runtime handoff.** The versioned supervisor for upgrading the trusted runtime in place ([live-updates](live-updates.md)).

@@ -182,6 +182,19 @@ back into the real exit code and output. The `agentkernel` on `PATH` must be
 that version or newer; a stale `cargo install` in `~/.cargo/bin` shadows the
 Homebrew one.
 
+`/sandbox NAME` turns that on for the session (`/sandbox off` turns it off,
+`/sandbox` shows the state) and then leans on the sandbox the way Codex does: a
+run that will execute inside it needs no approval in manual mode and no judge
+in autopilot, because the sandbox is the boundary. Commands whose argv starts
+with a `run-host` prefix stay on the host and are approved or judged like any
+other run; the default list is `git`, `cargo tauri`, `codesign`, `xcodebuild`,
+`xcrun`, `notarytool`, `open`, `swift`, `swiftc` and `brew`, the tools a Tauri
+or macOS build needs from the host toolchain and the one that needs your
+signing keys. On this Mac agentkernel runs Linux containers, so a Tauri app's
+frontend tests fit the sandbox and its `cargo tauri build` does not; the
+prefix list is what keeps both working in one session. The approval preview
+says `in agentkernel sandbox NAME` when a run is headed there.
+
 Every mode except plan asks before a run. The answer `a` approves it and adds the
 exact argv to this session's allowlist. The allowlist has three scopes that
 union, the way Claude Code's permission rules do: user
