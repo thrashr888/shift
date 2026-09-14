@@ -253,6 +253,46 @@ execute concurrently, four at a time, before their results are recorded and
 returned in the model's order; their spans carry `tool.parallel`. Mutations,
 runs and anything that could prompt stay sequential.
 
+## MCP servers as tools
+
+Shift is an MCP client as well as a server. Servers are data in `.shift/mcp.scm`
+(project, committable) and `~/.config/shift/mcp.scm` (user), one form each,
+read like a pane pack and never evaluated; a project server shadows a user
+server of the same name, and `./bin/shift --check-mcp [FILE]` lints a file.
+
+```scheme
+((server "github"
+   (command "npx" "-y" "@modelcontextprotocol/server-github")
+   (env GITHUB_TOKEN))
+ (server "docs"
+   (url "https://docs.example.com/mcp")
+   (header "Authorization" "Bearer $DOCS_TOKEN")))
+```
+
+`command` starts a stdio server as a child of the session with a minimal
+environment plus the named `env` variables; `url` speaks Streamable HTTP and
+keeps the `Mcp-Session-Id`. Secrets come only from the project's `.env`: `env`
+names are copied from there and `$NAME` in a header expands from there, so a
+committed file cannot read a variable you did not put in `.env`. Servers
+connect lazily, at the first `tool_search` or `/mcp connect NAME`, with a
+ten-second budget; a failure is kept with its reason until you retry.
+
+Tools are named `SERVER__TOOL`, a server tool that would shadow a built-in is
+refused, and their schemas never sit in the system prompt: the model sees only
+server names and one-line descriptions, calls `tool_search` with a few words
+(or `select:SERVER__TOOL`), and the matching tools, up to eight, become
+callable for the rest of the turn. The receipt lists them as `mcp_tools`.
+
+Policy treats an MCP tool like any other: manual asks, autopilot allows, and
+plan allows only tools the server annotates as read-only, non-destructive and
+closed-world. `/allow-mcp SERVER__TOOL [project|user]` puts a tool on the same
+scoped allowlist as runs, so a project can commit that `github__search_issues`
+never asks. `/mcp` lists servers, `/mcp connect NAME`, `/mcp disconnect NAME`
+and `/mcp tools NAME` manage them, and the Session tab's SERVERS section (also
+a `(source servers)` pane row) shows state and tool counts; clicking a server
+that is not connected connects it. Results are bounded to 64 KiB; images and
+other non-text content are named with their type and size, not inlined.
+
 ## Print mode and unattended runs
 
 ```

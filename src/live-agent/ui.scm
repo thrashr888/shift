@@ -89,7 +89,7 @@
                       "usage.prompt" "usage.limit" "usage.round" "usage.max_rounds"
                       "receipt.status" "receipt.duration_ms" "source.loaded" "source.process"))
 ;; Rows a pane may borrow from the built-in tabs.
-(define pane-sources '("session" "skills" "sessions" "peers" "receipt" "telemetry" "source" "jobs" "runs" "models"))
+(define pane-sources '("session" "skills" "sessions" "peers" "servers" "receipt" "telemetry" "source" "jobs" "runs" "models"))
 (define (valid-pane-row? row)
   (and (json-object? row)
        (let ((entries (json-object-entries row)))

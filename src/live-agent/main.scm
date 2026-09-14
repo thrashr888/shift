@@ -29,6 +29,7 @@
   #:use-module (live-agent runtime)
   #:use-module (live-agent session)
   #:use-module (live-agent skills)
+  #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:export (main))
@@ -60,7 +61,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("ui" "read" "rg" "skill" "write" "edit" "shell" "traces" "live_eval" "extension")
+  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -112,6 +113,7 @@
 
 (define (reset-turn-usage!)
   (set! turn-skills '())
+  (set! turn-mcp-tools '())
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
@@ -136,6 +138,7 @@
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift --list-sessions [--state-dir PATH]\n"
     "       shift --check-panes [FILE]        lint a pane pack (default .shift/panes.scm)\n"
+    "       shift --check-mcp [FILE]          lint an MCP pack (default .shift/mcp.scm)\n"
     "       shift session-fork PARENT CHILD\n"
     "\nInteractive terminals open the curses interface.\n"
     "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
@@ -221,6 +224,12 @@
                                   (substring (cadr rest) (+ equals 1)))))))
       (loop (cddr rest) agent state-dir watch? session-name session-mode list?
             initial-prompt fork-parent fork-child))
+     ((string=? (car rest) "--check-mcp")
+      (let* ((path (if (and (pair? (cdr rest)) (not (string-prefix? "-" (cadr rest)))) (cadr rest) ".shift/mcp.scm"))
+             (outcome (catch #t (lambda () (check-mcp-file path)) (lambda (key . args) (error-text key args)))))
+        (cond ((string? outcome) (format (current-error-port) "~a: ~a~%" path outcome) (exit 2))
+              (else (for-each (lambda (s) (format #t "server ~a: ~a ~a~%" (car s) (cadr s) (caddr s))) outcome)
+                    (format #t "~a: ok~%" path) (exit 0)))))
      ((string=? (car rest) "--check-panes")
       (let* ((path (if (and (pair? (cdr rest)) (not (string-prefix? "-" (cadr rest)))) (cadr rest) ".shift/panes.scm"))
              (outcome (catch #t (lambda () (check-panes-file path)) (lambda (key . args) (error-text key args)))))
@@ -275,6 +284,8 @@
     "  /jobs             list background jobs; /jobs cancel ID stops one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
+    "  /mcp [connect|disconnect|tools NAME]  MCP servers from .shift/mcp.scm and the user config\n"
+    "  /allow-mcp SERVER__TOOL [project|user]  let an MCP tool run without asking\n"
     "  /traces [QUERY]   list recent spans or search all session traces\n"
     "  /trace SPAN_ID    inspect one full span returned by trace search\n"
     "  /compact          summarize older history and retain recent turns\n"
@@ -498,6 +509,57 @@
                                "")))))
            spans)))))))
 
+;; MCP: tool_search enables matching server tools for the rest of the turn;
+;; calls go to the server under the same policy as any other tool.
+(define turn-mcp-tools '())
+(define (emit-servers!) (when (ui-connected?) (ui-emit! "servers" (mcp-servers-json))))
+(define (execute-tool-search arguments)
+  (let ((query (json-object-ref arguments "query" #f)))
+    (unless (string? query) (error "query must be a string"))
+    (let ((matches (mcp-search query)))
+      (emit-servers!)
+      (for-each (lambda (m) (unless (member (car m) turn-mcp-tools) (set! turn-mcp-tools (append turn-mcp-tools (list (car m)))))) matches)
+      (make-tool-result #t
+        (if (null? matches)
+            (string-append "No MCP tools match. Servers: "
+                           (string-join (map (lambda (o) (string-append (json-object-ref o "name") " (" (json-object-ref o "state")
+                                                                        (let ((r (json-object-ref o "reason" #f))) (if (string? r) (string-append ": " r) "")) ")"))
+                                             (json-array-items (mcp-servers-json))) ", "))
+            (string-append "Enabled for this turn: " (string-join (map car matches) ", ") "\n"
+                           (string-join (map (lambda (m) (json-write (cadr m))) matches) "\n")))))))
+(define (execute-mcp-call name arguments)
+  (call-with-values (lambda () (mcp-call! name arguments))
+    (lambda (ok? text) (make-tool-result ok? text))))
+(define (show-servers)
+  (let ((items (json-array-items (mcp-servers-json))))
+    (if (null? items)
+        (display "No MCP servers. Declare them in .shift/mcp.scm or ~/.config/shift/mcp.scm.\n")
+        (for-each (lambda (o)
+                    (format #t "~a  ~a  ~a  ~a tools~a~%" (json-object-ref o "name") (json-object-ref o "state") (json-object-ref o "transport")
+                            (json-object-ref o "tools")
+                            (let ((r (json-object-ref o "reason" #f))) (if (string? r) (string-append "  " r) ""))))
+                  items))))
+(define (mcp-command! text)
+  (let ((parts (string-tokenize text)))
+    (cond
+     ((null? parts) (show-servers) "")
+     ((and (= (length parts) 2) (string=? (car parts) "connect"))
+      (mcp-connect! (cadr parts)) (emit-servers!)
+      (format #f "~a connected: ~a tools" (cadr parts) (length (mcp-server-tools (cadr parts)))))
+     ((and (= (length parts) 2) (string=? (car parts) "disconnect"))
+      (mcp-disconnect! (cadr parts)) (emit-servers!) (format #f "~a disconnected" (cadr parts)))
+     ((and (= (length parts) 2) (string=? (car parts) "tools"))
+      (let ((tools (mcp-server-tools (cadr parts))))
+        (if (null? tools) (format #f "~a has no tools listed; /mcp connect ~a first" (cadr parts) (cadr parts))
+            (string-join (map (lambda (t) (string-append (car t) "  " (json-object-ref (json-object-ref (cadr t) "function") "description" ""))) tools) "\n"))))
+     (else (error "use /mcp, /mcp connect NAME, /mcp disconnect NAME, or /mcp tools NAME")))))
+(define (allow-mcp-command! text)
+  (let* ((parts (string-tokenize (string-trim-both text)))
+         (scope (and (>= (length parts) 2) (member (car (last-pair parts)) '("session" "project" "user")) (string->symbol (car (last-pair parts)))))
+         (name (and (pair? parts) (car parts))))
+    (unless (and name (mcp-tool-name? name)) (error "use /allow-mcp SERVER__TOOL [session|project|user]"))
+    (allow-mcp! name (or scope 'session))
+    (format #f "Allowed ~a: ~a" (or scope 'session) name)))
 ;; Skills: the model loads one through the `skill` tool; the user queues one
 ;; with /skill NAME and it rides along with the next prompt. Both are recorded
 ;; on the receipt. Policy never changes because a skill was loaded.
@@ -984,6 +1046,8 @@
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions"))
+        (and (= (length parts) 3) (string=? (car parts) "/mcp") (string=? (cadr parts) "connect")
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/skill")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (cadr parts)))
         (and (<= 3 (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
@@ -1108,6 +1172,12 @@
    ((string-prefix? "/learn " line)
     (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
    ((string=? line "/skills") (show-skills) 'continue)
+   ((or (string=? line "/mcp") (string-prefix? "/mcp " line))
+    (let ((out (mcp-command! (if (string=? line "/mcp") "" (trimmed-command-argument line "/mcp ")))))
+      (unless (string-null? out) (display out) (newline)))
+    'continue)
+   ((string-prefix? "/allow-mcp " line)
+    (display (allow-mcp-command! (trimmed-command-argument line "/allow-mcp "))) (newline) 'continue)
    ((string=? line "/jobs") (show-jobs) 'continue)
    ((string-prefix? "/jobs cancel " line)
     (display ((builtin-ref 'coding 'cancel-job!) (trimmed-command-argument line "/jobs cancel "))) (newline) 'continue)
@@ -1605,7 +1675,7 @@
 (define* (authorize-tool runtime generation name arguments #:optional (preview #f))
   (let* ((run? (string=? name "run"))
          (decision (tool-decision (setting-ref generation 'mode) name arguments
-                                  (setting-ref generation 'run-allow)))
+                                  (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow)))
          (allowed? (case decision
                      ((allow) #t)
                      ((ask) (and (interactive-approval?)
@@ -1875,7 +1945,7 @@
                 (member (json-object-ref arguments "action" "list") '("list" "output"))))
        (not (json-object-ref arguments "invalid_json" #f))
        (eq? 'allow (tool-decision (setting-ref generation 'mode) name arguments
-                                  (setting-ref generation 'run-allow)))))
+                                  (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow)))))
 (define (execute-read-only-call tracer generation name arguments)
   (catch #t
     (lambda ()
@@ -1972,6 +2042,10 @@
                                runtime generation (tool-call-arguments call)))
                              ((string=? name "skill")
                               (execute-skill (tool-call-arguments call)))
+                             ((string=? name "tool_search")
+                              (execute-tool-search (tool-call-arguments call)))
+                             ((mcp-tool-name? name)
+                              (execute-mcp-call name (tool-call-arguments call)))
                              ((string=? name "traces")
                               (execute-traces tracer (tool-call-arguments call)))
                              ((member name coding-tool-names)
@@ -2172,7 +2246,7 @@
          (keep-alive (setting-ref generation 'agent-keep-alive))
          (system
           (make-message
-           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block))))
+           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block) (mcp-prompt-block))))
          (transformed-line
           (generation-call generation 'agent-transform-user line))
          (selected
@@ -2244,7 +2318,7 @@
               (complete-with-trace
                tracer parent generation
                provider model base-url api-key messages
-               enabled-tools stream? thinking keep-alive prompt-cache-key round
+               (append enabled-tools turn-mcp-tools) stream? thinking keep-alive prompt-cache-key round
                prompt-attributes (effective-effort generation) (effective-fast? generation)
                (setting-ref generation 'output-reserve)))
              (completion (car outcome))
@@ -2284,7 +2358,7 @@
                 runtime generation turn-count (+ round 1) max-rounds
                 (execute-tool-calls
                  runtime tracer parent generation provider calls with-assistant
-                 enabled-tools)))
+                 (append enabled-tools turn-mcp-tools))))
                (+ round 1)
                (if prompt-reported? raw-estimate previous-estimate)
                (if prompt-reported? prompt previous-prompt))))))))
@@ -2456,6 +2530,7 @@
    #:tool-calls turn-tool-calls
    #:ledger ledger
    #:skills (reverse turn-skills)
+   #:mcp-tools turn-mcp-tools
    #:trace-id (trace-trace-id span) #:span-id (trace-span-id span)
    #:session-name (tracer-session-name tracer)
    #:session-id (and (tracer-session-name tracer) (tracer-session-id tracer))))
@@ -2612,12 +2687,12 @@
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
         (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
         (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral"))))
-      (emit-skills!))
+      (emit-skills!) (emit-servers!))
     (define (register-host!)
       (ui-host-handler!
         (lambda (command)
           (unless (host-command-allowed? command)
-            (error "only /mode manual|plan|autopilot, /model list, /model PROVIDER/MODEL, /sessions, /pane run NAME, or /skill NAME is supported"))
+            (error "only /mode manual|plan|autopilot, /model list, /model PROVIDER/MODEL, /sessions, /pane run NAME, /skill NAME, or /mcp connect NAME is supported"))
           (unless (try-mutex lock) (error "Session busy; finish the turn or pending approval before changing mode or model"))
           (dynamic-wind
             (lambda () #t)
@@ -2629,6 +2704,8 @@
                               (and (= (length parts) 4) (string->number (cadddr parts))))))
                 ((string-prefix? "/skill " command)
                  (queue-skill! (trimmed-command-argument command "/skill ")))
+                ((string-prefix? "/mcp connect " command)
+                 (mcp-command! (trimmed-command-argument command "/mcp ")))
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
                  (let ((summaries (session-summaries (dirname (dirname (session-directory session))) (session-name session))))
@@ -2700,7 +2777,8 @@
             (cons "session" (if session (session-name session) json-null))
             (cons "generation" (generation-id (runtime-current runtime)))
             (cons "turn" turn-count) (cons "messages" (length history))
-            (cons "busy" turn-active?) (cons "settings" (settings-object (runtime-current runtime))))
+            (cons "busy" turn-active?) (cons "settings" (settings-object (runtime-current runtime)))
+            (cons "servers" (mcp-servers-json)))
           (begin
             (unless (and (string? argument) (<= (string-length argument) 262144)) (error "invalid input"))
             (when (and (eq? method 'prompt) (string-prefix? "/" argument))
@@ -2845,6 +2923,12 @@
         (settings-init! state-directory (and session runtime-state-directory))
         (ui-init! state-directory (and session runtime-state-directory))
         (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)))
+        (mcp-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
+                   (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
+                   supported-tool-names
+                   (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
+        (external-tool-schema mcp-tool-schema)
+        (mcp-tool-hints (@ (live-agent mcp-client) mcp-tool-hints))
         (when (builtin-enabled? 'coding)
           ((builtin-ref 'coding 'job-observer!)
            (lambda (event)
@@ -2914,6 +2998,7 @@
                    (lambda ()
                      (stop-watcher!)
                      (when (builtin-enabled? 'coding) ((builtin-ref 'coding 'stop-jobs!) "killed by exit"))
+                     (mcp-stop-all!)
                      (ui-stop!)
                      (trace-close! tracer)
                      (unless (or mcp-stdio? control-port)

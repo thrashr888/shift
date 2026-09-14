@@ -54,6 +54,7 @@ COMMANDS = {
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
     '/jobs':'List background jobs (cancel ID stops one)', '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
     '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
+    '/mcp':'MCP servers: list, connect NAME, disconnect NAME, tools NAME', '/allow-mcp':'Let an MCP tool run without asking (SERVER__TOOL [project|user])',
     '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
 
@@ -323,6 +324,7 @@ class Model:
         self.sessions={'items':[],'error':None,'requested':False}
         self.peers={}
         self.skills=[]
+        self.servers=[]
         self.jobs={}
         self.pane_output={}
         self.replies=[]
@@ -434,6 +436,8 @@ class Model:
                 self.notice=job_id+' finished: '+entry['status']
             else:
                 self.jobs[job_id]={'argv':argv,'elapsed':int(value.get('elapsed_ms') or 0),'tail':clean(str(value.get('tail','')).splitlines()[-1] if str(value.get('tail','')).strip() else '')}
+        elif kind == 'servers':
+            self.servers=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'skills':
             self.skills=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'peer':
@@ -846,6 +850,7 @@ class Terminal:
                     except ValueError as error:self.model.notice=str(error)
                 elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value.split()[0],'pane')
                 elif kind=='skill':self.request_command('/skill '+value,'Loading skill '+value,'skill')
+                elif kind=='mcp':self.request_command('/mcp connect '+value,'Connecting '+value,'server')
                 elif kind=='copy':self.copy_reply_at(value)
                 elif kind=='model':
                     try:self.request_model(value)
@@ -1427,6 +1432,19 @@ class Terminal:
             for peer in m.peers.values():
                 rows.append([(('● ' if self.unicode and not c.get('ascii') else '* '),3,True),(peer['name']+(' '+peer['version'] if peer['version'] else ''),1,True)])
                 line('    '+str(peer['calls'])+' calls'+(' · last '+peer['last'] if peer['last'] else '')+(' · '+peer['at'] if peer['at'] else ''),4)
+        @section('servers')
+        def _servers():
+            title('SERVERS')
+            if not m.servers:line('No MCP servers; declare them in .shift/mcp.scm',4)
+            for server in m.servers:
+                name=clean(str(server.get('name','')));state=str(server.get('state','idle'))
+                mark=('● ' if state=='connected' else '○ ') if self.unicode and not c.get('ascii') else ('* ' if state=='connected' else '- ')
+                rows.append([(mark,2 if state=='connected' else 11 if state=='failed' else 4,True),(name,1,state=='connected'),
+                             ('  '+state+(' · '+str(server.get('tools',0))+' tools' if state=='connected' else '')+'  '+clean(str(server.get('transport',''))),4,False)])
+                if state!='connected':actions[len(rows)-1]=('mcp',name)
+                detail=clean(str(server.get('reason') or server.get('description') or ''))
+                for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if state=='failed' else 4)
+            if any(s.get('state')!='connected' for s in m.servers):line('Click a server or /mcp connect NAME',4)
         @section('receipt')
         def _receipt():
             title('LATEST RECEIPT')
@@ -1539,7 +1557,7 @@ class Terminal:
         elif m.panel_tab=='model':render(['models'])
         elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
         elif m.panel_tab=='session':
-            render(['session','skills','sessions','peers','receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
+            render(['session','skills','sessions','peers']+(['servers'] if m.servers else [])+['receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
         elif m.panel_tab=='diff':
             title('OUTPUT DIFF');line('')
             rows.extend((self.framed_diff(group,width,full=True) or [[('No committed changes',4,False)]])

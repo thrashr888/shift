@@ -119,7 +119,7 @@ class CodingWorkflow(unittest.TestCase):
             ('(define agent-model "demo")', '(define agent-model "fake")'),
             ("http://127.0.0.1:11434", f"http://127.0.0.1:{self.server.server_port}"),
             ("(define agent-tools '(read rg))",
-             "(define agent-tools '(read rg skill write edit apply_patch status diff run job))"),
+             "(define agent-tools '(read rg skill write edit apply_patch status diff run job tool_search))"),
             ("(define agent-max-tool-rounds 1)", "(define agent-max-tool-rounds 6)"),
             ("(define agent-compaction-threshold 12)", "(define agent-compaction-threshold 80)"),
         ):
@@ -184,7 +184,7 @@ class CodingWorkflow(unittest.TestCase):
     edit_notes = tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"})
 
     def test_agent_ui_patch_is_immediate_durable_and_does_not_change_permissions(self):
-        self.agent.write_text(self.agent.read_text().replace('status diff run job))', 'status diff run job ui))'))
+        self.agent.write_text(self.agent.read_text().replace('status diff run job tool_search))', 'status diff run job tool_search ui))'))
         plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
                 tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
         code, out, err = self.print_mode("Make this mine", plan, "--mode", "autopilot")
@@ -753,7 +753,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
         self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
         out = self.shift("/mode autopilot\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
-        self.assertIn("tools read rg skill write edit apply_patch status diff run job · show-work off", out)
+        self.assertIn("tools read rg skill write edit apply_patch status diff run job tool_search · show-work off", out)
         self.assertNotIn("tool>", out)
         self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
         out = self.shift("/work on\nlook\n/quit\n", plan, session="repl")
@@ -851,6 +851,44 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(settings["run-allow"], [["sh", "-c"]])
         session_file = self.state() / "settings.json"
         self.assertFalse(session_file.exists() and json.loads(session_file.read_text()).get("run-allow"))
+
+    def test_mcp_tools_are_found_by_search_and_gated_by_policy(self):
+        fake = ROOT / "test/fake_mcp_server.py"
+        (self.project / ".shift").mkdir(exist_ok=True)
+        (self.project / ".shift/mcp.scm").write_text('((server "fake" (command "python3" "%s")))\n' % fake)
+        output = self.shift(
+            "/mode autopilot\nping the server\n/mcp\n/quit\n",
+            plan=[tool_call("fake__ping", {}), tool_call("tool_search", {"query": "pong"}),
+                  tool_call("fake__ping", {}), answer("done")],
+        )
+        system = Provider.last_messages[0]["content"]
+        self.assertIn("<mcp_servers>", system)
+        self.assertIn("- fake", system)          # lazy: no description before the first connection
+        self.assertNotIn("pong", system)
+        results = self.tool_results()
+        self.assertIn("tool unavailable", results[0])          # not searched yet
+        self.assertIn("Enabled for this turn: fake__ping", results[1])
+        self.assertEqual(results[2], "pong")
+        self.assertIn("fake  connected  stdio  3 tools", output)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(receipt["mcp_tools"], ["fake__ping"])
+        # Plan mode: the read-only tool runs, the mutating one is denied.
+        self.shift(
+            "/mode plan\nagain\n/quit\n",
+            plan=[tool_call("tool_search", {"query": "select:fake__ping,fake__write_note"}),
+                  tool_call("fake__ping", {}), tool_call("fake__write_note", {"text": "x"}), answer("done")],
+        )
+        results = self.tool_results()[-3:]      # the resumed history carries turn one's tool messages too
+        self.assertEqual(results[1], "pong")
+        self.assertIn("tool unavailable", results[2])
+        # Manual mode with a project allowlist entry: echo runs without a prompt.
+        output = self.shift(
+            '/mode manual\n/allow-mcp fake__echo project\nagain\ny\n/quit\n',   # y approves tool_search; echo is allowlisted
+            plan=[tool_call("tool_search", {"query": "select:fake__echo"}), tool_call("fake__echo", {"text": "hi"}), answer("done")],
+        )
+        self.assertIn("Allowed project: fake__echo", output)
+        self.assertEqual(self.tool_results()[-1], "echo: hi")
+        self.assertEqual(json.loads((self.project / ".shift/settings.json").read_text())["mcp-allow"], ["fake__echo"])
 
     def test_parallel_reads_keep_their_order_and_trace_it(self):
         (self.project / "b.txt").write_text("bravo\n")

@@ -65,7 +65,7 @@
 ;; `tool-calls` is an alist of tool name to count. `status` is ok, failed, or
 ;; cancelled, and `error` is the failure detail or #f.
 (define* (build-receipt #:key turn status error model provider generation
-                        duration-ms usage tool-calls ledger skills
+                        duration-ms usage tool-calls ledger skills mcp-tools
                         trace-id span-id session-name session-id)
   (let ((changed (changed-files ledger turn)))
     `((turn . ,turn)
@@ -85,6 +85,7 @@
       (changed . ,changed)
       (runs . ,(turn-runs ledger turn))
       (skills . ,(or skills '()))
+      (mcp_tools . ,(or mcp-tools '()))
       (undo . ,(and ledger (pair? changed)
                     (if (memv turn (ledger-undoable-turns ledger)) #t #f)))
       (trace_id . ,trace-id)
@@ -134,6 +135,7 @@
                                (cons "log" (json-or-null (assq-ref run 'log)))))
                             (get 'runs))))
    (cons "skills" (apply json-array (or (get 'skills) '())))
+   (cons "mcp_tools" (apply json-array (or (get 'mcp_tools) '())))
    (cons "undo" (get 'undo))
    (cons "trace_id" (json-or-null (get 'trace_id)))
    (cons "span_id" (json-or-null (get 'span_id)))
@@ -177,6 +179,7 @@
                       (log . ,(null->false (json-object-ref run "log" json-null)))))
                   (json-array-items (get "runs" (json-array)))))
     (skills . ,(json-array-items (get "skills" (json-array))))
+    (mcp_tools . ,(json-array-items (get "mcp_tools" (json-array))))
     (undo . ,(get "undo" #f))
     (trace_id . ,(get "trace_id"))
     (span_id . ,(get "span_id"))
@@ -201,6 +204,7 @@
       (receipt.runs . ,(length runs))
       (receipt.runs_failed . ,(count (lambda (run) (not (assq-ref run 'success))) runs))
       (receipt.skills . ,(string-join (or (assq-ref receipt 'skills) '()) ","))
+      (receipt.mcp_tools . ,(string-join (or (assq-ref receipt 'mcp_tools) '()) ","))
       (receipt.undo . ,(if (assq-ref receipt 'undo) #t #f)))))
 
 (define (short-id value)

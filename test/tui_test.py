@@ -1419,6 +1419,23 @@ class Skills(unittest.TestCase):
         self.assertIn('/skill release',[c[0] for c in tui.suggestions('/skill re',[],False,[],[],[],['release','review'])])
 
 
+class Servers(unittest.TestCase):
+    def test_servers_show_in_session_tab_and_connect_by_click(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
+        m.control('ready')
+        m.event({'type':'servers','value':[
+            {'name':'github','state':'connected','transport':'stdio','tools':12,'description':'GitHub tools','reason':None,'source':'project'},
+            {'name':'docs','state':'failed','transport':'http','tools':0,'description':'','reason':'HTTP 401: nope','source':'user'},
+            {'name':'lazy','state':'idle','transport':'stdio','tools':0,'description':'','reason':None,'source':'project'}]})
+        m.panel_tab='session';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('SERVERS',text);self.assertIn('● github  connected · 12 tools  stdio',text);self.assertIn('HTTP 401: nope',text)
+        self.assertTrue(any(a==('mcp','docs') for _,a in terminal.hits));self.assertFalse(any(a==('mcp','github') for _,a in terminal.hits))
+        r=next(r for r,a in terminal.hits if a==('mcp','lazy'));terminal.pointer(r.x,r.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/mcp connect lazy','request_id':1})
+        self.assertIn('/mcp',[c[0] for c in tui.suggestions('/mc',[])])
+
+
 class SourceRows(unittest.TestCase):
     def test_panes_borrow_built_in_sections_and_session_tab_leads_with_skills(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model

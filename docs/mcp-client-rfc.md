@@ -1,7 +1,8 @@
 # RFC: MCP client and tool search
 
-Status: draft, September 13, 2026. Decisions are proposed defaults; the open
-questions at the end are the ones that change the work.
+Status: implemented September 13, 2026, with the answers recorded at the end:
+lazy connection everywhere, MCP-only search, eight schemas per search, and
+`.env` as the only secret source.
 
 ## Summary
 

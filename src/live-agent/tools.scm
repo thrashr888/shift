@@ -9,6 +9,7 @@
   #:use-module (live-agent builtins)
   #:export (make-tool-result
             read-roots
+            external-tool-schema
             coding-tool-names
             function-tool
             string-parameter
@@ -96,6 +97,9 @@
 (define (inside-root? path root)
   (or (string=? path root)
       (string-prefix? (string-append root "/") path)))
+;; Schemas for tools the process learned about at runtime (MCP servers);
+;; the runtime installs the lookup, and unknown names still error.
+(define external-tool-schema (make-parameter (lambda (name) #f)))
 ;; Directories outside the project that `read` may enter: the process sets
 ;; this to the valid skill folders, and nothing else widens the boundary.
 (define read-roots (make-parameter (lambda () '())))
@@ -483,6 +487,12 @@
                    (cons "patch" (json-object (cons "type" "object")
                                               (cons "description" "UI keys returned by get, with replacement values")))
                    (cons "scope" (string-parameter "user or project, for save"))) '("action")))
+   ((string=? name "tool_search")
+    (function-tool
+     "tool_search"
+     "Find tools on the session's MCP servers. Pass a few words about what you need, or select:SERVER__TOOL for exact names. Matching tools (up to 8) become callable for the rest of this turn; call them by the returned names."
+     (json-object (cons "query" (string-parameter "Words to match against tool names and descriptions, or select:NAME,NAME")))
+     '("query")))
    ((string=? name "skill")
     (function-tool
      "skill"
@@ -639,4 +649,5 @@
      '("action")))
    ((and (member name coding-tool-names) (builtin-enabled? 'coding))
     ((builtin-ref 'coding 'coding-tool-schema) name))
+   (((external-tool-schema) name) => (lambda (schema) schema))
    (else (error "unknown live tool" name))))
