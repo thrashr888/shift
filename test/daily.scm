@@ -21,6 +21,10 @@
 (test-eq "autopilot judges unlisted runs" 'judge (tool-decision 'autopilot "run" (json-object)))
 (test-eq "autopilot allows reads" 'allow (tool-decision 'autopilot "read" (json-object)))
 (test-eq "manual asks before an unlisted run" 'ask (tool-decision 'manual "run" (json-object)))
+(test-eq "manual lets a sandboxed run go" 'allow (tool-decision 'manual "run" (json-object) '() '() #t))
+(test-eq "autopilot lets a sandboxed run go without the judge" 'allow (tool-decision 'autopilot "run" (json-object) '() '() #t))
+(test-eq "plan still denies sandboxed runs" 'deny (tool-decision 'plan "run" (json-object) '() '() #t))
+(test-eq "a sandboxed flag on another tool changes nothing" 'ask (tool-decision 'manual "write" (json-object) '() '() #t))
 (test-eq "legacy modes are not silently allowed" 'deny (tool-decision 'accept "run" (json-object)))
 ;; MCP tools: hints decide plan mode, the scoped allowlist decides manual.
 (mcp-tool-hints (lambda (name)

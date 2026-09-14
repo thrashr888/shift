@@ -252,6 +252,12 @@
 (test-equal "the project root maps to /workspace"
   "/workspace" (list-ref (executed-argv '("ls") "." 'agentkernel "box") 4))
 (test-error "the agentkernel backend needs a sandbox name" #t (executed-argv '("ls") "." 'agentkernel #f))
+(define boxed '((backend . agentkernel) (sandbox . "box") (host . (("git") ("cargo" "tauri")))))
+(test-eq "runs go to the sandbox when it is configured" 'sandbox (run-placement '("cargo" "test") boxed))
+(test-eq "host prefixes stay on the host" 'host (run-placement '("cargo" "tauri" "build") boxed))
+(test-eq "git stays on the host too" 'host (run-placement '("git" "push") boxed))
+(test-eq "no sandbox name means the host" 'host (run-placement '("cargo" "test") '((backend . agentkernel) (sandbox . #f))))
+(test-eq "the local backend is the host" 'host (run-placement '("cargo" "test") '((backend . local))))
 (test-equal "agentkernel's folded error line yields the real exit code and output"
   '(exit 3 "before\nout line\n")
   (call-with-values

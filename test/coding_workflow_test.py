@@ -62,6 +62,7 @@ class Provider(BaseHTTPRequestHandler):
 
     plan = []
     last_messages = []
+    judge_requests = 0
     lock = threading.Lock()
 
     def do_POST(self):
@@ -69,6 +70,7 @@ class Provider(BaseHTTPRequestHandler):
         judge_request = "safety judge" in str(body["messages"][0].get("content", ""))
         with Provider.lock:
             if judge_request:
+                Provider.judge_requests += 1
                 # The autopilot judge shares this fixture: a marked plan entry answers it, otherwise it allows.
                 if Provider.plan and isinstance(Provider.plan[0], tuple) and Provider.plan[0][0] == "judge":
                     step = Provider.plan.pop(0)[1]
@@ -955,6 +957,29 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual((record["verdict"], record["human"]), ("block", "allow"))
         self.assertIn("1 decisions, 1 beside a human answer, 0 agreed (0%)", output)
         self.assertIn("Would have blocked what you allowed:", output)
+
+    def test_sandboxed_runs_skip_the_prompt_and_host_prefixes_do_not(self):
+        fakebin = self.project / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "agentkernel").write_text("#!/bin/sh\n# exec SANDBOX --workdir DIR -- ARGV: run ARGV here and mark it\n"
+                                            "while [ \"$1\" != \"--\" ]; do shift; done; shift\necho \"[sandbox] $*\"\n")
+        (fakebin / "agentkernel").chmod(0o755)
+        self.env["PATH"] = str(fakebin) + ":" + self.env["PATH"]
+        output = self.shift(
+            "/sandbox box\n/sandbox\nrun both\n/quit\n",
+            plan=[tool_call("run", {"argv": ["cargo", "test"]}), tool_call("run", {"argv": ["git", "status"]}), answer("done")],
+        )
+        self.assertIn("runs: agentkernel sandbox box", output)
+        self.assertIn("host prefixes: git, cargo tauri", output)
+        results = self.tool_results()
+        self.assertIn("[sandbox] cargo test", results[0])          # manual mode, no prompt: the sandbox is the boundary
+        self.assertIn("tool unavailable", results[1])              # git is a host prefix, so manual asked and stdin said no
+        # Autopilot: a sandboxed run never reaches the judge.
+        before = Provider.judge_requests
+        self.shift("/mode autopilot\nagain\n/quit\n", plan=[tool_call("run", {"argv": ["make", "check"]}), answer("done")])
+        self.assertIn("[sandbox] make check", self.tool_results()[-1])
+        self.assertEqual(Provider.judge_requests, before)
+        self.shift("/sandbox off\n/quit\n")
 
     def test_parallel_reads_keep_their_order_and_trace_it(self):
         (self.project / "b.txt").write_text("bravo\n")

@@ -22,7 +22,9 @@
 ;; returning ((read-only . bool) (destructive . bool) (open-world . bool)) or #f.
 (define mcp-tool-hints (make-parameter (lambda (name) #f)))
 (define (mcp-tool-name? name) (and (string? name) (string-contains name "__") #t))
-(define* (tool-decision mode name arguments #:optional (run-allow '()) (mcp-allow '()))
+;; sandboxed? says the run would execute inside the agentkernel sandbox, which
+;; is its own boundary: manual and autopilot let it run without asking or judging.
+(define* (tool-decision mode name arguments #:optional (run-allow '()) (mcp-allow '()) (sandboxed? #f))
   (let ((read-only? (or (member name '("read" "rg" "traces" "status" "diff" "skill" "job" "tool_search"))
                         (and (mcp-tool-name? name)
                              (let ((hints ((mcp-tool-hints) name)))
@@ -34,8 +36,8 @@
         (allowed-run? (and (string=? name "run")
                            (run-allowed? (run-argv-of arguments) run-allow))))
     (case mode
-      ((manual) (if (or allowed-run? (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'ask))
+      ((manual) (if (or allowed-run? (and (string=? name "run") sandboxed?) (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'ask))
       ((plan) (if read-only? 'allow 'deny))
       ;; Autopilot resolves reads and allowlists here; everything else is judged.
-      ((autopilot) (if (or read-only? allowed-run? (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'judge))
+      ((autopilot) (if (or read-only? allowed-run? (and (string=? name "run") sandboxed?) (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'judge))
       (else 'deny))))

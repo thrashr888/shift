@@ -18,7 +18,7 @@
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
             executed-argv capture-process unwrap-agentkernel-output
-            job-observer! take-job-notices stop-jobs! job-list start-job! cancel-job! job-event))
+            job-observer! take-job-notices stop-jobs! job-list start-job! cancel-job! job-event run-placement))
 
 (define max-output (* 64 1024))
 (define max-patch-input (* 512 1024))
@@ -312,6 +312,18 @@
               absolute
               timeout))))
 
+;; Where a run executes: the sandbox when run-backend is agentkernel with a
+;; sandbox named, except commands whose argv starts with a run-host prefix,
+;; which need the host (macOS toolchains, signing, git with the user's keys).
+(define (host-prefixed? argv prefixes)
+  (any (lambda (prefix) (and (pair? prefix) (<= (length prefix) (length argv)) (equal? prefix (take argv (length prefix)))))
+       (or prefixes '())))
+(define (run-placement argv context)
+  (let ((backend (or (assq-ref context 'backend) 'local)) (sandbox (assq-ref context 'sandbox)))
+    (if (and (eq? backend 'agentkernel) (string? sandbox) (not (string-null? sandbox))
+             (not (host-prefixed? argv (assq-ref context 'host))))
+        'sandbox
+        'host)))
 ;; The backend seam: local runs argv as given; agentkernel wraps it in
 ;; `agentkernel exec`, which mounts the project at /workspace so cwd maps
 ;; directly. It does not pass exit codes through: a failing command makes
@@ -473,7 +485,7 @@
 
 (define (execute-run-now arguments root ledger turn context)
   (let-values (((argv workdir absolute timeout) (parse-run-arguments arguments root)))
-    (let* ((backend (or (assq-ref context 'backend) 'local))
+    (let* ((backend (if (eq? (run-placement argv context) 'sandbox) 'agentkernel 'local))
            (sandbox (assq-ref context 'sandbox))
            (mapped (executed-argv argv workdir backend sandbox))
            (final (if (eq? backend 'local) (in-directory mapped absolute) mapped))
@@ -613,7 +625,7 @@
     (when (>= (length (filter job-running? (job-list))) max-jobs)
       (error (format #f "~a jobs are already running: ~a" max-jobs
                      (string-join (map job-summary (filter job-running? (job-list))) "; "))))
-    (let* ((backend (or (assq-ref context 'backend) 'local))
+    (let* ((backend (if (eq? (run-placement argv context) 'sandbox) 'agentkernel 'local))
            (mapped (executed-argv argv workdir backend (assq-ref context 'sandbox)))
            (final (if (eq? backend 'local) (in-directory mapped absolute) mapped))
            (environment (environment-with (assq-ref context 'traceparent)))

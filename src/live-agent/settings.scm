@@ -89,6 +89,10 @@
 (define defaults `((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
                    (run-allow . ()) (mcp-allow . ()) (skill-dirs . ()) (run-backend . local) (run-sandbox . #f)
+                   ;; Prefixes that stay on the host when runs go to the sandbox: macOS
+                   ;; toolchains, signing, and git with the user's own keys.
+                   (run-host . (("git") ("cargo" "tauri") ("codesign") ("xcodebuild") ("xcrun") ("notarytool")
+                                ("open") ("swift") ("swiftc") ("brew")))
                    (judge . shadow) (judge-model . #f)
                    (turn-token-budget . #f) (show-work . #t)
                    (provider-retries . ,default-provider-retries)))
@@ -115,7 +119,7 @@
     ((context-limit) (or (not value) (and (integer? value) (>= value 1024))))
     ((output-reserve) (and (integer? value) (>= value 1024) (<= value 65536)))
     ;; Exact argv prefixes the process may run without asking in accept/auto.
-    ((run-allow) (and (list? value)
+    ((run-allow run-host) (and (list? value)
                       (every (lambda (prefix)
                                (and (pair? prefix) (every (lambda (s) (and (string? s) (not (string-null? s)))) prefix)))
                              value)))
@@ -137,7 +141,7 @@
   (cond
    ((and (string? value) (memq key '(mode agent-provider agent-thinking effort run-backend judge)))
     (string->symbol value))
-   ((and (eq? key 'run-allow) (json-array? value))
+   ((and (memq key '(run-allow run-host)) (json-array? value))
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))
          (json-array-items value)))
    ((and (memq key '(mcp-allow skill-dirs)) (json-array? value)) (json-array-items value))
