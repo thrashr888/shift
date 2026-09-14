@@ -360,6 +360,8 @@ class McpBridgeTest(unittest.TestCase):
         )
         self.assertIn("generation 3", shell_settings["output"])
 
+        # The fixture provider cannot answer the shadow judge, so keep manual mode plain here.
+        self.call("live_session_send", {"text": "/judge off", "timeout_seconds": 10})
         approval_boundary = self.call(
             "live_session_send",
             {"text": "run the requested shell", "timeout_seconds": 10},

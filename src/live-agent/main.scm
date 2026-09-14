@@ -1763,7 +1763,7 @@
          (decision (cond ((not (eq? policy 'judge)) policy)
                          ((eq? rule 'allow) 'allow)
                          ((pair? rule) 'deny-rule)
-                         ((or judge-paused? (not (eq? judge-setting 'on))) 'ask)
+                         ((or judge-paused? (eq? judge-setting 'off)) 'ask)
                          (else 'judge)))
          (ask-human
           (lambda (shadow-note)

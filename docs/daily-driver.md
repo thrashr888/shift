@@ -114,12 +114,13 @@ name and a sentence; a block reaches the model as
 fails or does not answer is a block. Three consecutive blocks, or twenty in a
 turn, pause the judge and manual prompting takes over for the rest of the
 turn. `judge-model` picks the judge as `PROVIDER/MODEL`; unset, the session's
-own provider and model judge. The `judge` setting is `shadow` by default: in
-manual mode the judge also runs on every prompt, its verdict shows in the
-approval preview, and both answers go to the session's `judge.jsonl`;
-`/judge report` prints agreement and the cases that disagreed. `/judge on`
-lets autopilot act on its verdicts; with `/judge off`, autopilot asks for
-anything the rules do not resolve, so nothing runs everything unattended. The
+own provider and model judge. The `judge` setting is `shadow` by default: the
+judge decides in autopilot, and in manual mode it also runs beside every
+prompt, its verdict shows in the approval preview, and both answers go to the
+session's `judge.jsonl`; `/judge report` prints agreement and the cases that
+disagreed. `/judge on` keeps the judge for autopilot without the manual-mode
+shadowing; with `/judge off`, autopilot asks for anything the rules do not
+resolve, so nothing runs everything unattended. The
 receipt records `judged`, `blocked` and `judge_ms`, and blocks land in the Log
 tab as `[judge]` entries.
 

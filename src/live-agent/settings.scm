@@ -126,7 +126,8 @@
                              value)))
     ;; Extra folders of skills, absolute paths, such as a checked-out skills kit.
     ((skill-dirs) (and (list? value) (every (lambda (d) (and (string? d) (string-prefix? "/" d))) value)))
-    ;; judge: off, shadow (record beside human answers in manual), on (decides in autopilot).
+    ;; judge: off (autopilot asks for anything the rules leave), on (the judge decides in
+    ;; autopilot), shadow (on, and manual records the judge's verdict beside yours).
     ((judge) (memq value '(off shadow on)))
     ((judge-model) (or (not value) (and (string? value) (string-index value #\/))))
     ((run-backend) (memq value '(local agentkernel)))
