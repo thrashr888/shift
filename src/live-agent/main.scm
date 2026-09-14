@@ -30,6 +30,7 @@
   #:use-module (live-agent session)
   #:use-module (live-agent skills)
   #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
+  #:use-module (live-agent judge)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:export (main))
@@ -114,6 +115,7 @@
 (define (reset-turn-usage!)
   (set! turn-skills '())
   (set! turn-mcp-tools '())
+  (set! turn-judged 0) (set! turn-blocked 0) (set! turn-judge-ms 0) (set! judge-consecutive-blocks 0) (set! judge-paused? #f)
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
@@ -284,6 +286,7 @@
     "  /jobs             list background jobs; /jobs cancel ID stops one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
+    "  /judge [off|shadow|on|report]  the autopilot judge: setting, model, counts, or shadow agreement\n"
     "  /mcp [connect|disconnect|tools NAME]  MCP servers from .shift/mcp.scm and the user config\n"
     "  /allow-mcp SERVER__TOOL [project|user]  let an MCP tool run without asking\n"
     "  /traces [QUERY]   list recent spans or search all session traces\n"
@@ -1171,10 +1174,24 @@
     (display (allow-run-command! (trimmed-command-argument line "/allow-run "))) (newline) 'continue)
    ((string-prefix? "/learn " line)
     (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
+   ((string=? line "/judge")
+    (let ((generation (runtime-current runtime)) (endpoint (judge-endpoint (runtime-current runtime))))
+      (format #t "judge ~a · model ~a/~a · this session: ~a judged, ~a blocked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint) turn-judged turn-blocked))
+    'continue)
+   ((string=? line "/judge report") (display (judge-report (or (judge-log-path) ""))) (newline) 'continue)
+   ((string-prefix? "/judge " line)
+    (let ((value (trimmed-command-argument line "/judge ")))
+      (unless (member value '("off" "shadow" "on")) (error "use /judge, /judge report, or /judge off|shadow|on"))
+      (setting-set! 'judge (string->symbol value))
+      (format #t "judge ~a~%" value))
+    'continue)
    ((string=? line "/skills") (show-skills) 'continue)
    ((or (string=? line "/mcp") (string-prefix? "/mcp " line))
-    (let ((out (mcp-command! (if (string=? line "/mcp") "" (trimmed-command-argument line "/mcp ")))))
-      (unless (string-null? out) (display out) (newline)))
+    (catch #t
+      (lambda ()
+        (let ((out (mcp-command! (if (string=? line "/mcp") "" (trimmed-command-argument line "/mcp ")))))
+          (unless (string-null? out) (display out) (newline))))
+      (lambda (key . args) (format #t "mcp: ~a~%" (error-text key args)) (emit-servers!)))
     'continue)
    ((string-prefix? "/allow-mcp " line)
     (display (allow-mcp-command! (trimmed-command-argument line "/allow-mcp "))) (newline) 'continue)
@@ -1672,30 +1689,141 @@
           (json-object-ref arguments "timeout_seconds" 120)
           (if (json-object-ref arguments "background" #f) ", background job" "")))
 
+;; --- the judge in the loop ------------------------------------------------------
+;; Autopilot: rules first, then one request to the judge model; a block hands
+;; the model the rule. Shadow: manual still asks, the judge also runs and
+;; both answers are logged. Three consecutive blocks, or twenty in a turn,
+;; pause the judge and manual prompting takes over for the rest of the turn.
+(define turn-judged 0) (define turn-blocked 0) (define turn-judge-ms 0)
+(define judge-consecutive-blocks 0) (define judge-paused? #f)
+(define recent-user-messages '())
+(define session-remotes "")
+(define (remember-user-message! text)
+  (set! recent-user-messages (let ((next (append recent-user-messages (list text))))
+                               (if (> (length next) 4) (list-tail next (- (length next) 4)) next))))
+(define (git-dirty?)
+  (catch #t
+    (lambda ()
+      (let ((result ((builtin-ref 'coding 'run-argv) '("git" "status" "--porcelain"))))
+        (and (eqv? (car result) 0) (not (string-null? (string-trim-both (cdr result)))))))
+    (lambda _ 'unknown)))
+(define (judge-endpoint generation)
+  ;; judge-model PROVIDER/MODEL, or the session's own provider and model.
+  (let ((setting (setting-ref generation 'judge-model)))
+    (if (string? setting)
+        (let* ((slash (string-index setting #\/))
+               (provider (string->symbol (substring setting 0 slash)))
+               (model (substring setting (+ slash 1))))
+          (if (eq? provider (setting-ref generation 'agent-provider))
+              (list provider model (setting-ref generation 'agent-base-url) (setting-ref generation 'agent-api-key-environment))
+              (list provider model (car (provider-defaults provider)) (cdr (provider-defaults provider)))))
+        (list (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model)
+              (setting-ref generation 'agent-base-url) (setting-ref generation 'agent-api-key-environment)))))
+(define (judge-log-path)
+  (and runtime-state-directory-for-judge (string-append runtime-state-directory-for-judge "/judge.jsonl")))
+(define runtime-state-directory-for-judge #f)
+(define (consult-judge! runtime generation name arguments preview human)
+  ;; Returns the verdict alist; records the span, the counters, the log and the UI event.
+  (let* ((endpoint (judge-endpoint generation))
+         (key-env (cadddr endpoint))
+         (context `((user-messages . ,recent-user-messages) (tool . ,name) (arguments . ,arguments)
+                    (preview . ,(or preview "")) (root . ,(getcwd)) (remotes . ,session-remotes)
+                    (dirty . ,(if (member name '("run" "shell")) (git-dirty?) 'unknown))
+                    (mode . ,(setting-ref generation 'mode)) (run-allow . ,(setting-ref generation 'run-allow))))
+         (verdict (judge-decide! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) context)))
+    (set! turn-judged (+ turn-judged 1))
+    (set! turn-judge-ms (+ turn-judge-ms (or (assq-ref verdict 'ms) 0)))
+    (when (eq? (assq-ref verdict 'verdict) 'block) (set! turn-blocked (+ turn-blocked 1)))
+    (runtime-record! runtime 'judge
+      `((tool . ,name) (verdict . ,(assq-ref verdict 'verdict)) (rule . ,(assq-ref verdict 'rule))
+        (reason . ,(assq-ref verdict 'reason)) (ms . ,(assq-ref verdict 'ms)) (human . ,human)))
+    ;; Shadow decisions are logged by the caller once the human has answered.
+    (let ((path (judge-log-path)))
+      (when (and path (not (string=? human "pending")))
+        (judge-log! path (json-object (cons "turn" (current-turn)) (cons "tool" name)
+                                      (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
+                                      (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
+                                      (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
+                                      (cons "human" human)))))
+    (ui-emit! "judge" (json-object (cons "tool" name) (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
+                                   (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
+                                   (cons "shadow" (not (string=? human "none")))))
+    verdict))
+(define (judge-blocked-result name verdict)
+  (make-tool-result #f (format #f "blocked by autopilot [~a]: ~a Choose a different approach that stays within the request, or ask the user."
+                               (assq-ref verdict 'rule) (assq-ref verdict 'reason))))
+(define last-judge-block #f)
 (define* (authorize-tool runtime generation name arguments #:optional (preview #f))
   (let* ((run? (string=? name "run"))
-         (decision (tool-decision (setting-ref generation 'mode) name arguments
-                                  (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow)))
-         (allowed? (case decision
-                     ((allow) #t)
-                     ((ask) (and (interactive-approval?)
-                       (begin
-                         (approval-preview! (if preview
-                             (format #f "\n~a" preview)
-                             (format #f "Tool requests: ~a\n~a\n" name (json-write arguments))))
-                         (let ((letter (approval-letter
-                                        (read-approval-key
-                                         (if run? "Approve run? [y/N/a] " "Approve tool? [y/N] ")))))
-                           (cond
-                            ((char=? letter #\y) #t)
-                            ((and run? (char=? letter #\a)) (remember-run! generation arguments) #t)
-                            (else #f))))))
-                     (else #f))))
+         (judge-setting (setting-ref generation 'judge))
+         (policy (tool-decision (setting-ref generation 'mode) name arguments
+                                (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow)))
+         (rule (and (eq? policy 'judge)
+                    (judge-rules name arguments (getcwd) (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow))))
+         (decision (cond ((not (eq? policy 'judge)) policy)
+                         ((eq? rule 'allow) 'allow)
+                         ((pair? rule) 'deny-rule)
+                         ((or judge-paused? (not (eq? judge-setting 'on))) 'ask)
+                         (else 'judge)))
+         (ask-human
+          (lambda (shadow-note)
+            (and (interactive-approval?)
+                 (begin
+                   (approval-preview! (string-append
+                                       (if preview (format #f "\n~a" preview) (format #f "Tool requests: ~a\n~a\n" name (json-write arguments)))
+                                       (or shadow-note "")))
+                   (let ((letter (approval-letter
+                                  (read-approval-key
+                                   (if run? "Approve run? [y/N/a] " "Approve tool? [y/N] ")))))
+                     (cond
+                      ((char=? letter #\y) #t)
+                      ((and run? (char=? letter #\a)) (remember-run! generation arguments) #t)
+                      (else #f)))))))
+         (allowed?
+          (case decision
+            ((allow) #t)
+            ((deny-rule)
+             (set! last-judge-block `((rule . ,(cdr rule)) (reason . "refused by a fixed rule; the judge was not consulted")))
+             (set! turn-blocked (+ turn-blocked 1))
+             (ui-emit! "judge" (json-object (cons "tool" name) (cons "verdict" "block") (cons "rule" (cdr rule)) (cons "reason" "fixed rule") (cons "shadow" #f)))
+             #f)
+            ((judge)
+             (let ((verdict (consult-judge! runtime generation name arguments preview "none")))
+               (cond
+                ((eq? (assq-ref verdict 'verdict) 'allow) (set! judge-consecutive-blocks 0) (set! last-judge-block #f) #t)
+                (else
+                 (set! last-judge-block verdict)
+                 (set! judge-consecutive-blocks (+ judge-consecutive-blocks 1))
+                 (when (or (>= judge-consecutive-blocks 3) (>= turn-blocked 20))
+                   (set! judge-paused? #t)
+                   (format (tool-echo-port) "shift> autopilot paused after repeated blocks; asking for the rest of this turn~%")
+                   (force-output (tool-echo-port)))
+                 #f))))
+            ((ask)
+             (if (and (eq? judge-setting 'shadow) (eq? (setting-ref generation 'mode) 'manual) (interactive-approval?)
+                      (not (judge-rules name arguments (getcwd) (setting-ref generation 'run-allow) (setting-ref generation 'mcp-allow))))
+                 ;; Shadow: the judge answers first, then the human; both go to the log.
+                 (let* ((verdict (consult-judge! runtime generation name arguments preview "pending"))
+                        (answer (ask-human (format #f "\njudge would ~a [~a]: ~a\n" (assq-ref verdict 'verdict) (assq-ref verdict 'rule) (assq-ref verdict 'reason)))))
+                   (let ((path (judge-log-path)))
+                     (when path
+                       (judge-log! path (json-object (cons "turn" (current-turn)) (cons "tool" name)
+                                                     (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
+                                                     (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
+                                                     (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
+                                                     (cons "human" (if answer "allow" "deny"))))))
+                   answer)
+                 (ask-human #f)))
+            (else #f))))
     (runtime-record! runtime 'tool-approval
       `((tool . ,name) (mode . ,(setting-ref generation 'mode)) (decision . ,decision) (approved . ,(if allowed? #t #f))))
     allowed?))
 
 (define (unavailable-result name)
+  (if last-judge-block
+      (let ((verdict last-judge-block)) (set! last-judge-block #f) (judge-blocked-result name verdict))
+      (unavailable-result* name)))
+(define (unavailable-result* name)
   (make-tool-result
    #f
    (format #f
@@ -2531,6 +2659,7 @@
    #:ledger ledger
    #:skills (reverse turn-skills)
    #:mcp-tools turn-mcp-tools
+   #:judge `((judged . ,turn-judged) (blocked . ,turn-blocked) (ms . ,turn-judge-ms))
    #:trace-id (trace-trace-id span) #:span-id (trace-span-id span)
    #:session-name (tracer-session-name tracer)
    #:session-id (and (tracer-session-name tracer) (tracer-session-id tracer))))
@@ -2738,6 +2867,7 @@
                 (unless (peer-request?) (emit-ui-transcript! "user" line))
                 (handle-command runtime tracer session line))
                (else
+                 (remember-user-message! line)
                  (let ((result (perform-turn! runtime tracer history line turn-count)))
                    (when result
                      (set! history (compact-history! runtime tracer (cadr result) #f))
@@ -2922,12 +3052,17 @@
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
         (ui-init! state-directory (and session runtime-state-directory))
-        (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)))
+        (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) (setting-ref #f 'skill-dirs))
         (mcp-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
                    (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
                    supported-tool-names
                    (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
         (external-tool-schema mcp-tool-schema)
+        (set! runtime-state-directory-for-judge (and session runtime-state-directory))
+        (set! session-remotes
+          (catch #t (lambda () (let ((r ((builtin-ref 'coding 'run-argv) '("git" "remote" "-v"))))
+                                 (if (eqv? (car r) 0) (string-trim-both (cdr r)) "")))
+                 (lambda _ "")))
         (mcp-tool-hints (@ (live-agent mcp-client) mcp-tool-hints))
         (when (builtin-enabled? 'coding)
           ((builtin-ref 'coding 'job-observer!)

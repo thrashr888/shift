@@ -38,6 +38,7 @@ ENUMS = {
     '/mode':MODES, '/brand':('replace','subtitle','none'), '/place':('left','right','top','bottom','modal'),
     '/sidebar':('auto','on','off'), '/density':('compact','comfortable'), '/border':('thin','heavy','double','none'),
     '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'), '/terminal':('on','off'), '/mouse':('on','off'),
+    '/judge':('on','shadow','off','report'),
     '/ui':('get','undo','reload','code-reload','save user','save project'),
 }
 COMMANDS = {
@@ -54,7 +55,7 @@ COMMANDS = {
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
     '/jobs':'List background jobs (cancel ID stops one)', '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
     '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
-    '/mcp':'MCP servers: list, connect NAME, disconnect NAME, tools NAME', '/allow-mcp':'Let an MCP tool run without asking (SERVER__TOOL [project|user])',
+    '/judge':'Autopilot judge: off, shadow, on, or report', '/mcp':'MCP servers: list, connect NAME, disconnect NAME, tools NAME', '/allow-mcp':'Let an MCP tool run without asking (SERVER__TOOL [project|user])',
     '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
 
@@ -436,6 +437,14 @@ class Model:
                 self.notice=job_id+' finished: '+entry['status']
             else:
                 self.jobs[job_id]={'argv':argv,'elapsed':int(value.get('elapsed_ms') or 0),'tail':clean(str(value.get('tail','')).splitlines()[-1] if str(value.get('tail','')).strip() else '')}
+        elif kind == 'judge':
+            verdict=str(value.get('verdict',''));rule=clean(str(value.get('rule','')));tool=clean(str(value.get('tool','')))
+            if value.get('shadow'):self.notice='judge would '+verdict+' '+tool+' ['+rule+']'
+            elif verdict=='block':
+                self.notice='autopilot blocked '+tool+' ['+rule+']'
+                self.runs.append({'kind':'judge','turn':self.session.get('turn','?'),'id':None,'ok':False,'command':tool+' · '+clean(str(value.get('reason',''))),
+                                  'status':'blocked · '+rule,'seconds':'','log':'','lines':[],'truncated':False,'at':time.strftime('%H:%M')})
+                self.panel_scroll['log']=10**9
         elif kind == 'servers':
             self.servers=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'skills':
@@ -1497,7 +1506,7 @@ class Terminal:
             for run in m.runs:
                 line('')
                 # Status first: commands can be long and would push it off the row.
-                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] ','judge':'[judge] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
                 rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
                              ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
                 for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])

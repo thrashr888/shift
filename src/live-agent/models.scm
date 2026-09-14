@@ -5,7 +5,7 @@
   #:use-module (live-agent json)
   #:use-module (shift http)
   #:export (model-select! model-list! effective-effort effective-fast? show-model
-            model-context-limit))
+            model-context-limit provider-defaults))
 (define metadata '())
 (define (claude-cap name model) ((builtin-ref 'claude name) model))
 (define (effective-effort generation)
@@ -44,11 +44,14 @@
        (append
         (list (cons 'agent-provider provider) (cons 'agent-model model) (cons 'context-limit #f))
         (if (eq? provider current-provider) '()
-            (list (cons 'agent-base-url (case provider
-                    ((claude) "https://api.anthropic.com/v1") ((openai) "https://api.openai.com/v1")
-                    (else "http://127.0.0.1:11434")))
-                  (cons 'agent-api-key-environment (case provider
-                    ((claude) "CLAUDE_API_KEY") ((openai) "OPENAI_API_KEY") (else #f))))))))))
+            (list (cons 'agent-base-url (car (provider-defaults provider)))
+                  (cons 'agent-api-key-environment (cdr (provider-defaults provider))))))))))
+;; (base-url . key-environment) a provider starts from when it is not the session's.
+(define (provider-defaults provider)
+  (case provider
+    ((claude) (cons "https://api.anthropic.com/v1" "CLAUDE_API_KEY"))
+    ((openai) (cons "https://api.openai.com/v1" "OPENAI_API_KEY"))
+    (else (cons "http://127.0.0.1:11434" #f))))
 (define* (model-list! generation #:optional (display? #t))
   (let* ((provider (setting-ref generation 'agent-provider))
          (base (without-trailing-slash (setting-ref generation 'agent-base-url)))

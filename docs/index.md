@@ -17,7 +17,7 @@ One line per document, then the open work those documents still describe.
 | [ablation-2026-09-04.md](ablation-2026-09-04.md) | Evidence for those fixes and the built-in ablation. |
 | [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | RFC for skills, background jobs, concurrent read-only tools, and the composable sidebar; implemented. |
 | [mcp-client-rfc.md](mcp-client-rfc.md) | RFC for the MCP client and `tool_search`; implemented. |
-| [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | Draft RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode to evaluate it. |
+| [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
 Pane packs have a published reference at
@@ -34,7 +34,8 @@ Features:
 Packaging:
   - **Export and promotion.** Session export and sharing, and a reviewed path from
     an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
-  - **Autopilot judge.** Rules, then a separate judge model, with shadow evaluation first; designed in [autopilot-judge-rfc](autopilot-judge-rfc.md).
+  - **Judge evals.** An evals `judge` subcommand that replays `judge.jsonl` through a candidate model and reports agreement ([autopilot-judge-rfc](autopilot-judge-rfc.md)).
+  - **Sandbox routing.** Run in agentkernel by default with a host allowlist for macOS-only steps such as `cargo tauri build`, `codesign` and `xcodebuild` ([daily-driver](daily-driver.md)).
   - **Packs.** File/URL extension packs ([daily-driver-plan](daily-driver-plan.md)).
 Evals/Quality:
   - **Stable-runtime handoff.** The versioned supervisor for upgrading the trusted runtime in place ([live-updates](live-updates.md)).

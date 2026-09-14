@@ -1419,6 +1419,20 @@ class Skills(unittest.TestCase):
         self.assertIn('/skill release',[c[0] for c in tui.suggestions('/skill re',[],False,[],[],[],['release','review'])])
 
 
+class Judge(unittest.TestCase):
+    def test_judge_events_notify_and_blocks_reach_the_log(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':2}})
+        m.control('ready')
+        m.event({'type':'judge','value':{'tool':'run','verdict':'block','rule':'escalation','reason':'not asked to push','shadow':False}})
+        self.assertEqual(m.notice,'autopilot blocked run [escalation]')
+        m.event({'type':'judge','value':{'tool':'edit','verdict':'allow','rule':'ok','reason':'fine','shadow':True}})
+        self.assertEqual(m.notice,'judge would allow edit [ok]')
+        m.panel_tab='log';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('[judge] blocked · escalation',text);self.assertIn('run · not asked to push',text)
+        self.assertIn('/judge shadow',[c[0] for c in tui.suggestions('/judge sh',[])])
+
+
 class Servers(unittest.TestCase):
     def test_servers_show_in_session_tab_and_connect_by_click(self):
         terminal=terminal_view(40,128,Mock());m=terminal.model

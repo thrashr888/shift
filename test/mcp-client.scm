@@ -57,6 +57,15 @@
          (equal? "failed" (json-object-ref (cadr (json-array-items (mcp-servers-json))) "state"))))
 (test-assert "a failed server carries its reason" (string-contains (json-object-ref (cadr (json-array-items (mcp-servers-json))) "reason") "no reply within"))
 (test-error "connecting a failed server reports the failure" #t (mcp-connect! "slow"))
+(write-file (string-append root "/user/mcp.scm")
+  "((server \"noisy\" (command \"python3\" \"-c\" \"import sys; sys.stderr.write('needs init first\\n'); sys.exit(1)\")))\n")
+(mcp-init! #f (string-append root "/user") '() (string-append root "/project/.env"))
+(test-assert "a server that exits shows its stderr in the reason"
+  (catch #t (lambda () (mcp-connect! "noisy") #f)
+    (lambda (key . args) (let ((reason (json-object-ref (car (json-array-items (mcp-servers-json))) "reason")))
+                           (and (string? reason) (string-contains reason "needs init first") #t)))))
+(mcp-init! (string-append root "/project") (string-append root "/user") '("read" "write") (string-append root "/project/.env"))
+(mcp-connect! "fake")
 (mcp-disconnect! "fake")
 (test-equal "disconnect forgets the tools" #f (mcp-tool-schema "fake__ping"))
 ;; Streamable HTTP against the same fake server.

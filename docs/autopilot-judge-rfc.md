@@ -1,7 +1,9 @@
 # RFC: autopilot with a judge
 
-Status: draft, September 13, 2026. Decisions are proposed defaults; the open
-questions at the end are the ones that change the work.
+Status: implemented September 13, 2026, except the evals `judge` subcommand.
+Answers: `judge-model` overrides the session model, the judge sees a 40-line
+diff excerpt, thresholds are three consecutive and twenty per turn, and
+`shadow` is the default in manual.
 
 ## Why
 

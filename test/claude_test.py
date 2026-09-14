@@ -70,6 +70,17 @@ class ClaudeFixture(BaseHTTPRequestHandler):
             )
 
         event("message_start", message={"usage": {"input_tokens": 30}})
+        system = request.get("system", "")
+        system_text = system if isinstance(system, str) else " ".join(b.get("text", "") for b in system)
+        if "safety judge" in system_text:
+            # The autopilot judge shares this fixture; it always allows.
+            event("content_block_start", index=0, content_block={"type": "text", "text": ""})
+            event("content_block_delta", index=0,
+                  delta={"type": "text_delta", "text": json.dumps({"verdict": "allow", "rule": "ok", "reason": "fine"})})
+            event("content_block_stop", index=0)
+            event("message_delta", delta={"stop_reason": "end_turn"}, usage={"output_tokens": 5})
+            event("message_stop")
+            return
         tool_reply = any(
             block.get("type") == "tool_result"
             for message in request["messages"]
@@ -232,8 +243,10 @@ class ClaudeTests(unittest.TestCase):
         self.server.action = ("write", {"path": "allowed.txt", "content": "expected"})
         self.run_cli("/mode manual\nwrite the file\nn\n/quit\n")
         self.assertFalse((self.project / "allowed.txt").exists())
-        self.run_cli("/reset\n/mode autopilot\nwrite the file\n/quit\n")
+        self.run_cli("/reset\n/mode autopilot\n/judge on\nwrite the file\n/quit\n")
         self.assertEqual((self.project / "allowed.txt").read_text(), "expected")
+        judged = [r for _, r in self.server.requests if "safety judge" in str(r.get("system", ""))]
+        self.assertEqual(len(judged), 2)   # one shadow verdict beside the manual "n", one autopilot decision
 
     def test_compaction_precedes_request_and_preserves_turn(self):
         self.run_cli("/quit\n")

@@ -36,5 +36,6 @@
     (case mode
       ((manual) (if (or allowed-run? (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'ask))
       ((plan) (if read-only? 'allow 'deny))
-      ((autopilot) 'allow)
+      ;; Autopilot resolves reads and allowlists here; everything else is judged.
+      ((autopilot) (if (or read-only? allowed-run? (and (mcp-tool-name? name) (member name mcp-allow))) 'allow 'judge))
       (else 'deny))))

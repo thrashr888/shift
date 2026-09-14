@@ -32,6 +32,9 @@
 (test-equal "a fresh load unions the files again"
   '(("git" "status") ("make" "test") ("cargo" "test") ("git" "log")) (setting-ref #f 'run-allow))
 (test-error "prefixes must be non-empty argv" #t (allow-run! '() 'project))
+(settings-set! (list (cons 'skill-dirs (list "/tmp/kit/skills"))))
+(test-equal "skill-dirs is a list of absolute folders" '("/tmp/kit/skills") (setting-ref #f 'skill-dirs))
+(test-error "skill-dirs rejects relative paths" #t (settings-set! (list (cons 'skill-dirs (list "kit/skills")))))
 (test-error "scopes are user, project or session" #t (allow-run! '("ls") 'global))
 (system* "rm" "-rf" root)
 (test-end "settings")

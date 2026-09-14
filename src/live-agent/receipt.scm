@@ -65,7 +65,7 @@
 ;; `tool-calls` is an alist of tool name to count. `status` is ok, failed, or
 ;; cancelled, and `error` is the failure detail or #f.
 (define* (build-receipt #:key turn status error model provider generation
-                        duration-ms usage tool-calls ledger skills mcp-tools
+                        duration-ms usage tool-calls ledger skills mcp-tools judge
                         trace-id span-id session-name session-id)
   (let ((changed (changed-files ledger turn)))
     `((turn . ,turn)
@@ -86,6 +86,9 @@
       (runs . ,(turn-runs ledger turn))
       (skills . ,(or skills '()))
       (mcp_tools . ,(or mcp-tools '()))
+      (judged . ,(or (and judge (assq-ref judge 'judged)) 0))
+      (blocked . ,(or (and judge (assq-ref judge 'blocked)) 0))
+      (judge_ms . ,(or (and judge (assq-ref judge 'ms)) 0))
       (undo . ,(and ledger (pair? changed)
                     (if (memv turn (ledger-undoable-turns ledger)) #t #f)))
       (trace_id . ,trace-id)
@@ -136,6 +139,7 @@
                             (get 'runs))))
    (cons "skills" (apply json-array (or (get 'skills) '())))
    (cons "mcp_tools" (apply json-array (or (get 'mcp_tools) '())))
+   (cons "judged" (or (get 'judged) 0)) (cons "blocked" (or (get 'blocked) 0)) (cons "judge_ms" (or (get 'judge_ms) 0))
    (cons "undo" (get 'undo))
    (cons "trace_id" (json-or-null (get 'trace_id)))
    (cons "span_id" (json-or-null (get 'span_id)))
@@ -180,6 +184,7 @@
                   (json-array-items (get "runs" (json-array)))))
     (skills . ,(json-array-items (get "skills" (json-array))))
     (mcp_tools . ,(json-array-items (get "mcp_tools" (json-array))))
+    (judged . ,(get "judged" 0)) (blocked . ,(get "blocked" 0)) (judge_ms . ,(get "judge_ms" 0))
     (undo . ,(get "undo" #f))
     (trace_id . ,(get "trace_id"))
     (span_id . ,(get "span_id"))
@@ -205,6 +210,8 @@
       (receipt.runs_failed . ,(count (lambda (run) (not (assq-ref run 'success))) runs))
       (receipt.skills . ,(string-join (or (assq-ref receipt 'skills) '()) ","))
       (receipt.mcp_tools . ,(string-join (or (assq-ref receipt 'mcp_tools) '()) ","))
+      (receipt.judged . ,(or (assq-ref receipt 'judged) 0))
+      (receipt.blocked . ,(or (assq-ref receipt 'blocked) 0))
       (receipt.undo . ,(if (assq-ref receipt 'undo) #t #f)))))
 
 (define (short-id value)

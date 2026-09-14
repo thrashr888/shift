@@ -94,12 +94,34 @@ local traces, with Claude token counts exported to Phoenix.
 | --- | --- |
 | `/mode manual` (default) | Ask before each model tool execution, except runs already on the allowlist. |
 | `/mode plan` | Allow reads/search/traces, `status`, `diff`, and extension listing; deny mutations. |
-| `/mode autopilot` | Run every tool without asking: writes, patches, live changes and any shell command. |
+| `/mode autopilot` | Reads and allowlisted runs proceed; a fixed rule set refuses the destructive cases outright; everything else is judged by a separate model, and a block sends the model the rule so it takes another route. |
 
 The same policy gates model tools, selected context reads, and recovery retries.
 Shell `deny` and process tool ceilings still apply. Mode is process-owned data;
 `live_eval` cannot change it. Explicit terminal slash commands are user operations.
 Autopilot is an explicit choice; nothing infers approval from prompt words.
+
+**The judge.** Autopilot resolves actions in three steps. Process-owned rules
+first: reads and allowlisted runs and MCP tools proceed, and `rm -rf` outside
+the project, force pushes, `git reset --hard`, `git clean -f`, `git stash drop`,
+`curl … | sh` and writes into Shift's own state are refused without a model
+call. Everything else goes to the judge: one request to a separate model with
+the user's last four messages, the proposed action with a 40-line preview, the
+project root, its git remotes, whether the tree has uncommitted work, and the
+allowlist, never any tool output. It answers `allow` or `block` with a rule
+name and a sentence; a block reaches the model as
+`blocked by autopilot [rule]: reason` so it tries another way. A judge that
+fails or does not answer is a block. Three consecutive blocks, or twenty in a
+turn, pause the judge and manual prompting takes over for the rest of the
+turn. `judge-model` picks the judge as `PROVIDER/MODEL`; unset, the session's
+own provider and model judge. The `judge` setting is `shadow` by default: in
+manual mode the judge also runs on every prompt, its verdict shows in the
+approval preview, and both answers go to the session's `judge.jsonl`;
+`/judge report` prints agreement and the cases that disagreed. `/judge on`
+lets autopilot act on its verdicts; with `/judge off`, autopilot asks for
+anything the rules do not resolve, so nothing runs everything unattended. The
+receipt records `judged`, `blocked` and `judge_ms`, and blocks land in the Log
+tab as `[judge]` entries.
 
 ## File changes
 

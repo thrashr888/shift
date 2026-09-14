@@ -890,6 +890,62 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(self.tool_results()[-1], "echo: hi")
         self.assertEqual(json.loads((self.project / ".shift/settings.json").read_text())["mcp-allow"], ["fake__echo"])
 
+    def judge_says(self, verdict, rule="ok", reason="fine"):
+        return answer(json.dumps({"verdict": verdict, "rule": rule, "reason": reason}))
+
+    def test_autopilot_resolves_rules_then_asks_the_judge(self):
+        # The judge shares the fake provider, so its answers sit in the plan between tool calls.
+        output = self.shift(
+            "/mode autopilot\n/judge on\nchange the port and clean up\n/judge\n/quit\n",
+            plan=[self.edit_notes, self.judge_says("allow"),
+                  tool_call("run", {"argv": ["git", "reset", "--hard"]}),
+                  tool_call("run", {"argv": ["git", "push", "origin", "main"]}), self.judge_says("block", "escalation", "the request did not ask to push"),
+                  tool_call("read", {"path": "notes.txt"}),
+                  answer("done")],
+        )
+        results = self.tool_results()
+        self.assertIn("notes.txt", results[0])                                  # judged allow
+        self.assertIn("blocked by autopilot [discards-work]", results[1])       # fixed rule, no judge call
+        self.assertIn("blocked by autopilot [escalation]", results[2])          # judge block, rule read back
+        self.assertIn("the request did not ask to push", results[2])
+        self.assertIn("alpha port 9443", results[3])                            # reads never wait on the judge
+        self.assertIn("judge on · model openai/fake", output)
+        self.assertIn("2 judged, 2 blocked", output)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((receipt["judged"], receipt["blocked"]), (2, 2))
+        judge_log = (self.state() / "judge.jsonl").read_text().splitlines()
+        self.assertEqual([json.loads(l)["verdict"] for l in judge_log], ["allow", "block"])
+        # A judge that fails to answer is a block, and three in a row pause autopilot into asking.
+        Provider.plan = []
+        output = self.shift(
+            "again\n/quit\n",
+            plan=[tool_call("run", {"argv": ["make", "a"]}), PROVIDER_ERROR,
+                  tool_call("run", {"argv": ["make", "b"]}), PROVIDER_ERROR,
+                  tool_call("run", {"argv": ["make", "c"]}), PROVIDER_ERROR,
+                  tool_call("run", {"argv": ["make", "d"]}),
+                  answer("done")],
+        )
+        results = self.tool_results()[-4:]
+        self.assertTrue(all("blocked by autopilot [judge-unavailable]" in r for r in results[:3]), results)
+        self.assertIn("tool unavailable", results[3])          # paused: manual asks, and piped stdin says no
+        self.assertIn("autopilot paused after repeated blocks", output)
+        # With the judge off, autopilot no longer allows everything: unjudged actions ask.
+        self.shift("/judge off\nagain\n/quit\n", plan=[tool_call("write", {"path": "z.txt", "content": "x\n"}), answer("done")])
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+        self.assertFalse((self.project / "z.txt").exists())
+
+    def test_shadow_judge_records_beside_the_human_answer(self):
+        output = self.shift(
+            "/judge shadow\nchange the port\ny\n/judge report\n/quit\n",
+            plan=[self.edit_notes, self.judge_says("block", "escalation", "not asked for"), answer("done")],
+        )
+        self.assertIn("judge would block [escalation]", output)
+        self.assertIn("notes.txt", self.tool_results()[0])     # the human said yes; shadow never blocks
+        record = json.loads((self.state() / "judge.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((record["verdict"], record["human"]), ("block", "allow"))
+        self.assertIn("1 decisions, 1 beside a human answer, 0 agreed (0%)", output)
+        self.assertIn("Would have blocked what you allowed:", output)
+
     def test_parallel_reads_keep_their_order_and_trace_it(self):
         (self.project / "b.txt").write_text("bravo\n")
         Provider.plan = []

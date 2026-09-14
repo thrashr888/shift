@@ -38,6 +38,9 @@ A quoted positional argument is submitted immediately as the first user turn.
 In a terminal the process remains interactive after the answer; with redirected
 stdin it exits naturally at end-of-file. The initial turn uses the same tools,
 streaming, tracing, approvals, and durable checkpoint path as a typed prompt.
+Autopilot is not "allow everything": fixed rules refuse the destructive cases
+and a separate judge model reviews the rest against your own words, with a
+shadow mode that records its verdicts beside yours before you trust it.
 
 Interactive terminals open the curses interface automatically. There is no
 public `--repl` mode. Use `--print`/`-p` for

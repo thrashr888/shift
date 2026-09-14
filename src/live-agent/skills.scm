@@ -22,15 +22,18 @@
 (define (record . entries) entries)
 (define (field rec key) (assq-ref rec key))
 
-(define (skills-init! project-dir)
+(define* (skills-init! project-dir #:optional (extra '()))
   (let ((config (or (getenv "XDG_CONFIG_HOME") (string-append (or (getenv "HOME") "") "/.config")))
         (home (or (getenv "HOME") "")))
     (set! sources
       (filter (lambda (entry) (and (cdr entry) (not (string-null? (cdr entry)))))
-        (list (cons "project" (and project-dir (string-append project-dir "/.shift/skills")))
-              (cons "agents" (and project-dir (string-append project-dir "/.agents/skills")))
-              (cons "user" (string-append config "/shift/skills"))
-              (cons "agents" (string-append home "/.agents/skills")))))
+        (append
+         (list (cons "project" (and project-dir (string-append project-dir "/.shift/skills")))
+               (cons "agents" (and project-dir (string-append project-dir "/.agents/skills")))
+               (cons "user" (string-append config "/shift/skills"))
+               (cons "agents" (string-append home "/.agents/skills")))
+         ;; skill-dirs setting: folders of skills kept elsewhere, such as a checked-out kit.
+         (map (lambda (dir) (cons "dir" dir)) extra))))
     (set! index '()) (set! signature #f) (set! loaded '())))
 
 (define (valid-name? name)
