@@ -3,7 +3,8 @@
 Status: implemented September 13, 2026, except the evals `judge` subcommand.
 Answers: `judge-model` overrides the session model, the judge sees a 40-line
 diff excerpt, thresholds are three consecutive and twenty per turn, and
-`shadow` is the default in manual.
+`shadow` is the default: the judge decides in autopilot and shadows the human
+in manual; `on` drops the shadowing; `off` makes autopilot ask.
 
 ## Why
 

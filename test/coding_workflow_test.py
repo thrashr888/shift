@@ -66,9 +66,19 @@ class Provider(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        judge_request = "safety judge" in str(body["messages"][0].get("content", ""))
         with Provider.lock:
-            Provider.last_messages = body["messages"]
-            step = Provider.plan.pop(0) if Provider.plan else answer("done")
+            if judge_request:
+                # The autopilot judge shares this fixture: a marked plan entry answers it, otherwise it allows.
+                if Provider.plan and isinstance(Provider.plan[0], tuple) and Provider.plan[0][0] == "judge":
+                    step = Provider.plan.pop(0)[1]
+                else:
+                    step = answer(json.dumps({"verdict": "allow", "rule": "ok", "reason": "fixture"}))
+            else:
+                Provider.last_messages = body["messages"]
+                step = Provider.plan.pop(0) if Provider.plan else answer("done")
+                if isinstance(step, tuple):
+                    step = step[1]
         if callable(step):
             step = step()
         if step in (PROVIDER_ERROR, RATE_LIMITED):
@@ -891,7 +901,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(json.loads((self.project / ".shift/settings.json").read_text())["mcp-allow"], ["fake__echo"])
 
     def judge_says(self, verdict, rule="ok", reason="fine"):
-        return answer(json.dumps({"verdict": verdict, "rule": rule, "reason": reason}))
+        return ("judge", answer(json.dumps({"verdict": verdict, "rule": rule, "reason": reason})))
 
     def test_autopilot_resolves_rules_then_asks_the_judge(self):
         # The judge shares the fake provider, so its answers sit in the plan between tool calls.
@@ -919,9 +929,9 @@ class CodingWorkflow(unittest.TestCase):
         Provider.plan = []
         output = self.shift(
             "again\n/quit\n",
-            plan=[tool_call("run", {"argv": ["make", "a"]}), PROVIDER_ERROR,
-                  tool_call("run", {"argv": ["make", "b"]}), PROVIDER_ERROR,
-                  tool_call("run", {"argv": ["make", "c"]}), PROVIDER_ERROR,
+            plan=[tool_call("run", {"argv": ["make", "a"]}), ("judge", PROVIDER_ERROR),
+                  tool_call("run", {"argv": ["make", "b"]}), ("judge", PROVIDER_ERROR),
+                  tool_call("run", {"argv": ["make", "c"]}), ("judge", PROVIDER_ERROR),
                   tool_call("run", {"argv": ["make", "d"]}),
                   answer("done")],
         )
