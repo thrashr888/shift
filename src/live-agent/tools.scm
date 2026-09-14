@@ -122,6 +122,19 @@
       (error (string-append label " path escapes the project root") requested))
     (list root candidate)))
 
+;; The canonical form of a folder that may not exist yet: the deepest existing
+;; ancestor canonicalized, plus the missing segments, none of which may be
+;; . or .. (they would defeat the root check).
+(define (canonicalize-missing path)
+  (let loop ((current path) (tail '()))
+    (if (file-exists? current)
+        (let ((base (canonicalize-path current)))
+          (for-each (lambda (segment)
+                      (when (member segment '("" "." ".."))
+                        (error "new folders in a write path must be plain names" path)))
+                    tail)
+          (if (null? tail) base (string-append base "/" (string-join tail "/"))))
+        (loop (dirname current) (cons (basename current) tail)))))
 (define (resolve-write-path requested working-directory)
   (unless (and (string? requested) (not (string-null? requested)))
     (error "path must be a non-empty string" requested))
@@ -131,7 +144,7 @@
               requested
               (string-append root "/" requested)))
          (leaf (basename unresolved))
-         (parent (canonicalize-path (dirname unresolved)))
+         (parent (canonicalize-missing (dirname unresolved)))
          (candidate (string-append parent "/" leaf)))
     (unless (inside-root? parent root)
       (error "write path escapes the project root" requested))
@@ -282,9 +295,16 @@
    ((string=? name "edit") (prepare-edit arguments working-directory))
    (else (error "tool does not prepare file changes" name))))
 
+;; A new file may sit in a folder that does not exist yet; the path was
+;; already confined to the project root, so its parents are created here.
+(define (ensure-parent! path)
+  (let ((parent (dirname path)))
+    (unless (file-exists? parent)
+      (ensure-parent! parent)
+      (mkdir parent))))
 (define (put-content! absolute text)
   (if text
-      (atomic-write-file absolute text)
+      (begin (ensure-parent! absolute) (atomic-write-file absolute text))
       (when (file-exists? absolute) (delete-file absolute))))
 
 (define (check-unchanged! prepared)

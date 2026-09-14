@@ -1,4 +1,4 @@
-(use-modules (srfi srfi-64)
+(use-modules (srfi srfi-64) (ice-9 textual-ports)
              (live-agent json)
              (live-agent tools))
 
@@ -221,4 +221,10 @@
        (string-contains (tool-result-output escaped-write)
                         "escapes the project root")))
 
+(test-assert "write creates missing parent folders inside the project"
+  (begin
+    (commit-change! (prepare-change "write" (json-object (cons "path" "deep/new/dir/note.txt") (cons "content" "hi\n")) tool-root))
+    (equal? "hi\n" (call-with-input-file (string-append tool-root "/deep/new/dir/note.txt") get-string-all))))
+(test-error "new folders cannot climb out of the project" #t
+  (prepare-change "write" (json-object (cons "path" "deep/../../escape.txt") (cons "content" "x")) tool-root))
 (test-end "tools")

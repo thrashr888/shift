@@ -26,24 +26,18 @@ Pane packs have a published reference at
 Collected from the documents above on September 13, 2026. Each item names the
 document that explains why it matters.
 
-- **Subagent fan-out.** Parallel children with isolated workspaces
-  ([subagents](subagents.md)).
-- **Project trace recall.** Cross-session search over a project's traces
-  ([daily-driver-plan](daily-driver-plan.md)).
-- **Diagnostics.** LSP or compiler JSON alongside exit status
-  ([coding-workflow-rfc](coding-workflow-rfc.md), [dogfooding](dogfooding.md)).
-- **Compaction quality.** A summary-quality evaluator and deterministic replay
-  ([dogfooding](dogfooding.md), [gaps-with-pi](gaps-with-pi.md)).
-- **Stable-runtime handoff.** The versioned supervisor for upgrading the
-  trusted runtime in place ([live-updates](live-updates.md)).
-- **Hardening.** An authority audit of the Scheme evaluator, fuzzing, resource
-  limits, secret redaction, trace privacy defaults, cross-platform testing
-  ([gaps-with-pi](gaps-with-pi.md)).
-- **Export and promotion.** Session export and sharing, and a reviewed path from
-  an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
-- **Packs and clients.** File/URL extension packs, an MCP client, and
-  model-based approval gated on shadow evaluation
-  ([daily-driver-plan](daily-driver-plan.md)).
-- **The proof.** An evaluation showing that generation-attributed live repair
-  beats edit-plus-reload on a realistic task set ([gaps-with-pi](gaps-with-pi.md),
-  [evals-rfc](evals-rfc.md)).
+Features:
+  - **MCP client.** Connect to external MCP servers over stdio and streamable HTTP and offer their tools to the model under the same policy as built-ins ([daily-driver-plan](daily-driver-plan.md)).
+  - **MCP tool search.** Keep MCP tool schemas out of the system prompt: a `tool_search` tool returns matching schemas on demand and enables them for the rest of the turn.
+  - **Subagent fan-out.** Parallel children with isolated workspaces ([subagents](subagents.md)).
+  - **Project trace recall.** Cross-session search over a project's traces ([daily-driver-plan](daily-driver-plan.md)).
+Packaging:
+  - **Export and promotion.** Session export and sharing, and a reviewed path from
+    an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
+  - **Packs.** File/URL extension packs, and model-based approval gated on shadow evaluation ([daily-driver-plan](daily-driver-plan.md)).
+Evals/Quality:
+  - **Stable-runtime handoff.** The versioned supervisor for upgrading the trusted runtime in place ([live-updates](live-updates.md)).
+  - **Compaction quality.** A summary-quality evaluator and deterministic replay ([dogfooding](dogfooding.md), [gaps-with-pi](gaps-with-pi.md)).
+  - **The proof.** An evaluation showing that generation-attributed live repair beats edit-plus-reload on a realistic task set ([gaps-with-pi](gaps-with-pi.md), [evals-rfc](evals-rfc.md)).
+  - **Diagnostics.** LSP or compiler JSON alongside exit status ([coding-workflow-rfc](coding-workflow-rfc.md), [dogfooding](dogfooding.md)).
+  - **Hardening.** An authority audit of the Scheme evaluator, fuzzing, resource limits, secret redaction, trace privacy defaults, cross-platform testing([gaps-with-pi](gaps-with-pi.md)).

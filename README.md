@@ -395,6 +395,36 @@ use an HTTP URL in client configuration to attach to an existing terminal.
 See [daily-driver MCP details](docs/daily-driver.md#live-mcp) for policy,
 transport, session persistence, and the legacy Python supervisor.
 
+## Skills
+
+A skill is a folder with a `SKILL.md` in the Agent Skills format, read from
+`.shift/skills` and `.agents/skills` in the project and from the user's config.
+The model sees an index of names and descriptions, loads one with the
+read-only `skill` tool, and gains no authority from it. The Session tab lists
+them; clicking one, or `/skill NAME`, sends it with the next prompt.
+
+`/learn` turns work the session just did into a skill. This transcript is real,
+with the checked-in default image on a local Ollama model:
+
+```text
+> Check this checkout's health: run git status --short and git log --oneline -3
+  with the run tool, then tell me in two sentences whether the tree is clean and
+  what the last commit was.
+SHIFT  The tree is clean. The last commit was 9312272 — Persist run allowlists
+       per scope, add sidebar source rows, and grow skills.
+> /learn checkout-health
+SHIFT  Both files written. …SKILL.md (57 lines) with the frontmatter, the two
+       commands, pitfalls and what to verify; reference.md (77 lines) with the
+       edge cases, linked from SKILL.md.
+```
+
+The result is committed at
+[.shift/skills/checkout-health/SKILL.md](.shift/skills/checkout-health/SKILL.md):
+the model wrote it through the ordinary `write` tool and its approval, and the
+next turn's index picked it up.
+
+![The Session tab listing the learned checkout-health skill beside the skills discovered in ~/.agents/skills](docs/assets/skills-sidebar.png)
+
 ## Traces and Phoenix
 
 Every completed turn writes OpenInference-shaped `AGENT`, `LLM`, and `TOOL`
