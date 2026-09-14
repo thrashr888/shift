@@ -235,9 +235,11 @@ A skill is a folder with a `SKILL.md` in the Agent Skills format: YAML
 frontmatter with `name` (1–64 lowercase letters, digits or hyphens, equal to the
 folder name) and a one-line `description` (≤1024 characters), then Markdown
 instructions (≤32 KiB), with any supporting files beside it. Shift reads skills
-from `.shift/skills/` and `.agents/skills/` in the project (both committable),
-then `~/.config/shift/skills/` and `~/.agents/skills/`; a project skill shadows
-a user skill of the same name. Skills other agents already installed in
+from `.shift/skills/`, `.agents/skills/` and `.cortex/skills/` in the project
+(the last is where cortex writes its consolidated patterns as flat `NAME.md`
+files, which count as skills too), then `~/.config/shift/skills/`,
+`~/.agents/skills/` and any folders listed in the `skill-dirs` setting; a
+project skill shadows a user skill of the same name. Skills other agents already installed in
 `.agents/skills` therefore work unchanged. Nothing in a skill is evaluated, and
 `disable-model-invocation: true` is the only optional field that matters: it
 keeps a skill out of the model's index so only you can load it.

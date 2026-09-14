@@ -30,6 +30,7 @@
         (append
          (list (cons "project" (and project-dir (string-append project-dir "/.shift/skills")))
                (cons "agents" (and project-dir (string-append project-dir "/.agents/skills")))
+               (cons "cortex" (and project-dir (string-append project-dir "/.cortex/skills")))
                (cons "user" (string-append config "/shift/skills"))
                (cons "agents" (string-append home "/.agents/skills")))
          ;; skill-dirs setting: folders of skills kept elsewhere, such as a checked-out kit.
@@ -74,9 +75,9 @@
 
 (define (truthy? value) (and (string? value) (member (string-downcase value) '("true" "yes" "1")) #t))
 
-(define (read-skill directory source)
-  (let* ((name (basename directory)) (file (string-append directory "/SKILL.md")))
-    (define (invalid reason) (record (cons 'name name) (cons 'path directory) (cons 'source source)
+(define (read-skill name file source)
+  (let ((directory (dirname file)))
+    (define (invalid reason) (record (cons 'name name) (cons 'path directory) (cons 'file file) (cons 'source source)
                                      (cons 'valid #f) (cons 'error reason) (cons 'model? #f)))
     (catch #t
       (lambda ()
@@ -95,7 +96,7 @@
                  ((string-any (lambda (c) (or (char=? c #\newline) (char=? c #\return))) description)
                   (invalid "description must be one line"))
                  ((> (string-length body) max-body-bytes) (invalid "body exceeds 32 KiB"))
-                 (else (record (cons 'name name) (cons 'description description) (cons 'path directory)
+                 (else (record (cons 'name name) (cons 'description description) (cons 'path directory) (cons 'file file)
                                (cons 'source source) (cons 'valid #t) (cons 'error #f)
                                (cons 'model? (not (truthy? (assoc-ref front "disable-model-invocation")))))))))))
       (lambda (key . args) (invalid (format #f "unreadable: ~a" key))))))
@@ -107,23 +108,30 @@
 
 ;; A source holds skill folders directly or grouped one level down in
 ;; category folders, the way Hermes lays out ~/.hermes/skills/category/skill.
-(define (skill-folders directory)
+;; Skills in a source are NAME/SKILL.md folders, category/NAME/SKILL.md one
+;; level down, or flat NAME.md files with frontmatter, which is how cortex
+;; writes its consolidated patterns into .cortex/skills. Returns (name . file).
+(define (skill-entries directory)
   (append-map
    (lambda (name)
      (let ((child (string-append directory "/" name)))
-       (cond ((file-exists? (string-append child "/SKILL.md")) (list child))
+       (cond ((file-exists? (string-append child "/SKILL.md")) (list (cons name (string-append child "/SKILL.md"))))
+             ((and (string-suffix? ".md" name) (> (string-length name) 3)
+                   (catch #t (lambda () (eq? 'regular (stat:type (stat child)))) (lambda _ #f)))
+              (list (cons (substring name 0 (- (string-length name) 3)) child)))
              ((catch #t (lambda () (eq? 'directory (stat:type (stat child)))) (lambda _ #f))
-              (filter (lambda (grand) (file-exists? (string-append grand "/SKILL.md")))
-                      (map (lambda (n) (string-append child "/" n)) (directory-entries child))))
+              (filter-map (lambda (n)
+                            (let ((grand (string-append child "/" n "/SKILL.md")))
+                              (and (file-exists? grand) (cons n grand))))
+                          (directory-entries child)))
              (else '()))))
    (directory-entries directory)))
 (define (current-signature)
   (map (lambda (entry)
          (let ((directory (cdr entry)))
            (cons directory
-                 (map (lambda (folder)
-                        (cons folder (catch #t (lambda () (stat:mtime (stat (string-append folder "/SKILL.md")))) (lambda _ #f))))
-                      (skill-folders directory)))))
+                 (map (lambda (e) (cons (cdr e) (catch #t (lambda () (stat:mtime (stat (cdr e)))) (lambda _ #f))))
+                      (skill-entries directory)))))
        sources))
 ;; A supporting file inside a valid skill's folder, bounded like SKILL.md.
 (define (skill-file name path)
@@ -144,10 +152,10 @@
           (reverse result)
           (let* ((source (caar entries)) (directory (cdar entries))
                  (found (filter-map
-                          (lambda (child)
-                            (and (not (member (basename child) seen))
-                                 (read-skill child source)))
-                          (skill-folders directory))))
+                          (lambda (e)
+                            (and (not (member (car e) seen))
+                                 (read-skill (car e) (cdr e) source)))
+                          (skill-entries directory))))
             (loop (cdr entries) (append (map (lambda (r) (field r 'name)) found) seen)
                   (append (reverse found) result)))))))
 
@@ -172,7 +180,7 @@
     (unless (field rec 'valid) (error (format #f "skill ~a is invalid: ~a" name (field rec 'error))))
     (when (and by-model (not (field rec 'model?)))
       (error (format #f "skill ~a is user-only; load it with /skill ~a" name name)))
-    (let ((body (cdr (parse-skill-file (call-with-input-file (string-append (field rec 'path) "/SKILL.md")
+    (let ((body (cdr (parse-skill-file (call-with-input-file (field rec 'file)
                                           get-string-all #:encoding "UTF-8")))))
       (unless (member name loaded) (set! loaded (cons name loaded)))
       (string-append "Skill " name " (" (field rec 'path) ")\n\n" (string-trim-both body)))))
