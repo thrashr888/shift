@@ -101,6 +101,14 @@ to watch off; pass `--watch` to opt in there.
 make
 ```
 
+Or install it from the tap. The command is `shift-agent`, because `shift` is a
+shell builtin in every POSIX shell:
+
+```sh
+brew install thrashr888/tap/shift
+shift-agent
+```
+
 The TUI uses Python 3's standard-library curses adapter around the same Guile
 session. Ctrl+B toggles the inspector, Ctrl+P shows commands, F2 cycles the
 themes, and Ctrl+C cancels the active turn. Acid keeps a split transcript/output
