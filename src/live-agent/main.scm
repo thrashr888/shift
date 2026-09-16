@@ -2105,7 +2105,7 @@
             (and (interactive-approval?)
                  (begin
                    (approval-preview! (string-append
-                                       (if preview (format #f "\n~a" preview) (format #f "Tool requests: ~a\n~a\n" name (json-write arguments)))
+                                       (if preview (format #f "\n~a" preview) (tool-request-text name arguments))
                                        (or shadow-note "")))
                    (let ((letter (approval-letter
                                   (read-approval-key
@@ -2292,6 +2292,18 @@
         (string-append (substring line 0 limit) "…")
         line)))
 
+;; Argument values as prose, not JSON: strings bare, lists space-joined,
+;; nested objects still JSON because nothing better is known about them.
+(define (argument-text value)
+  (cond ((string? value) (string-map (lambda (c) (if (char=? c #\newline) #\space c)) value))
+        ((json-array? value) (string-join (map argument-text (json-array-items value)) " "))
+        ((eq? value #t) "yes") ((eq? value #f) "no")
+        ((number? value) (number->string value))
+        (else (json-write value))))
+(define (argument-pairs arguments)
+  (if (json-object? arguments)
+      (map (lambda (entry) (cons (car entry) (argument-text (cdr entry)))) (json-object-entries arguments))
+      '()))
 (define (tool-call-summary name arguments)
   (define (field key)
     (let ((value (json-object-ref arguments key #f)))
@@ -2305,7 +2317,20 @@
    ((string=? name "run") (string-join (run-argv-of arguments) " "))
    ((string=? name "diff") (or (field "scope") "turn"))
    ((string=? name "status") "")
-   (else (clip (json-write arguments) 100))))
+   ((string=? name "spawn")
+    (string-append (or (field "name") "agent") " · " (argument-text (or (field "task") ""))))
+   ((string=? name "job") (string-join (filter string? (list (field "action") (field "id"))) " "))
+   ((member name '("recall" "traces" "tool_search")) (or (field "query") (field "span_id") ""))
+   ((string=? name "skill") (or (field "name") ""))
+   (else (clip (string-join (map (lambda (pair) (string-append (car pair) " " (cdr pair)))
+                                 (argument-pairs arguments)) " · ") 100))))
+;; What a person approves: the tool and its summary, then one line per argument.
+(define (tool-request-text name arguments)
+  (string-append
+   (format #f "Tool requests: ~a ~a~%" name (clip (tool-call-summary name arguments) 100))
+   (string-concatenate
+    (map (lambda (pair) (format #f "  ~a: ~a~%" (car pair) (clip (cdr pair) 300)))
+         (argument-pairs arguments)))))
 
 (define (tool-echo-port)
   (if print-mode? (current-error-port) (current-output-port)))

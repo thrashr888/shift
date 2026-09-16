@@ -209,6 +209,15 @@ class Layout(unittest.TestCase):
         terminal.key('\x17');terminal.draw()
         self.assertNotIn('WORK  read','\n'.join(terminal.screen.line(i) for i in range(40)))
 
+    def test_approval_keeps_the_sidebar_in_place(self):
+        terminal=terminal_view(40,128);m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'manual','turn':1}})
+        m.control('needs_approval');m.approval_prompt='Approve tool? [y/N]';m.approval_preview='Tool requests: read notes.txt\n  path: notes.txt'
+        terminal.draw();text='\n'.join(terminal.screen.line(i) for i in range(40))
+        self.assertIn('panel',terminal.regions);self.assertIn('OUTPUT DIFF',text)
+        self.assertIn('PENDING TOOL',text);self.assertIn('path: notes.txt',text)
+        self.assertLess(terminal.regions['approval'].x+terminal.regions['approval'].w,terminal.regions['panel'].x)
+
     def test_approval_question_is_shown_once_outside_the_transcript(self):
         terminal=terminal_view()
         terminal.model.control('needs_approval')
@@ -661,6 +670,27 @@ class WorkingMark(unittest.TestCase):
         self.assertEqual(m.status(),'READY')
         self.assertIsNone(terminal.mark_phase(.5))
 
+    def test_checkerboard_sweeps_and_the_pending_line_ticks_while_working(self):
+        terminal=terminal_view(40,128);m=terminal.model
+        m.config.update(branding='subtitle',identity='thrashr888')
+        m.event({'type':'transcript','value':{'role':'user','text':'hello'}})
+        m.control('working');terminal.draw()
+        self.assertIsNotNone(terminal.checker);self.assertIsNotNone(terminal.dots)
+        y,x=terminal.checker
+        self.assertEqual(terminal.screen.line(y)[x:x+16],'▀▄'*8)
+        terminal.put=Mock(wraps=terminal.screen.put)
+        terminal.paint_checker(3)
+        lit=[call.args[1]-x for call in terminal.put.call_args_list if call.args[-1]]
+        self.assertEqual(lit,[3,11])
+        terminal.paint_checker(None)
+        self.assertFalse(any(call.args[-1] for call in terminal.put.call_args_list[16:]))
+        dy,dx=terminal.dots
+        for tick,text in ((0,'.  '),(2,'.. '),(4,'...'),(6,'.  ')):
+            terminal.paint_dots(tick);self.assertEqual(terminal.screen.line(dy)[dx:dx+3],text)
+        m.control('ready');terminal.draw()
+        self.assertIsNone(terminal.dots)
+        self.assertEqual(terminal.screen.line(y)[x:x+16],'▀▄'*8)
+
     def test_brand_animation_does_not_change_text_or_geometry(self):
         terminal=terminal_view(40,120)
         terminal.model.control('working')
@@ -706,8 +736,9 @@ class WorkingMark(unittest.TestCase):
         terminal.model.draft='keep draft';terminal.model.cursor=3
         terminal.screen.get_wch=Mock(side_effect=tui.curses.error)
         terminal.child.process.poll.side_effect=[None,None,0,0]
-        terminal.child.poll.return_value=False
-        terminal.mark_phase=Mock(side_effect=[0,0,1,1])
+        polls=[]
+        terminal.child.poll.side_effect=lambda model:polls.append(1) and False
+        terminal.motion_tick=Mock(side_effect=lambda now=None:0 if len(polls)<=1 else 1)
         terminal.draw=Mock(wraps=terminal.draw)
         terminal.paint_marks=Mock(wraps=terminal.paint_marks)
         self.assertEqual(terminal.run(),0)

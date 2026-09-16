@@ -853,7 +853,9 @@ still control the final appearance; curses cannot reproduce the mocks' font
 rasterization, antialiasing or gradients.
 
 The `///` mark cycles one accent, bold slash against two muted slashes at four
-steps per second only while the session is `WORKING`. A trailing mark beside a
+steps per second only while the session is `WORKING`; on the same clock a lit
+pair sweeps across the header checkerboard, and the transcript's next line
+shows a ticking `...` where the reply will land. A trailing mark beside a
 multi-line wordmark uses cell-based strokes at the wordmark's height; custom
 single-line identities and ASCII keep literal `///`. Animation never changes the
 mark's footprint, and timer updates repaint just those cells without moving the composer

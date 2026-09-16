@@ -627,6 +627,7 @@ class Terminal:
         self.sync_mouse(True)
 
     def init_interactions(self):
+        self.last_tick=None;self.checker=None;self.dots=None
         self.reloader=None
         self.hits=[]
         self.regions={}
@@ -1007,11 +1008,38 @@ class Terminal:
                     x+=sum(cell_width(ch) for ch in part)
         except curses.error:pass # writing the bottom-right cell may report ERR
 
-    def mark_phase(self, now=None):
+    def motion_tick(self, now=None):
+        # One clock for everything that moves while the model works: the
+        # wordmark strokes, the header checkerboard and the pending line.
         m=self.model
         if m.activity!='working' or m.ready or m.approval or not m.config.get('motion',True):
             return None
-        return int((time.monotonic() if now is None else now)*4)%3
+        return int((time.monotonic() if now is None else now)*8)
+
+    def mark_phase(self, now=None):
+        tick=self.motion_tick(now)
+        return None if tick is None else (tick//2)%3
+
+    def paint_motion(self):
+        tick=self.motion_tick()
+        self.last_tick=tick
+        self.paint_marks(self.mark_phase())
+        self.paint_checker(tick)
+        self.paint_dots(tick)
+
+    def paint_checker(self,tick):
+        # A lit pair sweeps across the checkerboard; idle, it is plain.
+        if not self.checker:return
+        y,x=self.checker
+        for i in range(16):
+            active=tick is not None and (i-tick)%8==0
+            self.put(y,x+i,'▀' if i%2==0 else '▄',1,2 if active else 3,active)
+
+    def paint_dots(self,tick):
+        # The next transcript line while the model is working: . .. ...
+        if not self.dots:return
+        y,x=self.dots
+        self.put(y,x,('.'*(1+((tick or 0)//2)%3)).ljust(3),3,2,True)
 
     def brand_line(self,y,x,line,width):
         self.put(y,x,line,width,2,True)
@@ -1214,7 +1242,7 @@ class Terminal:
                 check_x=cols-24 if horizontal else logo_width+6
                 room=check_x-x-2 if horizontal else cols//2-check_x-2
                 if (horizontal and len(c['identity'])<=room) or (not horizontal and room>=16):
-                    self.put(1 if horizontal else 2,check_x,'▀▄'*8,16,3)
+                    self.checker=(1 if horizontal else 2,check_x);self.paint_checker(self.motion_tick())
         self.put(4 if horizontal else strip_y-1,0,self.rule(cols),cols,3)
 
     def qdos_header(self,cols,panel,mode):
@@ -1654,16 +1682,17 @@ class Terminal:
             self.screen.clearok(True)
         self.screen.erase()
         self.draw_revision=m.revision
-        self.marks=[]
+        self.marks=[];self.checker=None;self.dots=None
         self.hits=[];self.regions={};self.draw_size=(rows,cols)
-        session,panel,mode=layout(cols,rows,{**c,'sidebar':'off'} if m.approval else c)
+        session,panel,mode=layout(cols,rows,c)
         self.regions['transcript']=session
         if panel and (mode=='overlay' or c['placement'] not in ('top','bottom')):self.regions['panel']=panel
         if m.panel_tab not in self.tabs():m.panel_tab='work'
         if mode!='compact':self.header(cols,panel,mode)
         inline_diff=c['placement'] in ('top','bottom') or panel is None or mode=='overlay'
         lines,positions=self.body_rows(max(1,session.w-4),mode=='compact',inline_diff)
-        height=session.h
+        pending=self.motion_tick() is not None and session.h>2
+        height=session.h-1 if pending else session.h
         self.scroll_limit=max(0,len(lines)-height)
         m.scroll=min(m.scroll,self.scroll_limit)
         end=max(0,len(lines)-m.scroll)
@@ -1684,11 +1713,15 @@ class Terminal:
             label={'user':'USER','assistant':'SHIFT','thinking':'THINKING'}.get(role,str(role).upper())
             sticky=previous or ([(label,3 if role=='user' else 2,True)] if role else None)
         if sticky:self.spans(session.y,session.x+2,sticky,session.w-4)
+        shown=0
         for i,parts in enumerate(lines[start:min(end,start+height-(1 if sticky else 0))]):
             self.spans(session.y+i+(1 if sticky else 0),session.x+2,parts,session.w-4)
+            shown=i+1
             position=positions[start+i] if start+i<len(positions) else None
             if position and position[1]==-1 and parts and parts[0][0]=='SHIFT':
                 self.hit(session.y+i+(1 if sticky else 0),session.x+2,5,('copy',position[0]))
+        if pending:
+            self.dots=(session.y+shown+(1 if sticky else 0),session.x+2);self.paint_dots(self.motion_tick())
         if not lines and session.h:
             for i,text in enumerate(('What would you like to work on?','Type a task below to start.','Ctrl+P shows commands.')):
                 if i+1<session.h:self.put(session.y+1+i,session.x+2,text,session.w-4,1 if i==0 else 4,i==0)
@@ -1756,7 +1789,7 @@ class Terminal:
         for label,action in (('^B sidebar',('sidebar',None)),('^B panel',('sidebar',None)),('^P commands',('commands',None)),('^P help',('commands',None)),('S-Tab mode',('mode',None))):
             index=footer.find(label)
             if index>=0 and index+len(label)<=cols:self.hit(rows-1,index,len(label),action)
-        self.paint_marks(self.mark_phase())
+        self.paint_marks(self.mark_phase());self.last_tick=self.motion_tick()
         cursor_x=min(cols-1,input_x+len(prefix)+cursor)
         try:self.screen.move(max(0,input_y),max(0,cursor_x))
         except curses.error:pass
@@ -1888,7 +1921,7 @@ class Terminal:
             if m.approval:
                 m.panel_scroll['approval']=max(0,m.panel_scroll.get('approval',0)+(-10 if key==curses.KEY_PPAGE else 10))
                 return True
-            _,panel,mode=layout(*reversed(self.screen.getmaxyx()),{**m.config,'sidebar':'off'} if m.approval else m.config)
+            _,panel,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
             if panel and m.panel_tab in m.panel_scroll and (mode=='overlay' or m.config['placement'] not in ('top','bottom')):
                 m.panel_scroll[m.panel_tab]=max(0,m.panel_scroll[m.panel_tab]+(-10 if key==curses.KEY_PPAGE else 10))
             else:
@@ -1916,9 +1949,9 @@ class Terminal:
                 changed=True
             if self.reloader:changed=self.reloader.check(self) or changed
             if changed:self.draw()
-            elif self.marks and self.mark_phase()!=self.last_phase:
+            elif self.motion_tick()!=self.last_tick:
                 cursor=self.screen.getyx()
-                self.paint_marks(self.mark_phase())
+                self.paint_motion()
                 self.screen.move(*cursor)
                 self.screen.refresh()
         self.child.poll(self.model)
