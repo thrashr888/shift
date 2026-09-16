@@ -287,7 +287,7 @@ turn 12 · claude-sonnet-5 · generation 3 · 4 rounds · 2,445 in (1,900 cached
 changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
 ran      cargo test -- session  exit 0  4.8s
 undo     available (/undo)
-trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift --resume dogfood
+trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift-agent --resume dogfood
 ```
 
 The receipt is a projection, not a store: the changed files and their
@@ -319,7 +319,7 @@ The JSON form:
  "runs": [{"command": ["cargo", "test", "--", "session"], "mode": "local", "exit_code": 0,
            "success": true, "status": "exit", "duration_ms": 4800, "log": "runs/run-12-1.log"}],
  "undo": true, "trace_id": "…", "span_id": "…",
- "session": "dogfood", "session_id": "…", "resume": "./bin/shift --resume dogfood"}
+ "session": "dogfood", "session_id": "…", "resume": "./bin/shift-agent --resume dogfood"}
 ```
 
 Run entries use the agentkernel receipt vocabulary (`exit_code`, `success`,
@@ -388,10 +388,10 @@ Hashes are lower-case hex SHA-256 everywhere, as in agentkernel.
 
 ### 13. Compiled modules
 
-`bin/shift` runs Guile with `--no-auto-compile`, and interpreted SHA-256
+`bin/shift-agent` runs Guile with `--no-auto-compile`, and interpreted SHA-256
 costs 371 ms per 64 KiB, which is too slow for every `read`. Compiled, the
 same code takes 32 ms. `make build` compiles `src/live-agent` and
-`extensions/shift` into `build/`, which is gitignored; `bin/shift` and the
+`extensions/shift` into `build/`, which is gitignored; `bin/shift-agent` and the
 tests pass `-C build`, and Guile falls back to source with a note whenever a
 `.go` is older than its `.scm`. `make test` depends on `build`. A subprocess
 per hash was rejected: process spawn alone measured over 130 ms here.

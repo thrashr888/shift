@@ -8,7 +8,7 @@
   #:use-module (web response)
   #:use-module (web uri)
   #:use-module (live-agent json)
-  #:export (start-mcp! run-mcp-stdio mcp-dispatch))
+  #:export (start-mcp! mcp-dispatch))
 
 (define protocol-version "2025-11-25")
 (define (tool name description properties required)
@@ -70,16 +70,6 @@
             (json-object (cons "type" "text") (cons "text" (format #f "~a: ~s" key args)))))))
           (json-object (cons "jsonrpc" "2.0") (cons "id" id)
             (cons "error" (json-object (cons "code" -32601) (cons "message" "Unsupported or invalid request")))))))))
-
-(define (run-mcp-stdio dispatch)
-  (let loop ((line (get-line (current-input-port))))
-    (unless (eof-object? line)
-      (let ((response (catch #t
-                        (lambda () (mcp-dispatch (json-read line) dispatch "stdio"))
-                        (lambda _ (json-object (cons "jsonrpc" "2.0") (cons "id" json-null)
-                          (cons "error" (json-object (cons "code" -32700) (cons "message" "Invalid JSON"))))))))
-        (when response (display (json-write response)) (newline) (force-output)))
-      (loop (get-line (current-input-port))))))
 
 (define (start-mcp! port-number dispatch)
   (let ((listener (socket PF_INET SOCK_STREAM 0)) (running? #t) (clients '()) (lock (make-mutex)))

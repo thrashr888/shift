@@ -188,7 +188,7 @@ class ClaudeTests(unittest.TestCase):
     def run_cli(self, text):
         result = subprocess.run(
             [
-                str(ROOT / "bin/shift"),
+                str(ROOT / "bin/shift-agent"),
                 "--agent",
                 "agent.scm",
                 "--no-watch",
@@ -214,7 +214,7 @@ class ClaudeTests(unittest.TestCase):
         self.assertIn(
             "Session closed · 60 input + 24 output = 84 tokens", result.stdout
         )
-        self.assertIn("Resume ./bin/shift --resume native", result.stdout)
+        self.assertIn("Resume ./bin/shift-agent --resume native", result.stdout)
         self.assertEqual(len(self.server.requests), 3)
         second = self.server.requests[1][1]
         self.assertIn("fixture-signature", json.dumps(second))
@@ -282,7 +282,7 @@ class ClaudeTests(unittest.TestCase):
             port = sock.getsockname()[1]
         process = subprocess.Popen(
             [
-                str(ROOT / "bin/shift"),
+                str(ROOT / "bin/shift-agent"),
                 "--agent",
                 "agent.scm",
                 "--no-watch",

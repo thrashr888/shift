@@ -108,7 +108,7 @@ def frontend_arguments(argv):
     index=0
     while index<len(argv):
         option=argv[index]
-        if option in ('--print','-p','--mcp','--mcp-stdio','--list-sessions','--fork-session'):
+        if option in ('--print','-p','--list-sessions','--fork-session'):
             raise ValueError('the terminal interface cannot be combined with print, MCP stdio, or session maintenance.')
         count=VALUE_OPTIONS.get(option,0)
         args.extend(argv[index:index+count+1])
@@ -530,7 +530,7 @@ def child_arguments(args):
     # The live session serves MCP peers by default on 7331 (falling forward
     # when busy); --no-mcp turns it off and --mcp-port pins a port.
     mcp=[] if any(option in ('--no-mcp','--mcp-port') for option in args) else ['--mcp-port','7331']
-    return [str(ROOT/'bin/shift'),'--watch',*mcp,*args]
+    return [str(ROOT/'bin/shift-agent'),'--watch',*mcp,*args]
 
 
 class Child:

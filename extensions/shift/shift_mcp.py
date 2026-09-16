@@ -563,7 +563,7 @@ class LiveSession:
         else:
             environment.pop("SHIFT_TOOL_CEILING", None)
         command = [
-            str(self.project_root / "bin/shift"),
+            str(self.project_root / "bin/shift-agent"),
             "--agent",
             str(image),
             "--state-dir",
@@ -789,7 +789,7 @@ class McpServer:
         if not isinstance(child_name, str) or not SAFE_NAME.fullmatch(child_name):
             raise ValueError("invalid child session name")
         command = [
-            str(self.project_root / "bin/shift"),
+            str(self.project_root / "bin/shift-agent"),
             "session-fork",
             parent_name,
             child_name,

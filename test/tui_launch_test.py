@@ -17,7 +17,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = str(ROOT / "bin/shift")
+BIN = str(ROOT / "bin/shift-agent")
 AGENT = str(ROOT / "test/session-agent.scm")
 
 
@@ -48,7 +48,7 @@ class LaunchTests(unittest.TestCase):
         install = self.project / "install"
         for directory in ("bin", "scripts", "fakebin"):
             (install / directory).mkdir(parents=True)
-        shutil.copy2(BIN, install / "bin/shift")
+        shutil.copy2(BIN, install / "bin/shift-agent")
         stub = (
             "#!/usr/bin/env python3\n"
             "import json, sys\n"
@@ -74,7 +74,6 @@ class LaunchTests(unittest.TestCase):
             ([], True, False, "backend"),
             (["--print", "hello"], True, True, "backend"),
             (["-p", "hello"], True, True, "backend"),
-            (["--mcp"], True, True, "backend"),
             (["--mcp-stdio"], True, True, "backend"),
             (["--list-sessions"], True, True, "backend"),
             (["--fork-session", "parent", "child"], True, True, "backend"),
@@ -98,7 +97,7 @@ class LaunchTests(unittest.TestCase):
                 master, slave = pty.openpty()
                 try:
                     process = subprocess.Popen(
-                        [str(install / "bin/shift"), *args], cwd=self.project, env=env,
+                        [str(install / "bin/shift-agent"), *args], cwd=self.project, env=env,
                         stdin=slave if tty_in else subprocess.DEVNULL,
                         stdout=slave if tty_out else subprocess.PIPE,
                         stderr=subprocess.PIPE,
@@ -120,7 +119,7 @@ class LaunchTests(unittest.TestCase):
                 master, slave = pty.openpty()
                 try:
                     process = subprocess.Popen(
-                        [str(install / "bin/shift")], cwd=self.project,
+                        [str(install / "bin/shift-agent")], cwd=self.project,
                         env={**env, fd_name: "99"}, stdin=slave, stdout=slave,
                         stderr=subprocess.PIPE,
                     )

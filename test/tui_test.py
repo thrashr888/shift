@@ -1092,7 +1092,7 @@ class PTY(unittest.TestCase):
             with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='shift-tui-argv-') as tmp:
                 master,slave=pty.openpty()
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=subprocess.Popen([str(ROOT/'bin/shift'),
+                process=subprocess.Popen([str(ROOT/'bin/shift-agent'),
                     '--agent',str(ROOT/'test/session-agent.scm'),'--no-watch',
                     '--state-dir',tmp+'/state','--session',name,'session-fork'],
                     stdin=slave,stdout=slave,stderr=slave,start_new_session=True,
@@ -1708,11 +1708,11 @@ class Arguments(unittest.TestCase):
         self.assertEqual(tui.frontend_arguments(['session-fork']),['session-fork'])
 
     def test_real_incompatible_options_are_rejected(self):
-        for option in ('--print','-p','--mcp','--list-sessions','--fork-session'):
+        for option in ('--print','-p','--list-sessions','--fork-session'):
             with self.assertRaises(ValueError):tui.frontend_arguments([option,'task'])
 
     def test_unsupported_double_dash_does_not_start_a_frontend(self):
-        result=subprocess.run([str(ROOT/'bin/shift'),'--','--watch'],
+        result=subprocess.run([str(ROOT/'bin/shift-agent'),'--','--watch'],
                               input='',text=True,capture_output=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.assertNotIn('requires a terminal',result.stderr)
@@ -1721,7 +1721,7 @@ class Arguments(unittest.TestCase):
     def test_piped_flag_values_reach_backend_validation(self):
         with tempfile.TemporaryDirectory(prefix='shift-argv-pipe-') as tmp:
             for value in ('--watch','--print','--mcp'):
-                result=subprocess.run([str(ROOT/'bin/shift'),'--agent',str(ROOT/'test/session-agent.scm'),
+                result=subprocess.run([str(ROOT/'bin/shift-agent'),'--agent',str(ROOT/'test/session-agent.scm'),
                     '--state-dir',tmp+'/state','--session',value],input='/quit\n',
                     text=True,capture_output=True,timeout=15,
                     env={**os.environ,'XDG_CONFIG_HOME':tmp+'/config'})

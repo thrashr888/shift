@@ -12,7 +12,7 @@ ROOT = Path.cwd()
 class RunListSource(unittest.TestCase):
     def invoke(self, project, commands):
         result = subprocess.run(
-            [str(ROOT / "bin/shift"), "--agent", str(ROOT / "test/session-agent.scm"),
+            [str(ROOT / "bin/shift-agent"), "--agent", str(ROOT / "test/session-agent.scm"),
              "--no-watch", "--no-mcp", "--session", "check"],
             cwd=project, input=commands + "\n/quit\n", capture_output=True, text=True, timeout=20,
             env={**os.environ, "XDG_CONFIG_HOME": str(project / "config"), "GUILE_AUTO_COMPILE": "0"},

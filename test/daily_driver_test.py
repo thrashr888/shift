@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = str(ROOT / "bin/shift")
+BIN = str(ROOT / "bin/shift-agent")
 AGENT = str(ROOT / "test/session-agent.scm")
 
 
@@ -58,7 +58,7 @@ class DailyDriver(unittest.TestCase):
             (self.project / ".shift/sessions/one/session.json").read_text()
         )
         self.assertIn("Session closed · token usage unavailable", first_output)
-        self.assertIn("Resume ./bin/shift --resume one", first_output)
+        self.assertIn("Resume ./bin/shift-agent --resume one", first_output)
         self.assertIn(f"ID {checkpoint['id']}", first_output)
         self.assertEqual(checkpoint["generation_id"], 1)
         self.assertEqual(checkpoint["patches"], [])
@@ -95,23 +95,6 @@ class DailyDriver(unittest.TestCase):
         for path in (self.project / ".shift").rglob("*"):
             if path.is_file():
                 self.assertNotIn("fixture_secret", path.read_text())
-
-    def test_mcp_stdio_is_only_json(self):
-        requests = [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "shift_status"},
-            },
-        ]
-        output = self.cli("\n".join(map(json.dumps, requests)) + "\n", "--mcp")
-        results = list(map(json.loads, output.splitlines()))
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]["result"]["serverInfo"]["name"], "shift")
-        status = json.loads(results[1]["result"]["content"][0]["text"])
-        self.assertEqual(status["project"], str(self.project.resolve()))
 
     def test_http_mcp_shares_live_process_and_closes(self):
         with socket.socket() as sock:

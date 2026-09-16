@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="shift-ablation-") as temporary:
             if enabled is not None:
                 env["SHIFT_BUILTINS"] = enabled
             command = [
-                str(root / "bin/shift"),
+                str(root / "bin/shift-agent"),
                 "--agent",
                 str(root / "test/session-agent.scm"),
                 "--state-dir",
@@ -77,11 +77,11 @@ with tempfile.TemporaryDirectory(prefix="shift-ablation-") as temporary:
     bare = state / "bare"
     for directory in ("bin", "agent", "extensions"):
         (bare / directory).mkdir(parents=True)
-    shutil.copy2(ROOT / "bin/shift", bare / "bin/shift")
+    shutil.copy2(ROOT / "bin/shift-agent", bare / "bin/shift-agent")
     shutil.copy2(ROOT / "test/session-agent.scm", bare / "agent/default.scm")
     (bare / "src").symlink_to(ROOT / "src", target_is_directory=True)
     result = subprocess.run(
-        [str(bare / "bin/shift"), "--no-watch", "hello"],
+        [str(bare / "bin/shift-agent"), "--no-watch", "hello"],
         cwd=bare,
         env={**os.environ, "SHIFT_BUILTINS": ""},
         input="",

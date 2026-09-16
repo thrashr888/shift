@@ -20,7 +20,7 @@ class DogfoodDriver(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="shift-eval-driver-")
         self.root = Path(self.temp.name)
         (self.root / "bin").mkdir()
-        agent = self.root / "bin/shift"
+        agent = self.root / "bin/shift-agent"
         agent.write_text('''#!/usr/bin/env python3
 import json,sys
 from pathlib import Path

@@ -14,7 +14,7 @@ classify_launch() {
   fi
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --print|-p|--mcp|--list-sessions|--fork-session|-h|--help)
+      --print|-p|--list-sessions|--fork-session|-h|--help)
         backend_only=yes
         return ;;
       --agent|--state-dir|--session|--new-session|--resume|--mode|--model|--allow-run|--set|--receipt|--mcp-port)
