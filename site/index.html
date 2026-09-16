@@ -152,7 +152,7 @@ printf 'theme = shift-acid\n' &gt;&gt; ~/.config/ghostty/config</code></pre>
    (<span class="code-accent">command</span> "git" "status" "--short")
    (<span class="code-accent">command</span> "make" "test")))</code></pre>
       </div>
-      <p class="caption">Commands run only when the session’s run allowlist already permits them; <span class="mono">./bin/shift --check-panes</span> lints the file.</p>
+      <p class="caption">Commands run only when the session’s run allowlist already permits them; <span class="mono">./bin/shift-agent --check-panes</span> lints the file.</p>
     </section>
 
     <section class="live-section wrap" id="inside" aria-labelledby="inside-title">
@@ -180,9 +180,9 @@ printf 'theme = shift-acid\n' &gt;&gt; ~/.config/ghostty/config</code></pre>
         <p>Use macOS or Linux with <strong>Git, Make, Guile 3.0, ripgrep, and Python 3 with curses</strong>, in an interactive terminal. No API key or local model needed for this demo.</p>
         <pre aria-label="Clone Shift and launch its no-model terminal demo"><code>git clone https://github.com/thrashr888/shift.git
 cd shift
-./bin/shift --session ui-demo \
+./bin/shift-agent --session ui-demo \
   --set 'agent-model="demo"'</code></pre>
-        <details class="provider-details"><summary>Ready for a real model?</summary><p>The checked-in image defaults to Ollama with <code>qwen3.8:27b-mlx</code>. You’ll need Ollama running and a compatible, tool-capable model installed, or credentials for a supported remote provider. Model availability and hardware requirements vary.</p><p>Run <code>./bin/shift</code> in an interactive terminal for the interface. To keep the saved demo separate, use <code>./bin/shift --session first-run</code>; the demo session retains its demo-model setting.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Provider setup and model selection <span aria-hidden="true">↗</span></a></details>
+        <details class="provider-details"><summary>Ready for a real model?</summary><p>The checked-in image defaults to Ollama with <code>qwen3.8:27b-mlx</code>. You’ll need Ollama running and a compatible, tool-capable model installed, or credentials for a supported remote provider. Model availability and hardware requirements vary.</p><p>Run <code>./bin/shift-agent</code> in an interactive terminal for the interface, or <code>brew install thrashr888/tap/shift</code> and run <code>shift-agent</code> anywhere. To keep the saved demo separate, use <code>./bin/shift-agent --session first-run</code>; the demo session retains its demo-model setting.</p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Provider setup and model selection <span aria-hidden="true">↗</span></a></details>
         <a class="guide-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">Read the terminal guide <span aria-hidden="true">↗</span></a>
       </div>
     </section>

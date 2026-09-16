@@ -50,7 +50,7 @@
 (test-equal "only this turn's runs" '(("make" "check") ("pytest" "-x"))
   (map (lambda (run) (assq-ref run 'command)) (assq-ref receipt 'runs)))
 (test-assert "undo is available while the turn is undoable" (assq-ref receipt 'undo))
-(test-equal "resume command names the session" "./bin/shift --resume dogfood" (assq-ref receipt 'resume))
+(test-equal "resume command names the session" "./bin/shift-agent --resume dogfood" (assq-ref receipt 'resume))
 
 (define text (receipt->text receipt))
 (test-assert "text leads with turn, model, generation, rounds, and tokens"
@@ -62,7 +62,7 @@
        (string-contains text "ran      pytest -x  timeout  120.0s")))
 (test-assert "text offers undo" (string-contains text "undo     available (/undo)"))
 (test-assert "text ends with trace, span, and resume"
-  (string-contains text "trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift --resume dogfood"))
+  (string-contains text "trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift-agent --resume dogfood"))
 (test-assert "a completed turn has no status line" (not (string-contains text "status   ")))
 
 (define failed

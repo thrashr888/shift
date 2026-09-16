@@ -30,8 +30,8 @@ installed, tool-capable `qwen3.8:27b-mlx` model at Ollama's native
 
 ```sh
 make test
-./bin/shift
-./bin/shift "Give me a cookie recipe about Lisp."
+./bin/shift-agent
+./bin/shift-agent "Give me a cookie recipe about Lisp."
 ```
 
 A quoted positional argument is submitted immediately as the first user turn.
@@ -49,12 +49,12 @@ public `--repl` mode. Use `--print`/`-p` for
 one answer, or redirect/pipeline input for the scriptable Guile command loop:
 
 ```sh
-./bin/shift -p "Summarize this project."
-printf '/show\n/quit\n' | ./bin/shift
-./bin/shift < demo/context-selection/session.txt
+./bin/shift-agent -p "Summarize this project."
+printf '/show\n/quit\n' | ./bin/shift-agent
+./bin/shift-agent < demo/context-selection/session.txt
 ```
 
-Help, session listing/forking, and MCP stdio (`--mcp`) bypass curses. Redirected
+Help and session listing/forking bypass curses. Redirected
 stdout also stays plain text. Scripted boot is deliberately compact:
 
 ```text
@@ -97,7 +97,7 @@ to watch off; pass `--watch` to opt in there.
 ## Terminal interface
 
 ```sh
-./bin/shift
+./bin/shift-agent
 make
 ```
 
@@ -138,7 +138,7 @@ Custom Scheme presentation packs reload when saved; invalid updates preserve the
 working view. No local model is required to try the interface:
 
 ```sh
-./bin/shift --session ui-demo --set 'agent-model="demo"'
+./bin/shift-agent --session ui-demo --set 'agent-model="demo"'
 ```
 
 Matching [Ghostty](https://github.com/ghostty-org/ghostty) terminal themes are
@@ -151,12 +151,12 @@ Use a named session when the conversation and live behavior should survive a
 process restart:
 
 ```sh
-./bin/shift --session dogfood       # resume if present, otherwise create
-./bin/shift --session recipes "Continue our Lisp cookie recipe."
-./bin/shift --new-session spike-2   # fail if the name already exists
-./bin/shift --resume dogfood        # fail if it does not exist
-./bin/shift --list-sessions
-./bin/shift session-fork dogfood experiment
+./bin/shift-agent --session dogfood       # resume if present, otherwise create
+./bin/shift-agent --session recipes "Continue our Lisp cookie recipe."
+./bin/shift-agent --new-session spike-2   # fail if the name already exists
+./bin/shift-agent --resume dogfood        # fail if it does not exist
+./bin/shift-agent --list-sessions
+./bin/shift-agent session-fork dogfood experiment
 ```
 
 The checkpoint at `.shift/sessions/NAME/session.json` is atomically
@@ -233,14 +233,13 @@ there is no per-session load command. Provider modules load only when selected.
 The terminal interface serves HTTP MCP at `http://127.0.0.1:7331/mcp` in the
 same Guile process, falling forward to the next free port up to 7340 when
 several sessions run; `--no-mcp` turns it off and `--mcp-port PORT` pins a port.
-Use `--mcp` for the plain JSON-RPC stdio transport instead of the terminal interface.
 
 To keep a smaller process, set an explicit built-in allowlist before launch:
 
 ```sh
-SHIFT_BUILTINS=ollama,tracing ./bin/shift
-SHIFT_BUILTINS=ollama ./bin/shift                  # no trace files/exporter
-SHIFT_BUILTINS= ./bin/shift --agent test/session-agent.scm "hello"
+SHIFT_BUILTINS=ollama,tracing ./bin/shift-agent
+SHIFT_BUILTINS=ollama ./bin/shift-agent                  # no trace files/exporter
+SHIFT_BUILTINS= ./bin/shift-agent --agent test/session-agent.scm "hello"
 ```
 
 An unset variable enables `ollama,openai,claude,tracing,mcp,coding`; an empty value
@@ -301,7 +300,7 @@ Start Ollama, confirm the model is installed, and run the harness:
 
 ```sh
 ollama list
-./bin/shift
+./bin/shift-agent
 ```
 
 The selected default advertises completion, tool calling, thinking, vision, and
@@ -348,7 +347,7 @@ it into the process and load the checked-in disabled extension:
 
 ```sh
 set -a; source .env; set +a
-./bin/shift --session openai
+./bin/shift-agent --session openai
 ```
 
 ```text
@@ -392,7 +391,7 @@ process, filesystem, network, dynamic-loading, or ambient evaluation authority.
 
 ## Attach to the live session
 
-Start `./bin/shift`, then connect an HTTP MCP client to the endpoint shown in the
+Start `./bin/shift-agent`, then connect an HTTP MCP client to the endpoint shown in the
 Session tab, `http://127.0.0.1:7331/mcp` for the first session. It shares the
 terminal's process, settings, conversation, generation, and approval policy and
 dies with the session. Clients that keep the `Mcp-Session-Id` an `initialize`
@@ -402,10 +401,9 @@ or `--no-mcp` to disable it.
 `shift_status`, `shift_prompt`, `shift_inspect`, and `shift_cancel` operate on
 that live session. Mutating requests serialize; status remains available.
 
-Clients that prefer to launch a dedicated process can use `./bin/shift --mcp`
-(stdio); `bin/shift-mcp` runs exactly that. The existing
-Codex project registration still uses this dedicated-process entry point;
-use an HTTP URL in client configuration to attach to an existing terminal.
+There is no separate MCP process to launch: every session serves the endpoint
+itself, so clients register the URL (`.codex/config.toml` does) and attach to
+the terminal you already have open.
 
 See [daily-driver MCP details](docs/daily-driver.md#live-mcp) for policy,
 transport, session persistence, and the legacy Python supervisor.
@@ -563,9 +561,8 @@ extensions/shift/openai.scm    OpenAI-compatible provider
 extensions/shift/http.scm      shared bounded curl transport
 extensions/shift/tracing.scm  JSONL spans and search
 extensions/shift/otel.py      optional Phoenix/OTLP exporter
-bin/shift                     primary interactive entry point
-bin/shift-mcp                 project-scoped Codex MCP entry point
-.codex/config.toml            local MCP registration for trusted projects
+bin/shift-agent               the entry point (shift is a shell builtin)
+.codex/config.toml            local MCP registration over HTTP
 extensions/README.md          artifact contract
 test/*                        Scheme runtime tests plus MCP integration test
 ```

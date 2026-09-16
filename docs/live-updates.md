@@ -17,8 +17,8 @@ the working generation and asks for a restart before accepting another agent
 image. This prevents a newer image from crossing into an older process contract.
 
 ```sh
-./bin/shift             # watcher enabled
-./bin/shift --no-watch  # explicit/manual reload only
+./bin/shift-agent             # watcher enabled
+./bin/shift-agent --no-watch  # explicit/manual reload only
 ```
 
 The boundary is intentional: this watches `agent/default.scm` (or the image

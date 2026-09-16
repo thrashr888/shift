@@ -274,7 +274,7 @@ def run_instance(instance, args, run_dir):
                            problem=instance["problem_statement"].strip())
     (run_dir / "receipts").mkdir(exist_ok=True)
     receipt_path = run_dir / "receipts" / f"{instance['instance_id']}.json"
-    command = [str(ROOT / "bin/shift"), "--print", prompt, "--mode", "accept", "--model", args.model,
+    command = [str(ROOT / "bin/shift-agent"), "--print", prompt, "--mode", "accept", "--model", args.model,
                "--allow-run", f"{venv}/bin/python", *settings, "--session", "swe", "--no-watch", "--no-mcp",
                "--receipt", str(receipt_path)]
     log(f"running {instance['instance_id']} ({instance.get('difficulty', '?')}, {args.backend})")
@@ -507,7 +507,7 @@ def dogfood(args):
             "The external grading tests are intentionally not in this checkout; do not look for them."
         )
         receipt = run_dir / "receipts" / f"{name}.json"
-        command = [str(ROOT / "bin/shift"), "--print", prompt, "--mode", "accept",
+        command = [str(ROOT / "bin/shift-agent"), "--print", prompt, "--mode", "accept",
                    "--model", args.model, "--session", name, "--no-watch", "--no-mcp",
                    "--receipt", str(receipt), "--allow-run", "make build", "--allow-run", "make test",
                    "--allow-run", "make check", "--allow-run", "guile",

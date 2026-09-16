@@ -61,7 +61,7 @@ tool for bounded inspection.
 
 ## Implemented milestone
 
-1. `./bin/shift session-fork PARENT CHILD` atomically copies the bounded
+1. `./bin/shift-agent session-fork PARENT CHILD` atomically copies the bounded
    checkpoint into a distinct session identity, preserves the generation and
    fingerprint, and copies any durable authority ceiling.
 2. The MCP bridge records `subagent.fanout`, `subagent.run`, and `subagent.join`

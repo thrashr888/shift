@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = str(ROOT / "bin/shift")
+BIN = str(ROOT / "bin/shift-agent")
 
 
 def sse(events):
@@ -1013,7 +1013,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("changed  notes.txt (+1 −1)", err)
         self.assertIn("ran      sh -c echo ran; exit 3  exit 3", err)
         self.assertIn("undo     available (/undo)", err)
-        self.assertIn("resume ./bin/shift --resume p", err)
+        self.assertIn("resume ./bin/shift-agent --resume p", err)
         (receipt,) = self.receipts()
         self.assertEqual(json.loads(receipt_file.read_text()), receipt)
         self.assertEqual(receipt["status"], "ok")
@@ -1113,7 +1113,7 @@ class CodingWorkflow(unittest.TestCase):
 class RunListSource(unittest.TestCase):
     def invoke(self, project, commands):
         result = subprocess.run(
-            [str(ROOT / "bin/shift"), "--agent", str(ROOT / "test/session-agent.scm"),
+            [str(ROOT / "bin/shift-agent"), "--agent", str(ROOT / "test/session-agent.scm"),
              "--no-watch", "--no-mcp", "--session", "check"],
             cwd=project, input=commands + "\n/quit\n", capture_output=True, text=True, timeout=20,
             env={**os.environ, "XDG_CONFIG_HOME": str(project / "config"), "GUILE_AUTO_COMPILE": "0"},

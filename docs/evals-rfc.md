@@ -51,7 +51,7 @@ turn after 30 rounds and 2M tokens. Tool arguments that are not a valid JSON
 object now fail only that call, with the parse error returned to the model,
 in all three adapters; the streaming request timeout also rose from 120 s to
 600 s so long generations cannot truncate. Instances later in that batch ran
-with the fix, since `bin/shift` rebuilds on launch. The batch's last instance,
+with the fix, since `bin/shift-agent` rebuilds on launch. The batch's last instance,
 `sympy-23413`, failed differently: a response hit the 8192-token output
 reserve, and a completion cut off at `max_tokens` fails the turn by design
 rather than executing a partial tool call. The driver now sets
@@ -237,7 +237,7 @@ These came out of the dogfood run and block unattended evaluation.
    prompt loop, prints the final answer, writes the receipt as JSON to a path
    given by `--receipt FILE`, and exits 0 on a completed turn, 1 on a failed
    or cancelled turn, and 2 on a harness error. Stdin is not read. It reuses
-   the same controller as the REPL and MCP, like `--mcp` does.
+   the same controller as the REPL and MCP.
 2. **Unattended run approval.** `--allow-run PREFIX` (repeatable) seeds the
    session's `run-allow` list, so the eval driver decides which commands may
    run without a prompt. No other approval is granted; edits use accept mode.

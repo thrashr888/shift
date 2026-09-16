@@ -134,14 +134,14 @@
 (define (usage)
   (display
    (string-append
-    "Usage: shift [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
+    "Usage: shift-agent [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
     "                  [--session NAME|--new-session NAME|--resume NAME] [PROMPT]\n"
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
-    "       shift --list-sessions [--state-dir PATH]\n"
-    "       shift --check-panes [FILE]        lint a pane pack (default .shift/panes.scm)\n"
-    "       shift --check-mcp [FILE]          lint an MCP pack (default .shift/mcp.scm)\n"
-    "       shift session-fork PARENT CHILD\n"
+    "       shift-agent --list-sessions [--state-dir PATH]\n"
+    "       shift-agent --check-panes [FILE]  lint a pane pack (default .shift/panes.scm)\n"
+    "       shift-agent --check-mcp [FILE]    lint an MCP pack (default .shift/mcp.scm)\n"
+    "       shift-agent session-fork PARENT CHILD\n"
     "\nInteractive terminals open the curses interface.\n"
     "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
 
@@ -388,7 +388,7 @@
                                         (string-suffix? ".scm" name))))
                         '()))
                   directories))
-                (paths (sort (cons (string-append root "/bin/shift") modules)
+                (paths (sort (cons (string-append root "/bin/shift-agent") modules)
                              string<?)))
            (map (lambda (path) (cons path (read-source-file path))) paths)))))
 
@@ -1006,7 +1006,7 @@
               (+ run-prompt-tokens run-completion-tokens))
       (display "\nSession closed · token usage unavailable\n"))
   (when session
-    (format #t "Resume ./bin/shift --resume ~a~%ID ~a~%"
+    (format #t "Resume ./bin/shift-agent --resume ~a~%ID ~a~%"
             (session-name session) (session-id session)))
   (force-output))
 
@@ -2782,7 +2782,6 @@
                   #f)))))
       (lambda () (set! turn-active? #f) (set! turn-thread #f)))))
 
-(define mcp-stdio? #f)
 (define mcp-running? #f)
 (define mcp-http? (and (isatty? (current-input-port)) (not control-port)))
 (define mcp-port 7331)
@@ -2802,8 +2801,6 @@
               (count (min (+ arity 1) (length remaining))))
          (loop (drop remaining count)
                (append (reverse (take remaining count)) out))))
-      ((string=? (car remaining) "--mcp")
-       (set! mcp-stdio? #t) (set! mcp-http? #f) (loop (cdr remaining) out))
       ((string=? (car remaining) "--no-mcp")
        (set! mcp-http? #f) (loop (cdr remaining) out))
       ((string=? (car remaining) "--mcp-port")
@@ -2971,9 +2968,7 @@
       (dynamic-wind
         (lambda () #t)
         (lambda ()
-          (if mcp-stdio?
-              ((builtin-ref 'mcp 'run-mcp-stdio) dispatch)
-              (begin
+          (begin
                 (unless (or print-mode? (ui-connected?))
                   (show-banner runtime watch? session)
                   (show-model (runtime-current runtime))
@@ -3000,7 +2995,7 @@
                                        (lambda () (process! line))
                                        (lambda () (unlock-mutex lock)))))
                          (unless (eq? action 'quit) (loop))))
-                      (else (display "Session busy with an MCP operation.\n") (loop)))))))))
+                      (else (display "Session busy with an MCP operation.\n") (loop))))))))
         (lambda () (ui-host-handler! #f) (stop-mcp!))))))
 
 (define (main args)
@@ -3009,12 +3004,10 @@
       (lambda () (parse-arguments (transport-arguments args)))
     (lambda (agent-path state-directory watch? requested-session-name session-mode
              list? initial-prompt fork-parent fork-child)
-      (when mcp-stdio? (set! watch? #f))
       (when print-mode?
         (unless initial-prompt (error "--print needs a task"))
         (set! watch? #f)
         (set! mcp-http? #f))
-      (when (and mcp-stdio? (not (builtin-enabled? 'mcp))) (error "MCP built-in is disabled"))
       (unless (and agent-path state-directory)
         (usage)
         (exit 2))
@@ -3039,7 +3032,7 @@
               (display "No durable sessions.\n")
               (for-each (lambda (name) (display name) (newline)) names)))
         (exit 0))
-      (when (and (not requested-session-name) (or (getenv "SHIFT_UI_EVENT_FD") (isatty? (current-input-port))) (or (getenv "SHIFT_UI_EVENT_FD") (not control-port)) (not mcp-stdio?))
+      (when (and (not requested-session-name) (or (getenv "SHIFT_UI_EVENT_FD") (isatty? (current-input-port))) (or (getenv "SHIFT_UI_EVENT_FD") (not control-port)))
         (set! requested-session-name "default") (set! session-mode 'auto))
       (let* ((session
               (and requested-session-name
@@ -3157,7 +3150,7 @@
                      (mcp-stop-all!)
                      (ui-stop!)
                      (trace-close! tracer)
-                     (unless (or mcp-stdio? control-port)
+                     (unless control-port
                        (if print-mode?
                            (with-output-to-port (current-error-port)
                              (lambda () (show-close-message session)))

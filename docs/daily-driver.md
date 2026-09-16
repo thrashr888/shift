@@ -7,7 +7,7 @@ remain later work.
 
 ## Projects and settings
 
-Run `bin/shift` from the project you want to work on. Code loads from the Shift
+Run `bin/shift-agent` from the project you want to work on. Code loads from the Shift
 installation; tools, `.env`, and `.shift/` state belong to your working directory.
 An interactive launch resumes or creates the project's `default` session. Use
 `--session NAME` for another session. Piped input remains ephemeral unless named.
@@ -37,7 +37,7 @@ Up/down cycles through prompts and commands; down restores your unfinished draft
 The last 500 submitted inputs are kept in `.shift/input-history.jsonl`, separate
 from conversation history. File locking coordinates concurrent session writers.
 On close, a named session prints provider-reported token totals, its stable ID,
-and a copyable `./bin/shift --resume NAME` command.
+and a copyable `./bin/shift-agent --resume NAME` command.
 
 `.env` is read as data without shell evaluation. Existing process environment
 variables take precedence. Claude uses `CLAUDE_API_KEY`; OpenAI uses
@@ -153,7 +153,7 @@ turn 3 · claude-sonnet-5 · generation 1 · 4 rounds · 2,445 in (1,900 cached)
 changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
 ran      cargo test -- session  exit 0  4.8s
 undo     available (/undo)
-trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift --resume dogfood
+trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift-agent --resume dogfood
 ```
 
 The files and diffstats come from the ledger, the `ran` lines from its run
@@ -224,9 +224,9 @@ and later edits leave that value unchanged. `diff` takes `scope` `turn` (default
 without git, spawn `git` and `diff` without a shell, and are bounded at 64 KiB.
 Omit `coding` from `SHIFT_BUILTINS` to remove the tools.
 
-`make build` compiles the runtime into `build/`; `bin/shift` and `make test` load
+`make build` compiles the runtime into `build/`; `bin/shift-agent` and `make test` load
 those modules and fall back to source, with a note, when a file is newer than its
-compiled form. `bin/shift` runs `make build` itself before launching, so the cache
+compiled form. `bin/shift-agent` runs `make build` itself before launching, so the cache
 is refreshed after a pull without any notes about stale modules.
 
 ## Skills
@@ -296,7 +296,7 @@ runs and anything that could prompt stay sequential.
 Shift is an MCP client as well as a server. Servers are data in `.shift/mcp.scm`
 (project, committable) and `~/.config/shift/mcp.scm` (user), one form each,
 read like a pane pack and never evaluated; a project server shadows a user
-server of the same name, and `./bin/shift --check-mcp [FILE]` lints a file.
+server of the same name, and `./bin/shift-agent --check-mcp [FILE]` lints a file.
 
 ```scheme
 ((server "github"
@@ -334,7 +334,7 @@ other non-text content are named with their type and size, not inlined.
 ## Print mode and unattended runs
 
 ```
-./bin/shift --print "Add a test for the parser" --mode autopilot \
+./bin/shift-agent --print "Add a test for the parser" --mode autopilot \
   --model claude/claude-sonnet-5 --set agent-max-tool-rounds=40 --set turn-token-budget=400000 \
   --session task-17
 ```
@@ -413,15 +413,9 @@ The HTTP server binds loopback only and validates Host and Origin. Set
 `SHIFT_MCP_TOKEN` to require a Bearer token from clients. GET returns 405: this server
 uses JSON responses to Streamable HTTP POST requests, without a notification stream.
 
-For clients that launch their own dedicated process:
-
-```
-./bin/shift --mcp --session client
-```
-
-This serves the same tools over stdio, reserving stdout for JSON-RPC; `bin/shift-mcp`
-runs exactly that command. Configure an HTTP-capable client
-with the URL above to attach to an existing terminal session instead.
+There is no stdio transport and no separate MCP process: the session you have
+open is the server, and clients attach to its URL. `.codex/config.toml` in
+this repository registers it that way.
 
 The older Python supervisor remains at `extensions/shift/shift_mcp.py` for existing
 multi-process fork experiments and their regression tests. Its `live_session_*`
@@ -454,7 +448,7 @@ fast capability checks are fixture-tested; premium fast service was not exercise
 
 ## Terminal interface
 
-Launch `bin/shift` from your project, or `make` in the Shift checkout (the optional
+Launch `bin/shift-agent` from your project, or `make` in the Shift checkout (the optional
 `SHIFT_ARGS` make variable forwards CLI options). It requires Python 3 with curses and
 an interactive terminal. It uses the existing Guile session, tool permissions,
 streaming, receipts, and cancellation; it does not start a separate agent.
@@ -464,7 +458,7 @@ maintenance still use their non-screen paths. No additional model is loaded by
 the frontend. For a no-model demo, run:
 
 ```sh
-./bin/shift --session ui-demo --set 'agent-model="demo"'
+./bin/shift-agent --session ui-demo --set 'agent-model="demo"'
 ```
 
 The host terminal controls the font. Layout is measured in cells, with Unicode
@@ -569,7 +563,7 @@ changes; this repository's own file adds a SHIFT tab with checkout health,
 `git status`, `git log` and `make test`. The file is committable (`.gitignore`
 keeps the rest of `.shift/` private). Explicit `panes` preferences, for example
 from `/ui`, take precedence over the file and carry the same panes as JSON; an
-invalid file is reported and skipped. `./bin/shift --check-panes [FILE]` lints
+invalid file is reported and skipped. `./bin/shift-agent --check-panes [FILE]` lints
 a pack the way a session loads it. The grammar and field list are published at
 <https://thrashr888.github.io/shift/panes.html>.
 

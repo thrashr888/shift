@@ -525,7 +525,7 @@ class HotReloadTest(unittest.TestCase):
                 ROOT / "extensions/shift", target_is_directory=True
             )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
-            shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
+            shutil.copy2(ROOT / "bin/shift-agent", project_root / "bin/shift-agent")
             agent_path = project_root / "agent/default.scm"
             source = (ROOT / "test/session-agent.scm").read_text()
             agent_path.write_text(source)
@@ -557,7 +557,7 @@ class HotReloadTest(unittest.TestCase):
             self.assertIn("[hot-reloaded] still there", response["output"])
 
             cursor = response["cursor"]
-            launcher = project_root / "bin/shift"
+            launcher = project_root / "bin/shift-agent"
             launcher.write_text(launcher.read_text() + "\n# stable runtime drift\n")
             agent_path.write_text(
                 updated.replace("[hot-reloaded] ", "[requires-restart] ")
@@ -598,7 +598,7 @@ class OpenAIStreamingTest(unittest.TestCase):
                 ROOT / "extensions/shift", target_is_directory=True
             )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
-            shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
+            shutil.copy2(ROOT / "bin/shift-agent", project_root / "bin/shift-agent")
             (project_root / "README.md").write_text("# deterministic SSE fixture\n")
             image = (ROOT / "test/session-agent.scm").read_text()
             image = image.replace(
@@ -660,7 +660,7 @@ class SubagentMilestoneTest(unittest.TestCase):
                 ROOT / "extensions/shift", target_is_directory=True
             )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
-            shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
+            shutil.copy2(ROOT / "bin/shift-agent", project_root / "bin/shift-agent")
             (project_root / "README.md").write_text(
                 "# deterministic subagent evidence\n"
             )
@@ -811,7 +811,7 @@ class CancellationTest(unittest.TestCase):
                 ROOT / "extensions/shift", target_is_directory=True
             )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
-            shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
+            shutil.copy2(ROOT / "bin/shift-agent", project_root / "bin/shift-agent")
             image = (ROOT / "test/session-agent.scm").read_text()
             image = image.replace(
                 '(define agent-model "demo")', '(define agent-model "fake")'
@@ -866,7 +866,7 @@ class TraceToolTest(unittest.TestCase):
                 ROOT / "extensions/shift", target_is_directory=True
             )
             (project_root / "src").symlink_to(ROOT / "src", target_is_directory=True)
-            shutil.copy2(ROOT / "bin/shift", project_root / "bin/shift")
+            shutil.copy2(ROOT / "bin/shift-agent", project_root / "bin/shift-agent")
             image = (ROOT / "test/session-agent.scm").read_text()
             image = image.replace(
                 '(define agent-model "demo")', '(define agent-model "fake")'

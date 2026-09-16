@@ -1,6 +1,6 @@
 .PHONY: run dogfood sessions run-traced demo-context demo-context-scripted phoenix phoenix-check phoenix-down phoenix-logs build test check
 
-# Compiled modules make the SHA-256 ledger and tool loop fast; bin/shift and the
+# Compiled modules make the SHA-256 ledger and tool loop fast; bin/shift-agent and the
 # tests load them from build/ and fall back to source when a .go is stale.
 LOAD_PATHS = -L src -L extensions
 GUILE_PATHS = $(LOAD_PATHS) -C build
@@ -12,22 +12,22 @@ COMPILED = $(patsubst src/live-agent/%.scm,build/live-agent/%.go,$(CORE_SOURCES)
 SHIFT_ARGS ?=
 
 run:
-	./bin/shift $(SHIFT_ARGS)
+	./bin/shift-agent $(SHIFT_ARGS)
 
 dogfood:
-	./bin/shift --session dogfood
+	./bin/shift-agent --session dogfood
 
 sessions:
-	./bin/shift --list-sessions
+	./bin/shift-agent --list-sessions
 
 run-traced: phoenix-check
-	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift
+	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift-agent
 
 demo-context: phoenix-check
-	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift --agent demo/context-selection/agent.scm --state-dir .shift/context-demo
+	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift-agent --agent demo/context-selection/agent.scm --state-dir .shift/context-demo
 
 demo-context-scripted: phoenix-check
-	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift --agent demo/context-selection/agent.scm --state-dir .shift/context-demo < demo/context-selection/session.txt
+	SHIFT_OTEL_ENDPOINT=http://127.0.0.1:6006 ./bin/shift-agent --agent demo/context-selection/agent.scm --state-dir .shift/context-demo < demo/context-selection/session.txt
 
 phoenix:
 	@curl --fail --silent --max-time 2 http://127.0.0.1:6006/healthz >/dev/null || docker compose up -d --wait phoenix

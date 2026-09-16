@@ -76,7 +76,7 @@ class ReviewRegressions(unittest.TestCase):
         (self.root / "extensions/shift").symlink_to(
             ROOT / "extensions/shift", target_is_directory=True
         )
-        shutil.copy2(ROOT / "bin/shift", self.root / "bin/shift")
+        shutil.copy2(ROOT / "bin/shift-agent", self.root / "bin/shift-agent")
         Provider.mode = "ok"
         Provider.calls = 0
         Provider.release.clear()
@@ -210,7 +210,7 @@ class ReviewRegressions(unittest.TestCase):
         env = {**os.environ, "SHIFT_BUILTINS": ""}
         result = subprocess.run(
             [
-                str(ROOT / "bin/shift"),
+                str(ROOT / "bin/shift-agent"),
                 "--no-watch",
                 "--agent",
                 str(ROOT / "test/session-agent.scm"),
@@ -226,15 +226,6 @@ class ReviewRegressions(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("[mcp-test] hello", result.stdout)
         self.assertFalse((self.root / "minimal/traces.jsonl").exists())
-        result = subprocess.run(
-            [str(ROOT / "bin/shift-mcp")],
-            input="",
-            text=True,
-            capture_output=True,
-            env=env,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("disabled", result.stderr)
 
 
 if __name__ == "__main__":

@@ -95,7 +95,7 @@
       (span_id . ,span-id)
       (session . ,session-name)
       (session_id . ,session-id)
-      (resume . ,(and session-name (string-append "./bin/shift --resume " session-name))))))
+      (resume . ,(and session-name (string-append "./bin/shift-agent --resume " session-name))))))
 
 (define (receipt->json receipt)
   (define (get key) (assq-ref receipt key))
