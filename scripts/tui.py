@@ -1692,7 +1692,11 @@ class Terminal:
         inline_diff=c['placement'] in ('top','bottom') or panel is None or mode=='overlay'
         lines,positions=self.body_rows(max(1,session.w-4),mode=='compact',inline_diff)
         pending=self.motion_tick() is not None and session.h>2
-        height=session.h-1 if pending else session.h
+        # The pending-tool box takes rows from the transcript instead of
+        # covering its tail, so the newest lines stay reachable.
+        preview=[part for line in m.approval_preview.splitlines() for part in wrap(line,max(1,session.w-6))] if m.approval and m.approval_preview else []
+        overlay=min(session.h,len(preview)+2) if preview else 0
+        height=max(1,session.h-overlay-(1 if pending else 0))
         self.scroll_limit=max(0,len(lines)-height)
         m.scroll=min(m.scroll,self.scroll_limit)
         end=max(0,len(lines)-m.scroll)
@@ -1712,9 +1716,14 @@ class Terminal:
             role=m.line_roles.get(source)
             label={'user':'USER','assistant':'SHIFT','thinking':'THINKING'}.get(role,str(role).upper())
             sticky=previous or ([(label,3 if role=='user' else 2,True)] if role else None)
-        if sticky:self.spans(session.y,session.x+2,sticky,session.w-4)
+        if sticky:
+            self.spans(session.y,session.x+2,sticky,session.w-4)
+            # The sticky header takes one row: give it up at the top when
+            # sitting at the bottom, at the bottom when anchored mid-history.
+            if m.scroll:end=max(start,end-1)
+            else:start=min(end,start+1)
         shown=0
-        for i,parts in enumerate(lines[start:min(end,start+height-(1 if sticky else 0))]):
+        for i,parts in enumerate(lines[start:end]):
             self.spans(session.y+i+(1 if sticky else 0),session.x+2,parts,session.w-4)
             shown=i+1
             position=positions[start+i] if start+i<len(positions) else None
@@ -1726,9 +1735,8 @@ class Terminal:
             for i,text in enumerate(('What would you like to work on?','Type a task below to start.','Ctrl+P shows commands.')):
                 if i+1<session.h:self.put(session.y+1+i,session.x+2,text,session.w-4,1 if i==0 else 4,i==0)
         if panel:self.inspector(panel,mode)
-        if m.approval and m.approval_preview:
-            preview=[part for line in m.approval_preview.splitlines() for part in wrap(line,max(1,session.w-6))]
-            height=min(session.h,len(preview)+2)
+        if preview:
+            height=overlay
             r=Rect(session.x+1,session.y+session.h-height,max(2,session.w-2),height)
             self.regions['approval']=r
             self.box(r,'PENDING TOOL: PgUp/PgDn or Opt-Up/Dn')

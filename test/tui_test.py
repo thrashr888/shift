@@ -209,6 +209,19 @@ class Layout(unittest.TestCase):
         terminal.key('\x17');terminal.draw()
         self.assertNotIn('WORK  read','\n'.join(terminal.screen.line(i) for i in range(40)))
 
+    def test_last_lines_stay_visible_under_a_sticky_header_and_an_approval_box(self):
+        terminal=terminal_view(24,80);m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'manual','turn':1}})
+        m.event({'type':'transcript','value':{'role':'user','text':'go'}})
+        m.event({'type':'transcript','value':{'role':'assistant','text':'\n'.join(f'line {i}' for i in range(40))+'\nLAST LINE'}})
+        m.control('ready');terminal.draw();text='\n'.join(terminal.screen.line(i) for i in range(24))
+        self.assertIn('SHIFT',terminal.screen.line(7));self.assertIn('LAST LINE',text)
+        m.control('needs_approval');m.approval_prompt='Approve tool? [y/N]';m.approval_preview='Tool requests: read notes.txt\n  path: notes.txt'
+        terminal.draw();text='\n'.join(terminal.screen.line(i) for i in range(24))
+        self.assertIn('LAST LINE',text);self.assertIn('PENDING TOOL',text)
+        last=next(i for i in range(24) if 'LAST LINE' in terminal.screen.line(i))
+        self.assertLess(last,terminal.regions['approval'].y)
+
     def test_approval_keeps_the_sidebar_in_place(self):
         terminal=terminal_view(40,128);m=terminal.model
         m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'manual','turn':1}})
