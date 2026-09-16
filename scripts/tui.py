@@ -73,6 +73,33 @@ def suggestions(draft, themes, palette=False, models=(), sessions=(), panes=(), 
         return [(name+' '+choice,COMMANDS[name]) for choice in choices if choice.startswith(value)]
     return [(name,description) for name,description in COMMANDS.items() if name.startswith(query)]
 
+INLINE=re.compile(r'(\*\*[^*\n]+\*\*|`[^`\n]+`|(?<![\w*])\*(?!\s)[^*\n]+?(?<!\s)\*(?![\w*])|(?<!\w)_(?!\s)[^_\n]+?(?<!\s)_(?!\w))')
+def markdown_runs(line):
+    # Inline markdown as styled runs: (text, style) with style in
+    # '', 'bold', 'italic', 'code'. Markers must close on the same line.
+    runs=[]
+    for piece in INLINE.split(line):
+        if not piece:continue
+        if piece.startswith('**') and piece.endswith('**') and len(piece)>4:runs.append((piece[2:-2],'bold'))
+        elif piece.startswith('`') and piece.endswith('`') and len(piece)>2:runs.append((piece[1:-1],'code'))
+        elif piece[0] in '*_' and piece[-1]==piece[0] and len(piece)>2:runs.append((piece[1:-1],'italic'))
+        else:runs.append((piece,''))
+    return runs
+
+def wrap_runs(runs,width,words=True):
+    # Word-wrap the plain text, then cut the styled runs at the same places.
+    plain=''.join(text for text,_ in runs)
+    styles=[style for text,style in runs for _ in text]
+    lines=[];offset=0
+    for segment in wrap(plain,width,words=words):
+        parts=[];start=offset
+        for i,ch in enumerate(segment,offset):
+            if parts and styles[i]==parts[-1][1]:parts[-1][0]+=ch
+            else:parts.append([ch,styles[i]])
+        lines.append([(text,style) for text,style in parts])
+        offset+=len(segment)+(1 if plain[offset+len(segment):].startswith(' ') else 0)
+    return lines
+
 def run_entry(result, tool=None):
     # The run tool's first line reads "run CMD · exit N · Ns · N lines · log PATH";
     # the rest is the command's combined output.
@@ -980,13 +1007,13 @@ class Terminal:
         elif getattr(self,'terminal_synced',False):
             sys.stdout.write('\x1b]111\x1b\\\x1b]110\x1b\\\x1b]112\x1b\\');sys.stdout.flush();self.terminal_synced=False
 
-    def put(self,y,x,text,width,color=1,bold=False,dim=False):
+    def put(self,y,x,text,width,color=1,bold=False,dim=False,italic=False):
         rows,cols=self.screen.getmaxyx()
         if y<0 or y>=rows or x<0 or x>=cols:return
         text=clip(text,min(width,cols-x))
         lines='─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬'
         if self.model.config.get('theme')=='qdos' and text.strip() and set(text)<=set(lines+'+-=| '):color=1
-        style=(curses.color_pair(color) if curses.has_colors() else 0)|(curses.A_BOLD if bold else 0)|(curses.A_DIM if dim else 0)
+        style=(curses.color_pair(color) if curses.has_colors() else 0)|(curses.A_BOLD if bold else 0)|(curses.A_DIM if dim else 0)|(getattr(curses,'A_ITALIC',0) if italic else 0)
         try:
             # Rules use ncurses' cell/ACS path, not repeated UTF-8 strings.
             # Prose and diff hyphens stay on the ordinary text path.
@@ -1019,6 +1046,16 @@ class Terminal:
     def mark_phase(self, now=None):
         tick=self.motion_tick(now)
         return None if tick is None else (tick//2)%3
+
+    def log_approval(self,answer):
+        # Every y/n/a (or typed reply) joins the Log tab beside runs and judge calls.
+        m=self.model;answer=answer.strip()
+        status={'y':'allowed','a':'always','n':'declined','':'declined'}.get(answer.lower(),'replied')
+        first=(m.approval_preview.strip().splitlines() or ['tool'])[0]
+        subject=clean(first.removeprefix('Tool requests: ').strip())
+        m.runs.append({'kind':'approval','turn':m.session.get('turn','?'),'id':None,'ok':status!='declined','command':subject,
+                       'status':status if status!='replied' else 'replied · '+clean(answer),'seconds':'','log':'','lines':[],'truncated':False,'at':time.strftime('%H:%M')})
+        m.panel_scroll['log']=10**9
 
     def paint_motion(self):
         tick=self.motion_tick()
@@ -1078,9 +1115,11 @@ class Terminal:
         if title:self.put(r.y,r.x+2,' '+title+' ',r.w-4,6,True)
 
     def spans(self,y,x,parts,width):
-        for text,tone,bold in parts:
+        for part in parts:
+            text,tone,bold=part[:3];italic=len(part)>3 and part[3]
             visible=clip(text,width)
-            self.put(y,x,visible,width,tone,bold)
+            if italic:self.put(y,x,visible,width,tone,bold,False,True)
+            else:self.put(y,x,visible,width,tone,bold)
             used=sum(cell_width(ch) for ch in visible)
             x+=used;width-=used
             if width<=0:break
@@ -1393,9 +1432,11 @@ class Terminal:
             if role in ('assistant','shift') and not preformatted:
                 heading=re.match(r'^#{1,6}\s+(.+)',line)
                 if heading:line=heading[1];bold=True
-                # Only strip complete inline markers; code fences remain literal.
-                line=re.sub(r'\*\*([^*\n]+)\*\*',r'\1',line)
-                line=re.sub(r'`([^`\n]+)`',r'\1',line)
+                # Inline markdown renders as style: bold, italic, and code on the panel tint.
+                for parts in wrap_runs(markdown_runs(line),width):
+                    add([(text,5 if style=='code' else tone,bold or style=='bold',style=='italic') for text,style in parts],source,offset)
+                    offset+=sum(len(text) for text,_ in parts)+1
+                continue
             for segment in wrap(line,width,words=role is not None and not preformatted):
                 add([(segment,tone,bold)],source,offset);offset+=len(segment)+(1 if line[offset+len(segment):].startswith(' ') else 0)
         return result,positions
@@ -1560,7 +1601,7 @@ class Terminal:
             for run in m.runs:
                 line('')
                 # Status first: commands can be long and would push it off the row.
-                tag={'peer':'[peer] ','pane':'[pane] ','job':'[agent] ' if run.get('agent') else '[job] ','judge':'[judge] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                tag={'peer':'[peer] ','pane':'[pane] ','job':'[agent] ' if run.get('agent') else '[job] ','judge':'[judge] ','approval':'[approval] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
                 rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
                              ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
                 for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])
@@ -1885,7 +1926,7 @@ class Terminal:
                 if m.panel_tab=='model':self.request_model_list()
                 if m.panel_tab=='session':self.request_sessions()
         elif key=='\x1b':
-            if m.approval:self.child.send('n');m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None;self.menu=False
+            if m.approval:self.log_approval('n');self.child.send('n');m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None;self.menu=False
             elif self.menu:self.menu=False
             else:
                 _,_,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
@@ -1910,7 +1951,7 @@ class Terminal:
             elif m.approval and line.lstrip().startswith('/'):
                 m.notice='Finish approval before using session commands.'
             elif m.approval:
-                self.child.send(line);m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None
+                self.log_approval(line);self.child.send(line);m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None
             elif line.strip():
                 if m.ready:
                     self.child.send(line);m.control('working')

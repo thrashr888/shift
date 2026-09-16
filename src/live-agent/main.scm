@@ -2846,7 +2846,11 @@
               (when (>= round max-rounds)
                 (runtime-record! runtime 'turn-limit
                                  `((reason . rounds) (rounds . ,max-rounds) (turn . ,turn-count)))
-                (error "tool round limit reached" max-rounds))
+                ;; The turn fails, but its exchanges are kept so the next turn
+                ;; knows what was read and run instead of starting blind.
+                (throw 'turn-limit
+                       (persist-provider-turn history (length context-messages) (without-ephemeral messages))
+                       max-rounds))
               (let ((budget (setting-ref generation 'turn-token-budget)))
                 (when (and budget (> turn-tokens budget))
                   (runtime-record! runtime 'turn-limit
@@ -3115,23 +3119,34 @@
               (finish! "ok" #f `((output.value . ,(cadr new-history))))
               (list 'ok (car new-history))))
           (lambda (key . arguments)
-            (if (cancelled? key)
-                (begin
-                  (runtime-record!
-                   runtime 'turn-cancelled
-                   `((generation . ,(generation-id generation))
-                     (turn . ,turn-count)))
-                  (set! operation-status "cancelled")
-                  (display "turn cancelled; conversation state is unchanged.\n")
-                  (finish! "cancelled" "cancelled by user"
-                           '((error.message . "cancelled by user")))
-                  #f)
+            (cond
+              ((cancelled? key)
+                (runtime-record!
+                 runtime 'turn-cancelled
+                 `((generation . ,(generation-id generation))
+                   (turn . ,turn-count)))
+                (set! operation-status "cancelled")
+                (display "turn cancelled; conversation state is unchanged.\n")
+                (finish! "cancelled" "cancelled by user"
+                         '((error.message . "cancelled by user")))
+                #f)
+              ((eq? key 'turn-limit)
+                (let* ((kept (car arguments)) (limit (cadr arguments))
+                       (detail (format #f "tool round limit reached: ~a rounds" limit))
+                       (note (make-message "user"
+                               (format #f "Note from the harness: turn ~a stopped at the tool round limit (~a) before an answer. The reads and runs above did happen; continue from them rather than repeating them."
+                                       turn-count limit))))
+                  (operation-failed! detail)
+                  (format (current-error-port) "turn failed: ~a~%" detail)
+                  (finish! "failed" detail `((error.message . ,detail)))
+                  (list 'limited (append kept (list note)))))
+              (else
                 (let ((detail (format #f "~s: ~s" key arguments)))
                   (operation-failed! detail)
                   (format (current-error-port) "turn failed: ~a~%" detail)
                   (finish! "failed" (caught-error-detail key arguments)
                            `((error.message . ,detail)))
-                  #f)))))
+                  #f))))))
       (lambda () (set! turn-active? #f) (set! turn-thread #f)))))
 
 (define mcp-running? #f)

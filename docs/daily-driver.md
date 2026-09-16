@@ -122,7 +122,9 @@ disagreed. `/judge on` keeps the judge for autopilot without the manual-mode
 shadowing; with `/judge off`, autopilot asks for anything the rules do not
 resolve, so nothing runs everything unattended. The
 receipt records `judged`, `blocked` and `judge_ms`, and blocks land in the Log
-tab as `[judge]` entries.
+tab as `[judge]` entries. Every answer you give an approval prompt (`y`, `a`,
+`n`, Esc or a typed reply) lands there too as an `[approval]` entry naming the
+tool and its subject.
 
 ## File changes
 
@@ -533,8 +535,9 @@ the frontend. For a no-model demo, run:
 
 The host terminal controls the font. Layout is measured in cells, with Unicode
 width-aware clipping and word-aware prose wrapping. Fenced/indented code and diffs
-preserve whitespace; basic headings, bold and inline-code markers are simplified
-without introducing a full Markdown renderer. **Acid** uses a lowercase pixel
+preserve whitespace; headings render bold, and inline `**bold**`, `*italic*`
+(or `_italic_`) and `` `code` `` render as bold, italic and code on the panel
+tint, with the markers removed, without introducing a full Markdown renderer. **Acid** uses a lowercase pixel
 wordmark, a separate session/model/mode strip, and a two-thirds transcript beside
 a one-third output pane. **Paddock** docks that pane on the left. **Blueprint**
 keeps the transcript full width and places a three-row telemetry band above the

@@ -1144,6 +1144,13 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("round limit", receipt["error"])
         self.assertEqual(receipt["tool_calls"], {"edit": 1, "read": 1})
         self.assertTrue(receipt["undo"], "changes a failed turn committed stay undoable")
+        # The exchanges survive: the next turn starts from what was read and run.
+        checkpoint = self.checkpoint("p")
+        self.assertEqual(checkpoint["next_turn"], 2)
+        roles = [m["role"] for m in checkpoint["history"]]
+        self.assertEqual(roles[0], "user");self.assertIn("tool", roles)
+        self.assertIn("stopped at the tool round limit", checkpoint["history"][-1]["content"])
+        self.assertEqual(checkpoint["history"][-1]["role"], "user")
         self.assertEqual(self.turn_span()["attributes"]["receipt.status"], "failed")
         code, out, err = self.print_mode("no turn", [answer("x")], "--receipt", str(self.project / "missing" / "r.json"),
                                          session="unwritable")

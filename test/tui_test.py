@@ -209,6 +209,32 @@ class Layout(unittest.TestCase):
         terminal.key('\x17');terminal.draw()
         self.assertNotIn('WORK  read','\n'.join(terminal.screen.line(i) for i in range(40)))
 
+    def test_inline_markdown_renders_as_style_not_markers(self):
+        self.assertEqual(tui.markdown_runs('use **bold**, *it* and `code` _now_'),
+                         [('use ',''),('bold','bold'),(', ',''),('it','italic'),(' and ',''),('code','code'),(' ',''),('now','italic')])
+        self.assertEqual(tui.markdown_runs('2 * 3 * 4 and a_b_c'),[('2 * 3 * 4 and a_b_c','')])
+        lines=tui.wrap_runs(tui.markdown_runs('plain **bold text** tail'),12)
+        self.assertEqual(lines,[[('plain ',''),('bold','bold')],[('text','bold'),(' tail','')]])
+        terminal=terminal_view(24,80);m=terminal.model
+        m.event({'type':'transcript','value':{'role':'assistant','text':'Run `make test` and **watch** _closely_.'}})
+        terminal.put=Mock(wraps=terminal.screen.put);terminal.draw()
+        text='\n'.join(terminal.screen.line(i) for i in range(24))
+        self.assertIn('Run make test and watch closely.',text);self.assertNotIn('`',text);self.assertNotIn('**',text)
+        styled={call.args[2]:call.args[4:] for call in terminal.put.call_args_list if call.args[2] in ('make test','watch','closely')}
+        self.assertEqual(styled['make test'][0],5);self.assertTrue(styled['watch'][1]);self.assertTrue(styled['closely'][3])
+
+    def test_approval_answers_join_the_log(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'manual','turn':3}})
+        for answer,status in (('y','allowed'),('a','always'),('\x1b','declined'),('use rg instead','replied · use rg instead')):
+            m.control('needs_approval');m.approval_prompt='Approve tool? [y/N]';m.approval_preview='Tool requests: read notes.txt\n  path: notes.txt'
+            if answer=='\x1b':terminal.key(answer)
+            else:m.draft=answer;terminal.key('\n')
+            self.assertEqual((m.runs[-1]['kind'],m.runs[-1]['status'],m.runs[-1]['command']),('approval',status,'read notes.txt'))
+        self.assertEqual([run['ok'] for run in m.runs],[True,True,False,True])
+        m.control('ready');m.panel_tab='log';terminal.draw();text='\n'.join(terminal.screen.line(i) for i in range(40))
+        self.assertIn('[approval] allowed',text);self.assertIn('[approval] declined',text);self.assertIn('read notes.txt',text)
+
     def test_last_lines_stay_visible_under_a_sticky_header_and_an_approval_box(self):
         terminal=terminal_view(24,80);m=terminal.model
         m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'manual','turn':1}})
