@@ -47,7 +47,7 @@ variables take precedence. Claude uses `CLAUDE_API_KEY`; OpenAI uses
 
 Claude is a built-in native Messages adapter, including streaming text, thinking,
 signed thinking blocks, tool calls/results, and usage. Conversations normalize
-legacy Ollama/OpenAI tool messages so provider switching keeps call IDs intact.
+Ollama's id-less tool messages so provider switching keeps call IDs intact.
 Claude-only blocks are preserved for their originating model and omitted when
 sending to another provider. Tool calls from truncated streams never execute.
 
@@ -417,9 +417,6 @@ There is no stdio transport and no separate MCP process: the session you have
 open is the server, and clients attach to its URL. `.codex/config.toml` in
 this repository registers it that way.
 
-The older Python supervisor remains at `extensions/shift/shift_mcp.py` for existing
-multi-process fork experiments and their regression tests. Its `live_session_*`
-tools are a different, legacy interface; they are not the new live endpoint.
 
 ## Validation on September 6, 2026
 
@@ -688,7 +685,7 @@ Other session commands cannot run until approval is resolved. Invalid UI command
 leave the request pending and show the error beside the input. Approval input is separate from the saved draft;
 presentation overlays are hidden during approval so the tool preview stays
 visible. Pending previews are separately framed and scrollable; completed approval
-questions, tool JSON and legacy prompt chatter are not duplicated in the transcript.
+questions, tool JSON and the plain REPL prompt chatter are not duplicated in the transcript.
 Command completion never answers an approval; Escape first dismisses completion.
 The agent's `ui` tool supports get/patch/undo/reload/save. Manual mode
 asks for tool approval; plan mode permits only get. Autopilot allows validated UI

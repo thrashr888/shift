@@ -63,8 +63,7 @@
          (cons (if (and branch (pair? branch)) (car branch) "detached")
                ;; Shift's own state directory is never the user's dirt.
                (filter (lambda (path)
-                         (not (or (string-prefix? ".shift/" path)
-                                  (string-prefix? ".lisp-agent/" path))))
+                         (not (string-prefix? ".shift/" path)))
                        (map (lambda (line)
                               (let* ((path (substring line (min 3 (string-length line))))
                                      (arrow (string-contains path " -> ")))

@@ -5,7 +5,7 @@
 (test-begin "trace")
 
 (define test-root
-  (string-append "/tmp/lisp-agent-trace-test-" (number->string (getpid))))
+  (string-append "/tmp/shift-trace-test-" (number->string (getpid))))
 (system* "mkdir" "-p" test-root)
 
 (define tracer (make-tracer test-root #f))

@@ -48,7 +48,7 @@
 (test-assert "deny policy never prompts" (not confirm-called?))
 
 (define tool-root
-  (string-append "/tmp/lisp-agent-tools-test-" (number->string (getpid))))
+  (string-append "/tmp/shift-tools-test-" (number->string (getpid))))
 (system* "mkdir" "-p" tool-root)
 
 (define write-result

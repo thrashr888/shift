@@ -411,7 +411,7 @@ Scheme suites, run through `test/run.scm`:
   `status` and `diff` inside and outside Git, `cwd` confinement.
 
 Python end-to-end, `test/coding_workflow_test.py`, driving the real CLI with
-the fake OpenAI-compatible provider from `test/regressions.py` so the model
+the fake OpenAI-compatible provider from `test/stream_test.py` so the model
 side is deterministic:
 
 1. Dirty Git checkout: the user has an uncommitted change; the model edits a

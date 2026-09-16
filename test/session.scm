@@ -27,7 +27,7 @@
    "(define (agent-demo-response text) (string-append \"session: \" text))\n"))
 
 (define test-root
-  (string-append "/tmp/lisp-agent-session-test-" (number->string (getpid))))
+  (string-append "/tmp/shift-session-test-" (number->string (getpid))))
 (define source-path (string-append test-root "/agent.scm"))
 
 (system* "mkdir" "-p" test-root)

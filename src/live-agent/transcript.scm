@@ -18,7 +18,7 @@
                   (map (lambda (call index)
                          (let* ((function (json-object-ref call "function"))
                                 (args (json-object-ref function "arguments" (json-object)))
-                                (id (json-object-ref call "id" (format #f "call_legacy_~a_~a" sequence index)))
+                                (id (json-object-ref call "id" (format #f "call_~a_~a" sequence index)))
                                 (name (json-object-ref function "name")))
                            (set! pending (append pending (list (cons id name))))
                            (json-object (cons "id" id) (cons "type" "function")
