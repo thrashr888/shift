@@ -75,6 +75,25 @@
       "Use port 4317 after compaction."
       (json-object-ref
        (json-object-ref (car spans) "attributes") "output.value"))))
+(system* "mkdir" "-p" (string-append test-root "/other"))
+(define other-tracer (make-tracer (string-append test-root "/other") #f "other-session-id" "other"))
+(define other-span (trace-start! other-tracer "tool.read" "TOOL" '((turn.number . 3) (input.value . "port 4317 again"))))
+(trace-end! other-span "OK" '((output.value . "newer")))
+(call-with-values
+    (lambda ()
+      (trace-recall (list (cons "dogfood" (tracer-path named-tracer))
+                          (cons "other" (tracer-path other-tracer)))
+                    #:query "port 4317" #:limit 5))
+  (lambda (hits matched scanned malformed)
+    (test-equal "recall searches every session file" 2 matched)
+    (test-equal "recall tags hits with their session and orders newest first"
+      '("other" "dogfood")
+      (map (lambda (hit) (json-object-ref hit "session")) hits))))
+(call-with-values
+    (lambda () (trace-recall (list (cons "other" (tracer-path other-tracer))) #:query "4317" #:errors-only? #t))
+  (lambda (hits matched scanned malformed)
+    (test-equal "recall honours the errors filter" 0 matched)))
+(trace-close! other-tracer)
 (trace-close! named-tracer)
 
 (test-end "trace")

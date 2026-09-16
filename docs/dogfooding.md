@@ -51,9 +51,9 @@ granting the inner model authority to accept its own runtime changes.
   retry/discard, and interrupted file mutations can be put back from their
   recorded pre-images. There is no exact mid-process continuation or
   deterministic replay, so a mutating retry may still be ambiguous.
-- A supervisor can wait for or cancel one child and providers retry with
-  backoff, but there is no general background job model, model fallback,
-  parallel fan-out, or concurrent tool execution.
+- Background jobs, parallel subagents (`spawn`) and concurrent read-only
+  tool calls exist now; children still share the working tree, and there is no
+  model fallback.
 - Stable-runtime upgrades need the versioned supervisor/handoff described in
   `docs/live-updates.md`; only the user-owned live image updates in process.
 - The Scheme evaluator and filesystem confinement need deeper adversarial tests,

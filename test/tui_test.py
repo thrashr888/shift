@@ -1324,7 +1324,8 @@ class SessionSwitcher(unittest.TestCase):
         m.event({'type':'sessions','value':{'current':'main','sessions':[
             {'name':'main','turns':2,'updated':'2026-09-12T20:00:35Z','status':'current'},
             {'name':'dogfood','turns':14,'updated':'2026-09-11T06:26:03Z','status':'running'},
-            {'name':'task','turns':0,'updated':'2026-09-10T12:00:00Z','status':'idle'}]}})
+            {'name':'task','turns':0,'updated':'2026-09-10T12:00:00Z','status':'idle'},
+            {'name':'task/agents/tests','turns':1,'updated':'2026-09-10T12:05:00Z','status':'idle'}]}})
         terminal.draw()
         return terminal
 
@@ -1336,8 +1337,10 @@ class SessionSwitcher(unittest.TestCase):
         self.assertIn('▶ main',text);self.assertIn('    2 turns · 2026-09-12 20:00',text)
         self.assertIn('● dogfood · open elsewhere',text);self.assertIn('    14 turns · 2026-09-11 06:26',text)
         self.assertIn('○ task',text);self.assertIn('    0 turns · 2026-09-10 12:00',text)
+        # Subagents nest under their parent and switch by their full path.
+        self.assertIn('  └ ○ tests',text);self.assertIn('      1 turns · 2026-09-10 12:05',text)
         actions=[a for _,a in terminal.hits if a[0]=='session']
-        self.assertEqual(actions,[('session','task')])
+        self.assertEqual(actions,[('session','task'),('session','task/agents/tests')])
 
     def test_switching_replaces_the_backend_with_the_same_launch_and_keeps_identity(self):
         terminal=self.tab();m=terminal.model;old=terminal.child
@@ -1362,7 +1365,7 @@ class SessionSwitcher(unittest.TestCase):
         terminal.child.close.assert_not_called();terminal.child.send.assert_not_called()
         self.assertRaises(ValueError,terminal.switch_session,'../x')
         m.control('ready');m.draft='/session t';terminal.draw()
-        self.assertEqual([c[0] for c in terminal.completion_choices],['/session task'])
+        self.assertEqual([c[0] for c in terminal.completion_choices],['/session task','/session task/agents/tests'])
 
 
 class TabStrip(unittest.TestCase):

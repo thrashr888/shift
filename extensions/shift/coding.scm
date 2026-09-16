@@ -18,7 +18,7 @@
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
             executed-argv capture-process unwrap-agentkernel-output
-            job-observer! take-job-notices stop-jobs! job-list start-job! cancel-job! job-event run-placement))
+            job-observer! take-job-notices stop-jobs! job-list start-job! start-child-job! cancel-job! job-event job-identity job-tags job-state run-placement))
 
 (define max-output (* 64 1024))
 (define max-patch-input (* 512 1024))
@@ -540,14 +540,19 @@
 (define observer (lambda (event) #f))
 (define (job-observer! proc) (set! observer proc))
 (define-record-type <job>
-  (make-job id argv workdir pid started deadline log status code duration tail tag turn)
+  (make-job id argv workdir pid started deadline log log-path status code duration tail tag turn)
   job?
   (id job-id) (argv job-argv) (workdir job-workdir) (pid job-pid) (started job-started)
-  (deadline job-deadline) (log job-log)
+  (deadline job-deadline) (log job-log) (log-path job-log-path*)
   (status job-status set-job-status!) (code job-code set-job-code!)
   (duration job-duration set-job-duration!) (tail job-tail set-job-tail!)
   (tag job-tag) (turn job-turn))
 (define (job-running? job) (eq? (job-status job) 'running))
+;; Procedure forms of the record accessors: the built-in registry hands out
+;; module bindings, and srfi-9 accessors are macros there.
+(define (job-identity job) (job-id job))
+(define (job-tags job) (job-tag job))
+(define (job-state job) (job-status job))
 (define (job-list) (with-mutex jobs-lock (reverse jobs)))
 (define (job-find id) (with-mutex jobs-lock (find (lambda (job) (string=? (job-id job) id)) jobs)))
 (define (take-job-notices)
@@ -578,7 +583,8 @@
                  (cons "log" (job-log job)) (cons "turn" (job-turn job))
                  (cons "tail" (job-tail job))
                  (cons "pane" (or (assq-ref tag 'pane) json-null))
-                 (cons "index" (or (assq-ref tag 'index) json-null)))))
+                 (cons "index" (or (assq-ref tag 'index) json-null))
+                 (cons "agent" (or (assq-ref tag 'agent) json-null)))))
 (define (notify! job)
   (with-mutex jobs-lock
     (set! job-notices (append job-notices (list (job-summary job))))))
@@ -621,63 +627,75 @@
     (cons (string-append directory "/" name) (string-append "runs/" name))))
 (define* (start-job! arguments root ledger turn context #:optional (tag '()))
   (let-values (((argv workdir absolute timeout) (parse-run-arguments arguments root)))
-    (when (>= (length (filter job-running? (job-list))) max-jobs)
-      (error (format #f "~a jobs are already running: ~a" max-jobs
-                     (string-join (map job-summary (filter job-running? (job-list))) "; "))))
     (let* ((backend (if (eq? (run-placement argv context) 'sandbox) 'agentkernel 'local))
            (mapped (executed-argv argv workdir backend (assq-ref context 'sandbox)))
-           (final (if (eq? backend 'local) (in-directory mapped absolute) mapped))
-           (environment (environment-with (assq-ref context 'traceparent)))
-           (ends (pipe)) (in (car ends))
-           (id (with-mutex jobs-lock (set! job-counter (+ job-counter 1)) (format #f "job-~a" job-counter)))
-           (paths (job-log-path ledger))
-           (started (get-internal-real-time))
-           (pid (spawn (car final) final #:output (cdr ends) #:error (cdr ends) #:environment environment))
-           (job (make-job id argv workdir pid started
-                          (+ started (* timeout internal-time-units-per-second))
-                          (cdr paths) 'running #f #f "" tag turn)))
-      (close-port (cdr ends))
-      (with-mutex jobs-lock (set! jobs (cons job jobs)))
-      (call-with-new-thread
-       (lambda ()
-         ;; Every chunk goes to the log file at once, so `tail -f` works, and
-         ;; to a bounded in-memory tail for the tool and the Log tab.
-         (let ((log (open-file (car paths) "wb")) (recent (make-bytevector 0)) (last-emit 0))
-           (define (take-chunk! chunk)
-             (put-bytevector log chunk) (force-output log)
-             (set! recent (last-bytes (append-bytes recent chunk) job-tail-bytes))
-             (set-job-tail! job (tail-text recent))
-             (let ((now (get-internal-real-time)))
-               (when (> (- now last-emit) (/ internal-time-units-per-second 2))
-                 (set! last-emit now)
-                 (catch #t (lambda () (observer (job-event job "running"))) (lambda _ #f)))))
-           (define (drain-all!)
-             (let loop ()
-               (let ((ready (select (list in) '() '() 0)))
-                 (when (pair? (car ready))
-                   (let ((chunk (get-bytevector-some in)))
-                     (unless (eof-object? chunk) (take-chunk! chunk) (loop)))))))
-           (define (close-all!) (close-port in) (close-port log))
+           (final (if (eq? backend 'local) (in-directory mapped absolute) mapped)))
+      (launch-job! argv workdir final (environment-with (assq-ref context 'traceparent))
+                   timeout ledger turn tag #f))))
+;; A subagent is a job whose stdout is the answer: the child's narration goes
+;; to its own file so the log holds only what the parent should read.
+(define (start-child-job! argv workdir environment timeout ledger turn tag error-path)
+  (launch-job! argv workdir argv environment timeout ledger turn tag error-path))
+(define (launch-job! argv workdir final environment timeout ledger turn tag error-path)
+  (when (>= (length (filter job-running? (job-list))) max-jobs)
+    (error (format #f "~a jobs are already running: ~a" max-jobs
+                   (string-join (map job-summary (filter job-running? (job-list))) "; "))))
+  (let* ((ends (pipe)) (in (car ends))
+         (error-port (if error-path (open-file error-path "w") (cdr ends)))
+         (id (with-mutex jobs-lock (set! job-counter (+ job-counter 1)) (format #f "job-~a" job-counter)))
+         (paths (job-log-path ledger))
+         (started (get-internal-real-time))
+         (stdin (open-input-file "/dev/null"))
+         (pid (spawn (car final) final #:input stdin #:output (cdr ends) #:error error-port #:environment environment))
+         (job (make-job id argv workdir pid started
+                        (+ started (* timeout internal-time-units-per-second))
+                        (cdr paths) (car paths) 'running #f #f "" tag turn)))
+    (close-port (cdr ends)) (close-port stdin)
+    (when error-path (close-port error-port))
+    (with-mutex jobs-lock (set! jobs (cons job jobs)))
+    (call-with-new-thread
+     (lambda ()
+       ;; Every chunk goes to the log file at once, so `tail -f` works, and
+       ;; to a bounded in-memory tail for the tool and the Log tab.
+       (let ((log (open-file (car paths) "wb")) (recent (make-bytevector 0)) (last-emit 0))
+         (define (take-chunk! chunk)
+           (put-bytevector log chunk) (force-output log)
+           (set! recent (last-bytes (append-bytes recent chunk) job-tail-bytes))
+           (set-job-tail! job (tail-text recent))
+           (let ((now (get-internal-real-time)))
+             (when (> (- now last-emit) (/ internal-time-units-per-second 2))
+               (set! last-emit now)
+               (catch #t (lambda () (observer (job-event job "running"))) (lambda _ #f)))))
+         (define (drain-all!)
            (let loop ()
-             (let ((ready (catch #t (lambda () (select (list in) '() '() 0.25)) (lambda _ (list '())))))
+             (let ((ready (select (list in) '() '() 0)))
                (when (pair? (car ready))
                  (let ((chunk (get-bytevector-some in)))
-                   (unless (eof-object? chunk) (take-chunk! chunk))))
-               (let ((status (waitpid pid WNOHANG)))
-                 (cond
-                  ((not (= 0 (car status)))
-                   (drain-all!) (close-all!)
-                   (let* ((reaped (cdr status)) (code (status:exit-val reaped)) (signal (status:term-sig reaped)))
-                     (finish-job! job ledger
-                                  (cond ((eq? (job-status job) 'cancelled) 'cancelled) (signal 'signal) (else 'exit))
-                                  (or code signal -1) (car paths))))
-                  ((and (job-running? job) (> (get-internal-real-time) (job-deadline job)))
-                   (terminate! pid) (drain-all!) (close-all!)
-                   (finish-job! job ledger 'timeout timeout (car paths)))
-                  (else (loop)))))))))
-      (make-tool-result #t
-        (format #f "run ~a · started as ~a · timeout ~as · log ~a~%Use the job tool with the id to wait, read its output, or cancel it; a notice arrives when it finishes.~%"
-                (string-join argv " ") id timeout (cdr paths))))))
+                   (unless (eof-object? chunk) (take-chunk! chunk) (loop)))))))
+         (define (close-all!) (close-port in) (close-port log))
+         (let loop ()
+           (let ((ready (catch #t (lambda () (select (list in) '() '() 0.25)) (lambda _ (list '())))))
+             (when (pair? (car ready))
+               (let ((chunk (get-bytevector-some in)))
+                 (unless (eof-object? chunk) (take-chunk! chunk))))
+             (let ((status (waitpid pid WNOHANG)))
+               (cond
+                ((not (= 0 (car status)))
+                 (drain-all!) (close-all!)
+                 (let* ((reaped (cdr status)) (code (status:exit-val reaped)) (signal (status:term-sig reaped)))
+                   (finish-job! job ledger
+                                (cond ((eq? (job-status job) 'cancelled) 'cancelled) (signal 'signal) (else 'exit))
+                                (or code signal -1) (car paths))))
+                ((and (job-running? job) (> (get-internal-real-time) (job-deadline job)))
+                 (terminate! pid) (drain-all!) (close-all!)
+                 (finish-job! job ledger 'timeout timeout (car paths)))
+                (else (loop)))))))))
+    (make-tool-result #t
+      (if (assq-ref tag 'agent)
+          (format #f "spawned ~a as ~a · timeout ~as · log ~a~%Use the job tool with the id to wait for its answer, peek at its output, or cancel it; a notice arrives when it finishes.~%"
+                  (assq-ref tag 'agent) id timeout (cdr paths))
+          (format #f "run ~a · started as ~a · timeout ~as · log ~a~%Use the job tool with the id to wait, read its output, or cancel it; a notice arrives when it finishes.~%"
+                  (string-join argv " ") id timeout (cdr paths))))))
 (define (cancel-job! id)
   (let ((job (job-find id)))
     (unless job (error "no job with that id" id))
@@ -693,7 +711,13 @@
                 (catch #t (lambda () (kill (job-pid job) SIGKILL)) (lambda _ #f))))
             (job-list)))
 (define (job-output-text job)
-  (string-append (job-summary job) "\n" (job-tail job)))
+  (string-append (job-summary job) "\n"
+                 (if (and (assq-ref (job-tag job) 'agent) (not (job-running? job)))
+                     ;; The child's answer is its whole stdout, not a tail.
+                     (bounded (catch #t
+                                (lambda () (call-with-input-file (job-log-path* job) get-string-all))
+                                (lambda _ (job-tail job))))
+                     (job-tail job))))
 (define (execute-job arguments)
   (let ((action (json-object-ref arguments "action" "list"))
         (id (json-object-ref arguments "id" #f))

@@ -628,6 +628,65 @@
              (cons "type" "boolean")
              (cons "description" "Only return ERROR or CANCELLED spans"))))
      '()))
+   ((string=? name "recall")
+    (function-tool
+     "recall"
+     (string-append
+      "Search the traces of every session in this project, including subagent "
+      "sessions, for what happened before: past tool outcomes, errors, runs and "
+      "answers. Literal, case-insensitive, newest first, bounded. Each hit names "
+      "its session; use traces with span_id inside that session for full detail.")
+     (json-object
+      (cons "query"
+            (json-object
+             (cons "type" "string")
+             (cons "maxLength" 256)
+             (cons "description" "Case-insensitive literal search across stored span JSON")))
+      (cons "session" (string-parameter "Only this session, or sessions under it (default/agents/tests)"))
+      (cons "name" (string-parameter "Exact span name filter, such as tool.run"))
+      (cons "kind" (string-parameter "Exact OpenInference kind filter"))
+      (cons "status" (string-parameter "Exact status filter"))
+      (cons "limit"
+            (json-object
+             (cons "type" "integer")
+             (cons "minimum" 1)
+             (cons "maximum" 30)
+             (cons "description" "Newest hits to return; defaults to 8")))
+      (cons "errors_only"
+            (json-object
+             (cons "type" "boolean")
+             (cons "description" "Only return ERROR or CANCELLED spans"))))
+     '("query")))
+   ((string=? name "spawn")
+    (function-tool
+     "spawn"
+     (string-append
+      "Start a subagent on a task in the background and return at once. The child "
+      "is a full session in an agents/ folder under this one, with this session's "
+      "generation, patches, mode, project, skills and servers. Its stdout is its "
+      "answer: use the job tool (wait, output, cancel) with the returned id. Spawn "
+      "several in one turn to work in parallel. Children run unattended, so in "
+      "manual mode they can only read, search and run allowlisted commands.")
+     (json-object
+      (cons "task" (string-parameter "The complete task, with everything the child needs to know"))
+      (cons "name" (string-parameter "Short folder name, [A-Za-z0-9][A-Za-z0-9._-]*; defaults to agent-N"))
+      (cons "tools"
+            (json-object
+             (cons "type" "array")
+             (cons "items" (json-object (cons "type" "string")))
+             (cons "description" "Narrower tool list for the child; defaults to this session's tools and can never widen them")))
+      (cons "history"
+            (json-object
+             (cons "type" "boolean")
+             (cons "description" "Copy this conversation into the child; default false starts it fresh with only the task")))
+      (cons "model" (string-parameter "PROVIDER/MODEL override for the child"))
+      (cons "timeout_seconds"
+            (json-object
+             (cons "type" "integer")
+             (cons "minimum" 30)
+             (cons "maximum" 3600)
+             (cons "description" "Kill the child after this long; defaults to 600"))))
+     '("task")))
    ((string=? name "extension")
     (function-tool
      "extension"

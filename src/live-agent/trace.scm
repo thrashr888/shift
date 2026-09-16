@@ -4,7 +4,7 @@
   #:use-module (srfi srfi-9)
   #:export (make-tracer tracer? tracer-path tracer-session-id tracer-session-name
             usage-attributes trace-start! trace-end! trace-span-id trace-trace-id
-            trace-search trace-close!))
+            trace-search trace-recall trace-close!))
 
 (define-record-type <trace-context>
   (context path id name backend)
@@ -37,6 +37,10 @@
 (define (trace-search tracer . args)
   (if (tracer-backend tracer)
       (apply (builtin-ref 'tracing 'trace-search) (tracer-backend tracer) args)
+      (values '() 0 0 0)))
+(define (trace-recall sources . args)
+  (if (builtin-enabled? 'tracing)
+      (apply (builtin-ref 'tracing 'trace-recall) sources args)
       (values '() 0 0 0)))
 (define (trace-close! tracer)
   (when (tracer-backend tracer)

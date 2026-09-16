@@ -286,10 +286,38 @@ never blocks on `make test` and the output lands under the row when the job
 ends.
 
 In one model round, read-only tool calls (`read`, `rg`, `status`, `diff`,
-`traces`, and `job list`/`output`) that the policy already allows without asking
+`traces`, `recall`, and `job list`/`output`) that the policy already allows without asking
 execute concurrently, four at a time, before their results are recorded and
 returned in the model's order; their spans carry `tool.parallel`. Mutations,
 runs and anything that could prompt stay sequential.
+
+## Subagents
+
+`spawn` starts a child on a task and returns at once. The child is a complete
+session in a folder under the parent, `sessions/NAME/agents/CHILD/`, nested
+again for grandchildren, and it appears in the session list under its parent.
+It inherits the parent's generation, patches, mode, model, settings, project,
+skills, plugins and MCP servers; its conversation starts empty unless
+`history: true` copies the parent's. `tools` narrows the child's ceiling and
+can never widen it; the ceiling is stored in the child's `authority.json` and
+honoured when the child is resumed by hand (`--resume default/agents/tests`).
+Children run as background jobs, so the four-job ceiling, `/jobs`, the Log tab
+and job notices all apply, and `job wait` returns the child's complete answer
+plus its receipt path. Nesting stops at depth three. Children run unattended:
+a manual-mode child can only read, search and run allowlisted commands, while
+an autopilot child uses the judge. The parent's trace carries a `subagent.run`
+span per child and a `subagent.join` span per wait; the child's own spans nest
+under the parent's via `TRACEPARENT`.
+
+## Trace recall
+
+`recall` and `/recall QUERY` search the traces of every session in the
+project, subagent folders included: a literal, case-insensitive match over
+stored span JSON, newest first, bounded by `limit`. Each hit names its session,
+so `traces` with `span_id` inside that session, or resuming it, gets the full
+detail. `session` restricts the search to one session or its subtree; `name`,
+`kind`, `status` and `errors_only` filter like `traces`. It is read-only,
+prefetch-safe and allowed in plan mode.
 
 ## Plugins
 

@@ -63,7 +63,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "live_eval" "extension")
+  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "recall" "spawn" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -82,6 +82,20 @@
 
 (define (within-process-tool-ceiling? name)
   (or (not process-tool-ceiling) (member name process-tool-ceiling)))
+;; A spawned child stores its ceiling beside its checkpoint, so resuming the
+;; child by hand keeps the narrower authority its parent gave it.
+(define (honor-session-authority! directory)
+  (let ((path (string-append directory "/authority.json")))
+    (when (and (not process-tool-ceiling) (file-exists? path))
+      (let* ((root (catch #t (lambda () (call-with-input-file path (lambda (port) (json-read (get-string-all port))))) (lambda _ #f)))
+             (names (and (json-object? root) (json-object-ref root "tool_ceiling" #f))))
+        (when (json-array? names)
+          (set! process-tool-ceiling
+                (filter (lambda (name) (member name supported-tool-names)) (json-array-items names))))))))
+(define subagent-depth
+  (let ((raw (getenv "SHIFT_SUBAGENT_DEPTH")))
+    (or (and raw (string->number raw)) 0)))
+(define max-subagent-depth 3)
 
 (define (cancelled? key)
   (eq? key 'turn-cancelled))
@@ -291,7 +305,8 @@
     "  /extension-export NAME       save all active patches as an artifact\n"
     "  /skills           list skills (SKILL.md folders) and which are loaded\n"
     "  /skill NAME       send a skill's instructions with the next prompt\n"
-    "  /jobs             list background jobs; /jobs cancel ID stops one\n"
+    "  /jobs             list background jobs and subagents; /jobs cancel ID stops one\n"
+    "  /recall QUERY     search every session's traces in this project, subagents included\n"
     "  /plugins          installed plugins; /plugin enable|disable NAME [project|user] toggles one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
@@ -844,6 +859,159 @@
       (make-tool-result
        #f (format #f "trace inspection failed (~a): ~s" key arguments)))))
 
+(define spawn-session #f)
+(define spawn-state-directory #f)
+(define spawn-agent-path #f)
+(define child-run-spans '()) ; job id -> open subagent.run span
+
+;; Every session's trace file in the project, subagent folders included.
+(define (recall-sources tracer only)
+  (let* ((names (if spawn-state-directory (list-session-names spawn-state-directory) '()))
+         (chosen (if only
+                     (filter (lambda (name) (or (string=? name only) (string-prefix? (string-append only "/") name))) names)
+                     names)))
+    (if (and (null? names) (not only))
+        (list (cons "(no session)" (tracer-path tracer)))
+        (map (lambda (name) (cons name (string-append spawn-state-directory "/sessions/" name "/traces.jsonl"))) chosen))))
+(define (recall-line hit)
+  (define (field key) (let ((value (json-object-ref hit key "-"))) (if (eq? value json-null) "-" value)))
+  (format #f "~a  gen=~a turn=~a  ~a ~a ~a  span=~a~a"
+          (json-object-ref hit "session" "") (field "generation") (field "turn")
+          (json-object-ref hit "kind" "") (json-object-ref hit "name" "") (json-object-ref hit "status" "")
+          (json-object-ref hit "span_id" "")
+          ;; One hit per line: the preview is flattened and clipped.
+          (let ((preview (json-object-ref hit "preview" "")))
+            (if (and (string? preview) (not (string-null? preview)))
+                (string-append "  " (clip (string-map (lambda (c) (if (char=? c #\newline) #\space c)) preview) 120))
+                ""))))
+(define (execute-recall tracer arguments)
+  (catch #t
+    (lambda ()
+      (let ((query (json-object-ref arguments "query" #f))
+            (only (json-object-ref arguments "session" #f))
+            (limit (json-object-ref arguments "limit" 8))
+            (errors-only? (json-object-ref arguments "errors_only" #f)))
+        (unless (and (string? query) (not (string-null? (string-trim-both query))) (<= (string-length query) 256))
+          (error "recall needs a query of at most 256 characters"))
+        (unless (and (integer? limit) (<= 1 limit 30)) (error "limit must be an integer from 1 through 30"))
+        (unless (or (not only) (safe-session-path? only)) (error "session must be a session name" only))
+        (call-with-values
+            (lambda ()
+              (trace-recall (recall-sources tracer only) #:query query #:limit limit
+                            #:name (json-object-ref arguments "name" #f) #:kind (json-object-ref arguments "kind" #f)
+                            #:status (json-object-ref arguments "status" #f) #:errors-only? (and errors-only? #t)))
+          (lambda (hits matched scanned malformed)
+            (make-tool-result #t
+              (string-append
+               (format #f "query ~s · ~a matches across ~a spans in ~a sessions~a~%" query matched scanned
+                       (length (recall-sources tracer only))
+                       (if (> malformed 0) (format #f " · ~a malformed lines ignored" malformed) ""))
+               (if (null? hits) "No matching spans." (string-join (map recall-line hits) "\n"))))))))
+    (lambda (key . arguments)
+      (make-tool-result #f (error-text key arguments)))))
+(define (show-recall tracer query)
+  (let ((result (execute-recall tracer (json-object (cons "query" query) (cons "limit" 12)))))
+    (display (tool-result-output result)) (newline)))
+
+(define (child-environment traceparent ceiling)
+  (append
+   (list (string-append "SHIFT_TOOL_CEILING=" (string-join ceiling ","))
+         (string-append "SHIFT_SUBAGENT_DEPTH=" (number->string (+ subagent-depth 1))))
+   (if traceparent (list (string-append "TRACEPARENT=" traceparent)) '())
+   (filter (lambda (entry)
+             (not (any (lambda (prefix) (string-prefix? prefix entry))
+                       '("SHIFT_UI_EVENT_FD=" "SHIFT_UI_COMMAND_FD=" "SHIFT_CONTROL_FD=" "TRACEPARENT="
+                         "SHIFT_TOOL_CEILING=" "SHIFT_SUBAGENT_DEPTH="))))
+           (environ))))
+(define (next-agent-name directory)
+  (let ((agents (string-append directory "/agents")))
+    (let loop ((n (+ 1 (if (file-exists? agents) (length (scandir agents (lambda (name) (not (member name '("." "..")))))) 0))))
+      (if (file-exists? (string-append agents "/agent-" (number->string n))) (loop (+ n 1)) (format #f "agent-~a" n)))))
+;; The child is a session folder under this one, forked from the live image
+;; and run as a background job whose stdout is its answer.
+(define (execute-spawn runtime generation tracer arguments span)
+  (catch #t
+    (lambda ()
+      (unless spawn-session (error "spawn needs a durable session; start shift-agent with --session"))
+      (unless (builtin-enabled? 'coding) (error "spawn needs the coding built-in for jobs"))
+      (when (>= subagent-depth max-subagent-depth)
+        (error (format #f "subagents may nest ~a deep; this one is at depth ~a" max-subagent-depth subagent-depth)))
+      (let* ((task (json-object-ref arguments "task" #f))
+             (name (or (json-object-ref arguments "name" #f) (next-agent-name (session-directory spawn-session))))
+             (requested (json-object-ref arguments "tools" #f))
+             (history? (json-object-ref arguments "history" #f))
+             (model (json-object-ref arguments "model" #f))
+             (timeout (json-object-ref arguments "timeout_seconds" 600))
+             (parent-tools (filter within-process-tool-ceiling? (map tool-name (generation-ref generation 'agent-tools))))
+             (ceiling (if (json-array? requested)
+                          (let ((names (json-array-items requested)))
+                            (unless (and (pair? names) (every string? names)) (error "tools must be a non-empty list of tool names"))
+                            (for-each (lambda (n) (unless (member n parent-tools) (error "a child cannot get a tool its parent lacks" n))) names)
+                            (delete-duplicates names string=?))
+                          parent-tools))
+             (child-name (string-append (session-name spawn-session) "/agents/" name)))
+        (unless (and (string? task) (not (string-null? (string-trim-both task)))) (error "task is required"))
+        (unless (safe-session-name? name) (error "name must match [A-Za-z0-9][A-Za-z0-9._-]*" name))
+        (unless (and (integer? timeout) (<= 30 timeout 3600)) (error "timeout_seconds must be 30 through 3600"))
+        (unless (or (not model) (and (string? model) (string-index model #\/))) (error "model must be PROVIDER/MODEL" model))
+        (fork-session! spawn-state-directory (session-name spawn-session) child-name (and history? #t))
+        (let* ((child-directory (string-append spawn-state-directory "/sessions/" child-name))
+               (launcher (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/bin/shift-agent"))
+               (argv (append (list launcher "--agent" spawn-agent-path "--state-dir" spawn-state-directory
+                                   "--resume" child-name "--print" task
+                                   "--mode" (symbol->string (setting-ref generation 'mode))
+                                   "--receipt" (string-append child-directory "/receipt.json"))
+                             (if model (list "--model" model) '())))
+               (traceparent (assq-ref (coding-context generation span) 'traceparent))
+               (run-span (trace-start! tracer "subagent.run" "AGENT"
+                                       `((generation.id . ,(generation-id generation))
+                                         (subagent.session . ,child-name)
+                                         (subagent.tools . ,(string-join ceiling ","))
+                                         (subagent.history . ,(and history? #t))
+                                         (input.value . ,task))
+                                       span)))
+          (call-with-output-file (string-append child-directory "/authority.json")
+            (lambda (port) (display (json-write (json-object (cons "tool_ceiling" (apply json-array ceiling)))) port) (newline port)))
+          (let ((result ((builtin-ref 'coding 'start-child-job!)
+                         argv (getcwd) (child-environment traceparent ceiling) timeout ledger (current-turn)
+                         `((agent . ,child-name)) (string-append child-directory "/progress.log"))))
+            (let ((job (let ((all ((builtin-ref 'coding 'job-list)))) (and (pair? all) (car (last-pair all))))))
+              (when (and job run-span)
+                (set! child-run-spans (cons (cons ((builtin-ref 'coding 'job-identity) job) run-span) child-run-spans))))
+            (when (ui-connected?) (emit-sessions!))
+            (make-tool-result #t
+              (string-append (tool-result-output result)
+                             (format #f "session ~a · tools ~a · narration ~a/progress.log~%"
+                                     child-name (string-join ceiling ",") child-directory)))))))
+    (lambda (key . arguments)
+      (if (cancelled? key) (apply throw key arguments)
+          (make-tool-result #f (error-text key arguments))))))
+;; A finished child closes its run span; waiting on it records the join.
+(define (finish-child-span! id status ok?)
+  (let ((entry (assoc id child-run-spans)))
+    (when entry
+      (set! child-run-spans (filter (lambda (e) (not (eq? e entry))) child-run-spans))
+      (trace-end! (cdr entry) (if ok? "OK" "ERROR") `((subagent.status . ,status))))))
+(define (execute-job-call tracer generation span arguments)
+  (let* ((result ((builtin-ref 'coding 'coding-execute) "job" arguments (getcwd) ledger (current-turn)
+                  (coding-context generation span)))
+         (id (json-object-ref arguments "id" #f))
+         (job (and (string? id) (find (lambda (j) (string=? ((builtin-ref 'coding 'job-identity) j) id)) ((builtin-ref 'coding 'job-list)))))
+         (agent (and job (assq-ref ((builtin-ref 'coding 'job-tags) job) 'agent))))
+    (when (and agent (equal? (json-object-ref arguments "action" "list") "wait") (not (eq? ((builtin-ref 'coding 'job-state) job) 'running)))
+      (let ((join (trace-start! tracer "subagent.join" "AGENT"
+                                `((generation.id . ,(generation-id generation)) (subagent.session . ,agent)
+                                  (subagent.job . ,id) (link.job . ,id))
+                                span)))
+        (trace-end! join (if (tool-result-success? result) "OK" "ERROR") '())))
+    result))
+(define (emit-sessions!)
+  (when spawn-session
+    (let ((summaries (session-summaries spawn-state-directory (session-name spawn-session))))
+      (ui-emit! "sessions" (json-object (cons "current" (session-name spawn-session))
+                                        (cons "sessions" (apply json-array summaries))))
+      (length summaries))))
+
 (define (runtime-state-directory tracer)
   (dirname (tracer-path tracer)))
 
@@ -1353,6 +1521,7 @@
     (display ((builtin-ref 'coding 'cancel-job!) (trimmed-command-argument line "/jobs cancel "))) (newline) 'continue)
    ((string-prefix? "/skill " line)
     (display (queue-skill! (trimmed-command-argument line "/skill "))) (newline) 'continue)
+   ((string-prefix? "/recall " line) (show-recall tracer (trimmed-command-argument line "/recall ")) 'continue)
    ((string=? line "/traces") (show-traces tracer) 'continue)
    ((string-prefix? "/traces " line)
     (show-traces tracer (trimmed-command-argument line "/traces "))
@@ -1568,6 +1737,7 @@
                  (outcome
                   (cond
                    ((string=? name "traces") (execute-traces tracer arguments))
+                   ((string=? name "recall") (execute-recall tracer arguments))
                    ((member name mutation-tool-names)
                     (execute-change! runtime generation tracer name arguments #f))
                    ((member name coding-tool-names)
@@ -2224,7 +2394,7 @@
 ;; before the sequential pass records, traces and appends their results in
 ;; the model's order. Only calls the policy already allows without asking are
 ;; prefetched; mutations, runs and anything that could prompt stay sequential.
-(define parallel-tool-names '("read" "rg" "status" "diff" "traces"))
+(define parallel-tool-names '("read" "rg" "status" "diff" "traces" "recall"))
 (define (prefetchable? generation name arguments enabled-tools)
   (and (member name enabled-tools)
        (or (member name parallel-tool-names)
@@ -2238,6 +2408,7 @@
     (lambda ()
       (cond
        ((string=? name "traces") (execute-traces tracer arguments))
+       ((string=? name "recall") (execute-recall tracer arguments))
        ((member name coding-tool-names)
         ((builtin-ref 'coding 'coding-execute) name arguments (getcwd) ledger (current-turn)
          (coding-context generation #f)))
@@ -2335,6 +2506,12 @@
                               (execute-mcp-call name (tool-call-arguments call)))
                              ((string=? name "traces")
                               (execute-traces tracer (tool-call-arguments call)))
+                             ((string=? name "recall")
+                              (execute-recall tracer (tool-call-arguments call)))
+                             ((string=? name "spawn")
+                              (execute-spawn runtime generation tracer (tool-call-arguments call) span))
+                             ((string=? name "job")
+                              (execute-job-call tracer generation span (tool-call-arguments call)))
                              ((member name coding-tool-names)
                               ((builtin-ref 'coding 'coding-execute)
                                name (tool-call-arguments call) (getcwd) ledger (current-turn)
@@ -2523,7 +2700,9 @@
          (enabled-tools
           (filter (lambda (name)
                     (and (within-process-tool-ceiling? name)
-                         (or (not (string=? name "traces")) (builtin-enabled? 'tracing))
+                         (or (not (member name '("traces" "recall"))) (builtin-enabled? 'tracing))
+                         (or (not (string=? name "spawn"))
+                             (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
                          (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
                   configured-tools))
          (max-rounds
@@ -2995,11 +3174,7 @@
                  (plugin-command! runtime (trimmed-command-argument command "/plugin ")))
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
-                 (let ((summaries (session-summaries (dirname (dirname (session-directory session))) (session-name session))))
-                   (ui-emit! "sessions" (json-object
-                     (cons "current" (if session (session-name session) json-null))
-                     (cons "sessions" (apply json-array summaries))))
-                   (format #f "~a durable sessions" (length summaries))))
+                 (format #f "~a durable sessions" (emit-sessions!)))
                 ((string=? command "/model list")
                   (let ((ids (model-list! (runtime-current runtime) #f)))
                     (emit-models! (runtime-current runtime) ids)
@@ -3218,6 +3393,10 @@
                    (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
         (external-tool-schema mcp-tool-schema)
         (set! runtime-state-directory-for-judge (and session runtime-state-directory))
+        (set! spawn-session session)
+        (set! spawn-state-directory state-directory)
+        (set! spawn-agent-path agent-path)
+        (when session (honor-session-authority! (session-directory session)))
         (set! session-remotes
           (catch #t (lambda () (let ((r ((builtin-ref 'coding 'run-argv) '("git" "remote" "-v"))))
                                  (if (eqv? (car r) 0) (string-trim-both (cdr r)) "")))
@@ -3227,6 +3406,8 @@
           ((builtin-ref 'coding 'job-observer!)
            (lambda (event)
              (ui-emit! "job" event)
+             (when (and (equal? (json-object-ref event "event") "finished") (string? (json-object-ref event "agent" #f)))
+               (finish-child-span! (json-object-ref event "id") (json-object-ref event "status" "") (json-object-ref event "ok" #f)))
              (let ((pane (json-object-ref event "pane" #f)))
                (when (and (string? pane) (equal? (json-object-ref event "event") "finished"))
                  ;; The pane row and the Log tab parse the same header a foreground run prints.

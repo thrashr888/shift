@@ -24,6 +24,9 @@
             session-fingerprint
             session-patches
             session-resumed?
+            session-fork
+            safe-session-name?
+            safe-session-path?
             close-session!
             save-session!))
 
@@ -73,6 +76,20 @@
           (or (char-set-contains? char-set:letter+digit character)
               (memv character '(#\. #\_ #\-))))
         value)))
+
+
+;; Subagents live in agents/ folders under their parent, so a session name is
+;; a path whose odd segments are all "agents": default/agents/tests/agents/x.
+(define (safe-session-path? value)
+  (and (string? value)
+       (let ((parts (string-split value #\/)))
+         (and (odd? (length parts))
+              (let loop ((parts parts) (index 0))
+                (or (null? parts)
+                    (and (if (even? index)
+                             (safe-session-name? (car parts))
+                             (string=? (car parts) "agents"))
+                         (loop (cdr parts) (+ index 1)))))))))
 
 (define (ensure-directory! path)
   (unless (file-exists? path)
@@ -174,7 +191,7 @@
        #t (json-object-ref root "fork" json-null) (make-mutex) lock-port))))
 
 (define (open-session! state-directory name mode)
-  (unless (safe-session-name? name)
+  (unless (safe-session-path? name)
     (error "session names must match [A-Za-z0-9][A-Za-z0-9._-]*" name))
   (unless (memq mode '(auto new resume))
     (error "unknown session open mode" mode))
@@ -201,16 +218,21 @@
 
 (define (list-session-names state-directory)
   (let ((root (session-root state-directory)))
-    (if (not (file-exists? root))
-        '()
-        (sort
-         (filter
-          (lambda (name)
-            (and (safe-session-name? name)
-                 (file-exists?
-                  (string-append root "/" name "/session.json"))))
-          (scandir root (lambda (name) (not (member name '("." ".."))))))
-         string<?))))
+    (define (children-of prefix directory)
+      (if (not (file-exists? directory))
+          '()
+          (append-map
+           (lambda (name)
+             (let ((path (string-append directory "/" name)))
+               (if (and (safe-session-name? name)
+                        (file-exists? (string-append path "/session.json")))
+                   (cons (string-append prefix name)
+                         (children-of (string-append prefix name "/agents/")
+                                      (string-append path "/agents")))
+                   '())))
+           (sort (scandir directory (lambda (name) (not (member name '("." "..")))))
+                 string<?))))
+    (children-of "" root)))
 
 ;; What the frontend's session list shows: durable sessions with their turn
 ;; count, last checkpoint, and whether another live process holds the lock.
@@ -241,9 +263,9 @@
                         (cons "status" (session-status directory (equal? name current-name))))))
        (list-session-names state-directory)))
 
-(define (fork-session! state-directory parent-name child-name)
-  (unless (and (safe-session-name? parent-name)
-               (safe-session-name? child-name))
+(define* (fork-session! state-directory parent-name child-name #:optional (history? #t))
+  (unless (and (safe-session-path? parent-name)
+               (safe-session-path? child-name))
     (error "session names must match [A-Za-z0-9][A-Za-z0-9._-]*"))
   (when (string=? parent-name child-name)
     (error "child session name must differ from parent" child-name))
@@ -313,13 +335,13 @@
                (cons "created_at" forked-at)
                (cons "updated_at" forked-at)
                (cons "source" (json-object-ref parent "source" ""))
-               (cons "next_turn" next-turn)
+               (cons "next_turn" (if history? next-turn 1))
                (cons "generation_id" generation-id)
                (cons "fingerprint" fingerprint)
                (cons "tools"
                      (json-object-ref parent "tools" (json-array)))
                (cons "patches" (apply json-array patches))
-               (cons "history" (apply json-array history))
+               (cons "history" (apply json-array (if history? history '())))
                (cons
                 "fork"
                 (json-object

@@ -38,6 +38,6 @@ and `auto` remain accepted as aliases. The TUI added themes, a model picker, a
 session switcher, a run log, pane packs, MCP peers, terminal color sync and
 clipboard copy.
 
-Still open from this plan: dynamic skills, project trace recall, file/URL packs,
-an MCP client, and model-based approval execution, which stays gated on shadow
-evaluation. No memory database was added.
+Dynamic skills, project trace recall (`recall`), the MCP client and the
+autopilot judge shipped afterwards. Still open from this plan: file/URL packs.
+No memory database was added.

@@ -53,7 +53,8 @@ COMMANDS = {
     '/fast':'Fast model setting', '/thinking':'Thinking setting', '/tools':'Available tools',
     '/receipt':'Last turn receipt',
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
-    '/jobs':'List background jobs (cancel ID stops one)', '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
+    '/jobs':'List background jobs and subagents (cancel ID stops one)', '/recall':'Search every session\'s traces in this project',
+    '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
     '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
     '/plugins':'Installed plugins and what they contribute', '/plugin':'enable|disable NAME [project|user], or reload',
     '/judge':'Autopilot judge: off, shadow, on, or report', '/mcp':'MCP servers: list, connect NAME, disconnect NAME, tools NAME', '/allow-mcp':'Let an MCP tool run without asking (SERVER__TOOL [project|user])',
@@ -721,7 +722,7 @@ class Terminal:
         # Guile owner of this one checkpoints and exits, a new one opens the
         # other. The curses process, preferences and identity stay put.
         m=self.model
-        if not name or not name.replace('-','').replace('_','').isalnum():raise ValueError('use /session NAME')
+        if not name or not all(part.replace('-','').replace('_','').replace('.','').isalnum() for part in name.split('/')):raise ValueError('use /session NAME')
         if m.approval or not m.ready or m.command_pending is not None:
             m.notice='Finish approval before switching sessions.' if m.approval else 'Turn running; switch sessions when ready.'
             return False
@@ -1443,11 +1444,14 @@ class Terminal:
             for item in m.sessions['items']:
                 status=str(item.get('status','idle'));name=str(item.get('name',''))
                 updated=str(item.get('updated') or '')[:16].replace('T',' ')
-                rows.append([(marks.get(status,marks['idle'])[1 if plain else 0],2 if status=='current' else 3 if status=='running' else 4,True),
-                             (name,2 if status=='current' else 1,status=='current'),
+                # Subagents are folders under their parent: default/agents/tests shows nested.
+                depth=name.count('/agents/');leaf=name.rsplit('/agents/',1)[-1]
+                indent='  '*depth+(('- ' if plain else '└ ') if depth else '')
+                rows.append([(indent+marks.get(status,marks['idle'])[1 if plain else 0],2 if status=='current' else 3 if status=='running' else 4,True),
+                             (leaf,2 if status=='current' else 1,status=='current'),
                              (' · open elsewhere' if status=='running' else '',3,False)])
                 if status=='idle':actions[len(rows)-1]=('session',name)
-                line('    '+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
+                line('    '+'  '*depth+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
             if m.sessions['items']:line('Click an idle session or /session NAME to switch',4)
         @section('peers')
         def _peers():

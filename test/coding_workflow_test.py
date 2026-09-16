@@ -131,7 +131,7 @@ class CodingWorkflow(unittest.TestCase):
             ('(define agent-model "demo")', '(define agent-model "fake")'),
             ("http://127.0.0.1:11434", f"http://127.0.0.1:{self.server.server_port}"),
             ("(define agent-tools '(read rg))",
-             "(define agent-tools '(read rg skill write edit apply_patch status diff run job tool_search))"),
+             "(define agent-tools '(read rg skill write edit apply_patch status diff run job spawn tool_search recall))"),
             ("(define agent-max-tool-rounds 1)", "(define agent-max-tool-rounds 6)"),
             ("(define agent-compaction-threshold 12)", "(define agent-compaction-threshold 80)"),
         ):
@@ -197,7 +197,7 @@ class CodingWorkflow(unittest.TestCase):
     edit_notes = tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"})
 
     def test_agent_ui_patch_is_immediate_durable_and_does_not_change_permissions(self):
-        self.agent.write_text(self.agent.read_text().replace('status diff run job tool_search))', 'status diff run job tool_search ui))'))
+        self.agent.write_text(self.agent.read_text().replace('tool_search recall))', 'tool_search recall ui))'))
         plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
                 tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
         code, out, err = self.print_mode("Make this mine", plan, "--mode", "autopilot")
@@ -766,7 +766,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
         self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
         out = self.shift("/mode autopilot\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
-        self.assertIn("tools read rg skill write edit apply_patch status diff run job tool_search · show-work off", out)
+        self.assertIn("tools read rg skill write edit apply_patch status diff run job spawn tool_search recall · show-work off", out)
         self.assertNotIn("tool>", out)
         self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
         out = self.shift("/work on\nlook\n/quit\n", plan, session="repl")
@@ -851,6 +851,59 @@ class CodingWorkflow(unittest.TestCase):
         self.assertTrue(any("Note from the harness: job job-1 finished" in m.get("content", "")
                             for m in Provider.last_messages if m.get("role") == "user")
                         or "exit 0" in results[2])
+
+    def test_spawn_runs_a_subagent_as_a_folder_under_the_session(self):
+        # Requests arrive in order: the parent's spawn, the parent's wait (which
+        # blocks), then the child's own turn, then the parent's answer.
+        self.shift(
+            "/mode autopilot\nfan out\n/quit\n",
+            plan=[tool_call("spawn", {"task": "say hello", "name": "greeter", "tools": ["read", "recall"]}),
+                  tool_call("job", {"action": "wait", "id": "job-1", "timeout_seconds": 50}),
+                  answer("hello from the child"),
+                  answer("done")],
+        )
+        results = self.tool_results()
+        self.assertIn("spawned w/agents/greeter as job-1", results[0])
+        self.assertIn("tools read,recall", results[0])
+        self.assertIn("exit 0", results[1])
+        self.assertIn("hello from the child", results[1])
+        child = self.state() / "agents/greeter"
+        checkpoint = json.loads((child / "session.json").read_text())
+        self.assertEqual(checkpoint["fork"]["parent_name"], "w")
+        self.assertEqual([m["role"] for m in checkpoint["history"]][:2], ["user", "assistant"])
+        self.assertEqual(json.loads((child / "authority.json").read_text())["tool_ceiling"], ["read", "recall"])
+        self.assertTrue((child / "receipt.json").exists())
+        self.assertTrue((child / "progress.log").exists())
+        spans = [json.loads(l)["name"] for l in (self.state() / "traces.jsonl").read_text().splitlines()]
+        self.assertIn("subagent.run", spans)
+        self.assertIn("subagent.join", spans)
+        # The child session is a normal session: it lists nested and resumes by path.
+        listed = subprocess.run([BIN, "--list-sessions"], text=True, capture_output=True, cwd=self.project, env=self.env)
+        self.assertEqual(listed.stdout.split(), ["w", "w/agents/greeter"])
+
+    def test_spawn_refuses_wider_tools_and_needs_a_task(self):
+        self.shift(
+            "/mode autopilot\nfan out\n/quit\n",
+            plan=[tool_call("spawn", {"task": "x", "tools": ["shell"]}), tool_call("spawn", {"name": "t"}), answer("done")],
+        )
+        results = self.tool_results()
+        self.assertIn("cannot get a tool its parent lacks", results[0])
+        self.assertIn("task is required", results[1])
+        self.assertFalse((self.state() / "agents").exists())
+
+    def test_recall_searches_every_session_in_the_project(self):
+        self.shift("/mode autopilot\nfirst\n/quit\n", session="one",
+                   plan=[tool_call("read", {"path": "notes.txt"}), answer("done")])
+        output = self.shift(
+            "/mode autopilot\nremember\n/recall notes.txt\n/quit\n", session="two",
+            plan=[tool_call("recall", {"query": "notes.txt", "session": "one", "limit": 3}), answer("done")],
+        )
+        hit = self.tool_results()[0]
+        self.assertIn("in 1 sessions", hit)
+        self.assertIn("one  gen=", hit)
+        self.assertIn("tool.read", hit)
+        self.assertIn("matches across", output)
+        self.assertIn("one  gen=", output)
 
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(

@@ -159,4 +159,25 @@
 (test-equal "session summaries show released sessions as idle" "idle"
   (json-object-ref (summary "dogfood") "status"))
 
+(define nested-checkpoint
+  (fork-session! test-root "dogfood" "dogfood/agents/tests" #f))
+(test-equal "a subagent fork starts with an empty conversation" 1
+  (json-object-ref nested-checkpoint "next_turn"))
+(test-equal "a subagent fork keeps the parent generation"
+  (json-object-ref forked-checkpoint "generation_id")
+  (json-object-ref nested-checkpoint "generation_id"))
+(fork-session! test-root "dogfood/agents/tests" "dogfood/agents/tests/agents/retry")
+(test-equal "session listing nests subagent folders after their parent"
+  '("dogfood" "dogfood/agents/tests" "dogfood/agents/tests/agents/retry" "dogfood-child")
+  (list-session-names test-root))
+(test-assert "session paths only descend through agents folders"
+  (and (safe-session-path? "dogfood/agents/tests")
+       (not (safe-session-path? "dogfood/tests"))
+       (not (safe-session-path? "dogfood/agents"))))
+(define nested (open-session! test-root "dogfood/agents/tests" 'resume))
+(test-equal "nested sessions open by path" "dogfood/agents/tests" (session-name nested))
+(test-equal "nested sessions record their parent" "dogfood"
+  (json-object-ref (session-fork nested) "parent_name"))
+(close-session! nested)
+
 (test-end "durable session")

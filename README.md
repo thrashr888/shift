@@ -368,13 +368,16 @@ OpenAI cache outcomes are explicit in completed LLM spans: search traces for
 The trace also records cached and uncached prompt-token counts.
 
 The model can call `read`, `rg`, `skill`, `write`, `edit`, `shell`, `traces`,
-`live_eval`, `extension`, and the coding built-in's `status`, `diff`,
-`apply_patch`, `run` and `job`. Runs on the allowlist never ask; `/allow-run`
+`recall`, `spawn`, `live_eval`, `extension`, and the coding built-in's `status`,
+`diff`, `apply_patch`, `run` and `job`. Runs on the allowlist never ask; `/allow-run`
 persists a prefix per session, project (`.shift/settings.json`) or user, and the
 scopes union. Skills are `SKILL.md` folders under
 `.shift/skills`, `.agents/skills` or the user config; the model loads one by
 name and never gains authority from it. `run` with `background: true` starts a
-job that reports back when it finishes. MCP servers declared in
+job that reports back when it finishes. `spawn` starts a subagent the same
+way: a full session in an `agents/` folder under the current one, nested again
+for grandchildren, joined with `job wait`. `recall` searches every session's
+traces in the project. MCP servers declared in
 `.shift/mcp.scm` supply more tools; `tool_search` finds them on demand so their
 schemas never sit in the prompt. Plugins under `plugins/` bundle servers,
 skills, panes and live-image patches for agentkernel, cider, cortex, alchemy,

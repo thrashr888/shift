@@ -208,7 +208,7 @@
              keep-alive))
     (unless (and (list? tools)
                  (every (lambda (tool)
-                          (memq tool '(read rg skill write edit shell traces live_eval extension
+                          (memq tool '(read rg skill write edit shell traces recall spawn live_eval extension
                                        status diff apply_patch run job tool_search ui)))
                         tools))
       (error "agent-tools contains an unsupported tool" tools)))

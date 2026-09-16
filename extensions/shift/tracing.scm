@@ -17,6 +17,7 @@
             trace-end!
             trace-span-id
             trace-search
+            trace-recall
             trace-close!
             session-id-of span-id-of trace-id-of usage-attributes))
 
@@ -221,26 +222,26 @@
                             "llm.token_count.prompt_cached" json-null))
      (cons "preview" (trace-preview attributes)))))
 
-;; Scan the complete append-only trace file while retaining only a bounded set
-;; of newest matches. Search hits are compact and carry stable span IDs; an
-;; exact span-id lookup returns the full stored span for follow-up inspection.
-(define* (trace-search tracer
-                       #:key
-                       (query #f)
-                       (span-id #f)
-                       (name #f)
-                       (kind #f)
-                       (status #f)
-                       (generation #f)
-                       (turn #f)
-                       (errors-only? #f)
-                       (limit 12))
-  (if (not (file-exists? (tracer-path tracer)))
+;; Scan one append-only trace file while retaining only a bounded set of
+;; newest matches. Search hits are compact and carry stable span IDs; an exact
+;; span-id lookup returns the full stored span for follow-up inspection.
+;; session-id #f accepts every span in the file (recall across sessions).
+(define* (search-trace-file path session-id
+                            #:key
+                            (query #f)
+                            (span-id #f)
+                            (name #f)
+                            (kind #f)
+                            (status #f)
+                            (generation #f)
+                            (turn #f)
+                            (errors-only? #f)
+                            (limit 12))
+  (if (not (file-exists? path))
       (values '() 0 0 0)
-      (let ((needle (and query (string-downcase query)))
-            (session-id (tracer-session-id tracer)))
+      (let ((needle (and query (string-downcase query))))
         (call-with-input-file
-            (tracer-path tracer)
+            path
           (lambda (port)
             (let loop ((matches '()) (matched 0) (scanned 0) (malformed 0))
               (let ((line (get-line port)))
@@ -254,9 +255,10 @@
                                   (json-object-ref span "attributes"
                                                    (json-object)))
                                  (in-session?
-                                  (string=?
-                                   (json-object-ref attributes "session.id" "")
-                                   session-id))
+                                  (or (not session-id)
+                                      (string=?
+                                       (json-object-ref attributes "session.id" "")
+                                       session-id)))
                                  (matches?
                                   (and
                                    in-session?
@@ -292,6 +294,35 @@
                                 (loop matches matched next-scanned malformed))))
                         (lambda _
                           (loop matches matched next-scanned (+ malformed 1)))))))))))))
+
+(define* (trace-search tracer . options)
+  (apply search-trace-file (tracer-path tracer) (tracer-session-id tracer) options))
+
+;; Recall across a project: sources is a list of (session-name . trace-path).
+;; Every file is scanned in full; hits carry their session and are merged
+;; newest first, bounded by limit. Returns (values hits matched scanned malformed).
+(define* (trace-recall sources #:key (query #f) (name #f) (kind #f) (status #f)
+                       (errors-only? #f) (limit 8))
+  (let loop ((sources sources) (hits '()) (matched 0) (scanned 0) (malformed 0))
+    (if (null? sources)
+        (values (take hits (min limit (length hits))) matched scanned malformed)
+        (call-with-values
+            (lambda ()
+              (search-trace-file (cdar sources) #f #:query query #:name name #:kind kind
+                                 #:status status #:errors-only? errors-only? #:limit limit))
+          (lambda (found found-matched found-scanned found-malformed)
+            (let ((tagged (map (lambda (hit)
+                                 (apply json-object
+                                        (cons (cons "session" (caar sources))
+                                              (json-object-entries hit))))
+                               found)))
+              (loop (cdr sources)
+                    (sort (append tagged hits)
+                          (lambda (a b)
+                            (> (json-object-ref a "start_time_unix_nano" 0)
+                               (json-object-ref b "start_time_unix_nano" 0))))
+                    (+ matched found-matched) (+ scanned found-scanned)
+                    (+ malformed found-malformed))))))))
 
 (define (trace-close! tracer)
   (let ((bridge (tracer-bridge tracer)))
