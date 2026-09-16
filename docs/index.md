@@ -17,6 +17,7 @@ One line per document, then the open work those documents still describe.
 | [ablation-2026-09-04.md](ablation-2026-09-04.md) | Evidence for those fixes and the built-in ablation. |
 | [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | RFC for skills, background jobs, concurrent read-only tools, and the composable sidebar; implemented. |
 | [mcp-client-rfc.md](mcp-client-rfc.md) | RFC for the MCP client and `tool_search`; implemented. |
+| [plugins-rfc.md](plugins-rfc.md) | Draft RFC: plugins as folders of data that bundle skills, MCP servers, panes, themes, allowlist proposals and live-image artifacts. |
 | [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
@@ -29,6 +30,7 @@ Collected from the documents above on September 13, 2026. Each item names the
 document that explains why it matters.
 
 Features:
+  - **Plugins.** Bundles for agentkernel, cider, cortex, alchemy, allbeads, tauri-browser and 1Password; designed in [plugins-rfc](plugins-rfc.md).
   - **Subagent fan-out.** Parallel children with isolated workspaces ([subagents](subagents.md)).
   - **Project trace recall.** Cross-session search over a project's traces ([daily-driver-plan](daily-driver-plan.md)).
 Packaging:
