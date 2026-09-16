@@ -1,0 +1,7 @@
+((plugin "alchemy" "0.1")
+ (description "Research notebooks in the running Alchemy app")
+ (requires (command "alchemy"))
+ (mcp (server "alchemy" (url "http://127.0.0.1:41414/mcp") (header "Authorization" "Bearer $ALCHEMY_MCP_TOKEN")))
+ (env ALCHEMY_MCP_TOKEN)
+ (skills "skills")
+ (allow-run ("alchemy" "notebooks") ("alchemy" "search")))

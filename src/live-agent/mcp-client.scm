@@ -12,7 +12,8 @@
   #:use-module (live-agent json)
   #:export (mcp-init! mcp-servers mcp-servers-json mcp-connect! mcp-disconnect! mcp-stop-all!
             mcp-tools mcp-tool-schema mcp-tool-hints mcp-tool-name? mcp-tool-server mcp-search mcp-call!
-            mcp-prompt-block check-mcp-file parse-mcp-pack mcp-server-tools))
+            mcp-prompt-block check-mcp-file parse-mcp-pack mcp-server-tools
+            mcp-register! mcp-unregister! secret-sources!))
 
 (define protocol-version "2025-11-25")
 (define max-servers 8)
@@ -137,14 +138,41 @@
              (cadr args)))
         (else (format #f "~a" key))))
 
+;; Plugins add server forms under a source label and remove them by it.
+(define (mcp-register! forms source)
+  (for-each (lambda (form)
+              (let ((record (server-form->record form source)))
+                (unless (find-server (server-name record))
+                  (set! servers (append servers (list record))))))
+            forms))
+(define (mcp-unregister! source)
+  (for-each (lambda (s) (when (string=? (server-source s) source) (catch #t (lambda () (stdio-stop! s)) (lambda _ #f))))
+            servers)
+  (set! servers (filter (lambda (s) (not (string=? (server-source s) source))) servers)))
+;; Secret sources: ((NAME . "op://vault/item/field") ...) resolved through the
+;; op CLI when a server first needs them, cached for the process, never written.
+(define secrets '())
+(define secret-cache '())
+(define (secret-sources! alist) (set! secrets alist))
+(define (resolve-secret ref)
+  (or (assoc-ref secret-cache ref)
+      (let* ((port (open-pipe* OPEN_READ "op" "read" "--no-newline" ref))
+             (value (get-string-all port))
+             (status (close-pipe port)))
+        (if (and (eqv? 0 (status:exit-val status)) (not (string-null? value)))
+            (begin (set! secret-cache (acons ref value secret-cache)) value)
+            #f))))
+(define (resolved-secrets)
+  (filter-map (lambda (s) (let ((v (catch #t (lambda () (resolve-secret (cdr s))) (lambda _ #f)))) (and v (cons (car s) v)))) secrets))
 (define (mcp-servers) servers)
 (define (find-server name) (find (lambda (s) (string=? (server-name s) name)) servers))
 
 ;; --- secrets: the session's .env only ---------------------------------------
 (define (dotenv-entries)
-  (if (and dotenv-path (file-exists? dotenv-path))
-      ((@ (live-agent settings) read-dotenv) dotenv-path)
-      '()))
+  (append (if (and dotenv-path (file-exists? dotenv-path))
+              ((@ (live-agent settings) read-dotenv) dotenv-path)
+              '())
+          (if (null? secrets) '() (resolved-secrets))))
 (define (expand-secrets text entries)
   ;; $NAME becomes the .env value; unknown names stay literal.
   (let loop ((rest text) (out ""))

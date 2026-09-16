@@ -55,6 +55,7 @@ COMMANDS = {
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
     '/jobs':'List background jobs (cancel ID stops one)', '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
     '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
+    '/plugins':'Installed plugins and what they contribute', '/plugin':'enable|disable NAME [project|user], or reload',
     '/judge':'Autopilot judge: off, shadow, on, or report', '/mcp':'MCP servers: list, connect NAME, disconnect NAME, tools NAME', '/allow-mcp':'Let an MCP tool run without asking (SERVER__TOOL [project|user])',
     '/undo':'Undo last turn edits', '/quit':'Exit session',
 }
@@ -326,6 +327,7 @@ class Model:
         self.peers={}
         self.skills=[]
         self.servers=[]
+        self.plugins=[]
         self.jobs={}
         self.pane_output={}
         self.replies=[]
@@ -445,6 +447,8 @@ class Model:
                 self.runs.append({'kind':'judge','turn':self.session.get('turn','?'),'id':None,'ok':False,'command':tool+' · '+clean(str(value.get('reason',''))),
                                   'status':'blocked · '+rule,'seconds':'','log':'','lines':[],'truncated':False,'at':time.strftime('%H:%M')})
                 self.panel_scroll['log']=10**9
+        elif kind == 'plugins':
+            self.plugins=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'servers':
             self.servers=[dict(item) for item in value] if isinstance(value,list) else []
         elif kind == 'skills':
@@ -860,6 +864,7 @@ class Terminal:
                 elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value.split()[0],'pane')
                 elif kind=='skill':self.request_command('/skill '+value,'Loading skill '+value,'skill')
                 elif kind=='mcp':self.request_command('/mcp connect '+value,'Connecting '+value,'server')
+                elif kind=='plugin':self.request_command('/plugin '+value,'Plugin '+value,'plugin')
                 elif kind=='copy':self.copy_reply_at(value)
                 elif kind=='model':
                     try:self.request_model(value)
@@ -1412,6 +1417,20 @@ class Terminal:
                 detail=clean(str(skill.get('error') or skill.get('description') or ''))
                 for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if not valid else 4)
             if any(s.get('valid',True) and not s.get('loaded') for s in m.skills):line('Click a skill or /skill NAME to send it with the next prompt',4)
+        @section('plugins')
+        def _plugins():
+            title('PLUGINS')
+            if not m.plugins:line('No plugins; shift-agent plugin add PATH|URL',4)
+            for plugin in m.plugins:
+                name=clean(str(plugin.get('name','')));valid=plugin.get('valid',True);missing=list(plugin.get('missing',[]));on=bool(plugin.get('enabled'))
+                usable=valid and not missing
+                mark=('● ' if on else '○ ') if self.unicode and not c.get('ascii') else ('* ' if on else '- ')
+                rows.append([(mark,2 if on else 11 if not usable else 4,True),(name,1,on),
+                             ('  '+clean(str(plugin.get('version','')))+'  '+', '.join(clean(str(x)) for x in plugin.get('contributes',[])),4,False)])
+                if usable:actions[len(rows)-1]=('plugin',('disable ' if on else 'enable ')+name)
+                detail=clean(str(plugin.get('error') or ('needs '+', '.join(missing)+' on PATH' if missing else plugin.get('description') or '')))
+                for part in wrap(detail,max(1,width-4),words=True)[:2]:line('    '+part,11 if not usable else 4)
+            if any(p.get('valid',True) and not p.get('missing') for p in m.plugins):line('Click a plugin to toggle it for this project',4)
         @section('sessions')
         def _sessions():
             title('SESSIONS')
@@ -1566,7 +1585,7 @@ class Terminal:
         elif m.panel_tab=='model':render(['models'])
         elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
         elif m.panel_tab=='session':
-            render(['session','skills','sessions','peers']+(['servers'] if m.servers else [])+['receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
+            render(['session','skills']+(['plugins'] if m.plugins else [])+['sessions','peers']+(['servers'] if m.servers else [])+['receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
         elif m.panel_tab=='diff':
             title('OUTPUT DIFF');line('')
             rows.extend((self.framed_diff(group,width,full=True) or [[('No committed changes',4,False)]])

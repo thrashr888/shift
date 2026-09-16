@@ -5,7 +5,8 @@
   #:use-module (ice-9 ftw)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
-  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler! panes-pack->json check-panes-file error-text))
+  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler! panes-pack->json check-panes-file error-text
+            extra-panes extra-theme-dirs))
 
 ;; Presentation preferences are independent of agent generations and authority.
 ;; Scheme packs are bounded data, never evaluated as process code.
@@ -89,7 +90,7 @@
                       "usage.prompt" "usage.limit" "usage.round" "usage.max_rounds"
                       "receipt.status" "receipt.duration_ms" "source.loaded" "source.process"))
 ;; Rows a pane may borrow from the built-in tabs.
-(define pane-sources '("session" "skills" "sessions" "peers" "servers" "receipt" "telemetry" "source" "jobs" "runs" "models"))
+(define pane-sources '("session" "skills" "plugins" "sessions" "peers" "servers" "receipt" "telemetry" "source" "jobs" "runs" "models"))
 (define (valid-pane-row? row)
   (and (json-object? row)
        (let ((entries (json-object-entries row)))
@@ -142,12 +143,18 @@
 (define (load-preferences dir)
   (let ((path (and dir (string-append dir "/ui.json"))))
     (if (and path (file-exists? path)) (validate! (json-read (bounded-read path))) (json-object))))
+;; Plugins contribute panes (JSON objects, appended after the project's) and
+;; theme folders searched after the project, user and install ones.
+(define extra-panes (make-parameter '()))
+(define extra-theme-dirs (make-parameter '()))
 (define (find-pack name)
   (or (find file-exists?
          (filter identity
-           (list (and project-dir (string-append project-dir "/themes/" name ".scm"))
-                 (and user-dir (string-append user-dir "/themes/" name ".scm"))
-                 (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/themes/" name ".scm"))))
+           (append
+            (list (and project-dir (string-append project-dir "/themes/" name ".scm"))
+                  (and user-dir (string-append user-dir "/themes/" name ".scm"))
+                  (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/themes/" name ".scm"))
+            (map (lambda (dir) (string-append dir "/" name ".scm")) (extra-theme-dirs)))))
       (error "UI theme not found" name)))
 ;; A project's own panes live in PROJECT/.shift/panes.scm, one data form
 ;; read but never evaluated: a list of (pane NAME TITLE ROW ...) forms whose
@@ -219,8 +226,11 @@
            (project (project-panes))
            (own (json-array-items (json-object-ref merged "panes" (json-array)))))
       (set! panes-text (and project (car project)))
-      (list (if (and project (null? own)) (merge-objects merged (json-object (cons "panes" (cdr project)))) merged)
-            path text))))
+      (let ((contributed (append (if project (json-array-items (cdr project)) '()) (extra-panes))))
+        (list (if (and (pair? contributed) (null? own))
+                  (merge-objects merged (json-object (cons "panes" (apply json-array (if (> (length contributed) 4) (take contributed 4) contributed)))))
+                  merged)
+              path text)))))
 (define (panes-file-changed?)
   (let ((path (and project-dir (string-append project-dir "/panes.scm"))))
     (if (and path (file-exists? path))

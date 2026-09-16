@@ -1,0 +1,7 @@
+((plugin "tauri-browser" "0.1")
+ (description "Drive and inspect a running Tauri app")
+ (requires (command "tauri-browser"))
+ (skills "skills")
+ (panes "panes.scm")
+ (allow-run ("tauri-browser" "connect") ("tauri-browser" "snapshot") ("tauri-browser" "screenshot")
+            ("tauri-browser" "console") ("tauri-browser" "errors") ("tauri-browser" "state")))

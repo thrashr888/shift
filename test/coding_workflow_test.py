@@ -140,7 +140,8 @@ class CodingWorkflow(unittest.TestCase):
         self.agent = self.project / ".agent.scm"
         self.agent.write_text(image)
         # Retries are opt-in per test so a planned provider error fails fast.
-        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / ".config"), "SHIFT_PROVIDER_RETRIES": "0"}
+        # Fixtures assume a pristine generation; the plugins test opts back in.
+        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / ".config"), "SHIFT_PROVIDER_RETRIES": "0", "SHIFT_PLUGINS": "off"}
         self.env.pop("SHIFT_BUILTINS", None)
         (self.project / "notes.txt").write_text("alpha port 8080\n")
 
@@ -981,6 +982,49 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(Provider.judge_requests, before)
         self.shift("/sandbox off\n/quit\n")
 
+    def test_plugins_contribute_and_scopes_override(self):
+        self.env["SHIFT_PLUGINS"] = "on"
+        fake = ROOT / "test/fake_mcp_server.py"
+        plugin = self.project / ".shift/plugins/demo"
+        (plugin / "skills/demo-skill").mkdir(parents=True)
+        (plugin / "agent").mkdir()
+        (plugin / "plugin.scm").write_text(
+            '((plugin "demo" "0.1")\n (description "fixture")\n (mcp (server "demo" (command "python3" "%s")))\n'
+            ' (skills "skills")\n (agent "agent/prompt.scm")\n (allow-run ("printf")))\n' % fake)
+        (plugin / "skills/demo-skill/SKILL.md").write_text("---\nname: demo-skill\ndescription: from the plugin\n---\nbody\n")
+        (plugin / "agent/prompt.scm").write_text('(define agent-system-prompt (string-append agent-system-prompt " PLUGIN-PROMPT"))\n')
+        output = self.shift(
+            "/plugins\n/skills\n/mcp\nsay it\n/quit\n",
+            plan=[tool_call("run", {"argv": ["printf", "from-plugin"]}), answer("done")],
+        )
+        self.assertIn("on       demo 0.1  project  1 mcp, skills, agent, 1 run prefixes", output)
+        self.assertIn("demo-skill  dir  from the plugin", output)
+        self.assertIn("demo  idle  stdio", output)
+        self.assertIn("PLUGIN-PROMPT", Provider.last_messages[0]["content"])   # the skills and mcp blocks follow it
+        self.assertIn("from-plugin", self.tool_results()[0])          # manual mode, allowlisted by the plugin
+        # Off for the project: contributions leave, the artifact is removed, the run asks again.
+        output = self.shift(
+            "/plugin disable demo\n/plugins\n/skills\nagain\n/quit\n",
+            plan=[tool_call("run", {"argv": ["printf", "from-plugin"]}), answer("done")],
+        )
+        self.assertIn("demo off (project scope)", output)
+        self.assertIn("off      demo", output)
+        self.assertNotIn("demo-skill", output)
+        self.assertNotIn("PLUGIN-PROMPT", Provider.last_messages[0]["content"])
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+        self.assertEqual(json.loads((self.project / ".shift/settings.json").read_text())["plugins"], {"demo": False})
+        # The user's answer overrides the project's.
+        (self.project / ".config/shift").mkdir(parents=True, exist_ok=True)
+        (self.project / ".config/shift/settings.json").write_text(json.dumps({"plugins": {"demo": True}}))
+        output = self.shift("/plugins\n/quit\n")
+        self.assertIn("on       demo", output)
+        # The CLI installs a plugin into the user folder and lists it.
+        result = subprocess.run([BIN, "plugin", "add", str(plugin)], text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / ".config/shift/plugins/demo/plugin.scm").exists())
+        result = subprocess.run([BIN, "plugin", "list"], text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60)
+        self.assertIn("demo 0.1  project", result.stdout)   # the project copy still shadows the user copy
+
     def test_parallel_reads_keep_their_order_and_trace_it(self):
         (self.project / "b.txt").write_text("bravo\n")
         Provider.plan = []
@@ -1116,7 +1160,7 @@ class RunListSource(unittest.TestCase):
             [str(ROOT / "bin/shift-agent"), "--agent", str(ROOT / "test/session-agent.scm"),
              "--no-watch", "--no-mcp", "--session", "check"],
             cwd=project, input=commands + "\n/quit\n", capture_output=True, text=True, timeout=20,
-            env={**os.environ, "XDG_CONFIG_HOME": str(project / "config"), "GUILE_AUTO_COMPILE": "0"},
+            env={**os.environ, "XDG_CONFIG_HOME": str(project / "config"), "GUILE_AUTO_COMPILE": "0", "SHIFT_PLUGINS": "off"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout

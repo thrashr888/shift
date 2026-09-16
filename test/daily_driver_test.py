@@ -25,7 +25,7 @@ class DailyDriver(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="shift-daily-")
         self.project = Path(self.temp.name)
-        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / "config")}
+        self.env = {**os.environ, "XDG_CONFIG_HOME": str(self.project / "config"), "SHIFT_PLUGINS": "off"}
         self.env.pop("SHIFT_BUILTINS", None)
 
     def tearDown(self):

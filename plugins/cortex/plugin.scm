@@ -1,0 +1,8 @@
+((plugin "cortex" "0.1")
+ (description "Repo-local memory the agent recalls and extends")
+ (requires (command "cortex"))
+ (mcp (server "cortex" (command "cortex" "mcp")))
+ (skills "skills")
+ (agent "agent/memory.scm")
+ (allow-run ("cortex" "recall") ("cortex" "stats") ("cortex" "context"))
+ (allow-mcp "cortex__cortex_recall" "cortex__cortex_stats" "cortex__cortex_context"))

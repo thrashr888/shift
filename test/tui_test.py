@@ -481,7 +481,7 @@ class Bridge(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='shift-tui-test-')
         self.path=Path(self.temp.name)
-        self.env=patch.dict(os.environ,{'XDG_CONFIG_HOME':str(self.path/'config')})
+        self.env=patch.dict(os.environ,{'XDG_CONFIG_HOME':str(self.path/'config'),'SHIFT_PLUGINS':'off'})
         self.env.start()
         self.args=['--agent',str(ROOT/'test/session-agent.scm'),'--state-dir',str(self.path/'state'),
                    '--session','test','--no-watch','--no-mcp']
@@ -1431,6 +1431,24 @@ class Judge(unittest.TestCase):
         m.panel_tab='log';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
         self.assertIn('[judge] blocked · escalation',text);self.assertIn('run · not asked to push',text)
         self.assertIn('/judge shadow',[c[0] for c in tui.suggestions('/judge sh',[])])
+
+
+class Plugins(unittest.TestCase):
+    def test_plugins_show_in_session_tab_and_toggle_by_click(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':1}})
+        m.control('ready')
+        m.event({'type':'plugins','value':[
+            {'name':'cortex','version':'0.1','description':'memory','source':'bundled','valid':True,'missing':[],'enabled':True,'contributes':['1 mcp','skills']},
+            {'name':'cider','version':'0.1','description':'mac apps','source':'bundled','valid':True,'missing':['cider'],'enabled':False,'contributes':['skills']},
+            {'name':'off','version':'0.1','description':'turned off','source':'user','valid':True,'missing':[],'enabled':False,'contributes':[]}]})
+        m.panel_tab='session';terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('PLUGINS',text);self.assertIn('● cortex  0.1  1 mcp, skills',text);self.assertIn('needs cider on PATH',text)
+        self.assertTrue(any(a==('plugin','disable cortex') for _,a in terminal.hits));self.assertTrue(any(a==('plugin','enable off') for _,a in terminal.hits))
+        self.assertFalse(any(a[0]=='plugin' and 'cider' in a[1] for _,a in terminal.hits))
+        r=next(r for r,a in terminal.hits if a==('plugin','disable cortex'));terminal.pointer(r.x,r.y,'press')
+        terminal.child.ui.assert_called_once_with({'action':'session-command','command':'/plugin disable cortex','request_id':1})
+        self.assertIn('/plugins',[c[0] for c in tui.suggestions('/plug',[])])
 
 
 class Servers(unittest.TestCase):

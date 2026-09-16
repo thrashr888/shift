@@ -376,7 +376,9 @@ scopes union. Skills are `SKILL.md` folders under
 name and never gains authority from it. `run` with `background: true` starts a
 job that reports back when it finishes. MCP servers declared in
 `.shift/mcp.scm` supply more tools; `tool_search` finds them on demand so their
-schemas never sit in the prompt. The `traces` tool searches the complete local
+schemas never sit in the prompt. Plugins under `plugins/` bundle servers,
+skills, panes and live-image patches for agentkernel, cider, cortex, alchemy,
+allbeads, tauri-browser and 1Password, and are on by default. The `traces` tool searches the complete local
 trace file while retaining only a bounded set of current-session hits. Hits are
 compact and carry stable span IDs; an exact `span_id` lookup returns the full
 stored span. This lets the agent follow generation decisions and tool evidence

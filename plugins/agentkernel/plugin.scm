@@ -1,0 +1,6 @@
+((plugin "agentkernel" "0.1")
+ (description "Isolated sandboxes for runs; pairs with /sandbox NAME")
+ (requires (command "agentkernel"))
+ (skills "skills")
+ (panes "panes.scm")
+ (allow-run ("agentkernel" "run") ("agentkernel" "--version")))

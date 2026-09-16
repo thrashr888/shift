@@ -1,0 +1,6 @@
+((plugin "cider" "0.1")
+ (description "Read Apple apps from the command line as JSON")
+ (requires (command "cider"))
+ (skills "skills")
+ (allow-run ("cider" "calendar" "list") ("cider" "reminders" "list") ("cider" "contacts" "search") ("cider" "notes" "list")
+            ("cider" "apps") ("cider" "doctor") ("cider" "auth-status")))
