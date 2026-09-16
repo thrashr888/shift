@@ -106,5 +106,6 @@ to the real repository; this is a showcase, not a separately built docs portal.
 
 `scripts/check_site.py` checks the exact public-file allowlist, rejects symlinks
 and nonlocal assets, and checks internal targets. Add new public assets to its
-allowlist deliberately. Never put `.env`, `.shift/`, logs, credentials, or
-unreviewed generated output under `site/`.
+allowlist deliberately; the three `site/assets/*.png` screenshots (subagent
+fan-out and recall) are listed there and capped at 900 KB each. Never put
+`.env`, `.shift/`, logs, credentials, or unreviewed generated output under `site/`.

@@ -785,7 +785,9 @@
 (define (job-line job)
   (let ((event ((builtin-ref 'coding 'job-event) job "running")))
     (format #f "~a  ~a  ~a  ~as  ~a" (json-object-ref event "id") (json-object-ref event "status")
-            (string-join (json-array-items (json-object-ref event "argv")) " ")
+            (let ((agent (json-object-ref event "agent" #f)))
+              (if (string? agent) (string-append "subagent " agent)
+                  (string-join (json-array-items (json-object-ref event "argv")) " ")))
             (/ (round (/ (json-object-ref event "elapsed_ms") 100.0)) 10.0) (json-object-ref event "log"))))
 (define (show-skills)
   (let ((items (skill-index)))
@@ -910,7 +912,7 @@
     (lambda (key . arguments)
       (make-tool-result #f (error-text key arguments)))))
 (define (show-recall tracer query)
-  (let ((result (execute-recall tracer (json-object (cons "query" query) (cons "limit" 12)))))
+  (let ((result (execute-recall tracer (json-object (cons "query" query) (cons "limit" 6)))))
     (display (tool-result-output result)) (newline)))
 
 (define (child-environment traceparent ceiling)
@@ -954,6 +956,14 @@
         (unless (safe-session-name? name) (error "name must match [A-Za-z0-9][A-Za-z0-9._-]*" name))
         (unless (and (integer? timeout) (<= 30 timeout 3600)) (error "timeout_seconds must be 30 through 3600"))
         (unless (or (not model) (and (string? model) (string-index model #\/))) (error "model must be PROVIDER/MODEL" model))
+        ;; A repeated spawn of the same name is the usual mistake after the
+        ;; first one returned: point at the job instead of forking again.
+        (let ((running (find (lambda (j) (equal? (assq-ref ((builtin-ref 'coding 'job-tags) j) 'agent) child-name))
+                             ((builtin-ref 'coding 'job-list)))))
+          (when running
+            (error (format #f "~a is already spawned as ~a (~a); use the job tool to wait for it, or pick another name"
+                           child-name ((builtin-ref 'coding 'job-identity) running)
+                           (if (eq? ((builtin-ref 'coding 'job-state) running) 'running) "running" "finished")))))
         (fork-session! spawn-state-directory (session-name spawn-session) child-name (and history? #t))
         (let* ((child-directory (string-append spawn-state-directory "/sessions/" child-name))
                (launcher (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/bin/shift-agent"))

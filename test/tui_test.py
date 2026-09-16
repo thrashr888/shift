@@ -1512,6 +1512,18 @@ class Jobs(unittest.TestCase):
         self.assertNotIn('RUNNING',text);self.assertIn('[job] exit 0 · 4.2s',text);self.assertIn('job-1 · make test',text);self.assertIn('ok',text)
         self.assertIn('/jobs',[c[0] for c in tui.suggestions('/jo',[])])
 
+    def test_subagent_jobs_are_named_by_their_child_session(self):
+        terminal=terminal_view(40,128,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':2}})
+        m.control('ready');m.panel_tab='log'
+        launcher=['/somewhere/bin/shift-agent','--resume','main/agents/tests','--print','run the tests']
+        m.event({'type':'job','value':{'event':'running','id':'job-1','argv':launcher,'agent':'main/agents/tests','status':'running','elapsed_ms':2000,'tail':'','turn':2,'log':'runs/job-1.log'}})
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('subagent main/agents/tests',text);self.assertNotIn('/somewhere',text)
+        m.event({'type':'job','value':{'event':'finished','id':'job-1','argv':launcher,'agent':'main/agents/tests','status':'exit','code':0,'ok':True,'elapsed_ms':9000,'tail':'all green','turn':2,'log':'runs/job-1.log'}})
+        terminal.draw();text='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('[agent] exit 0 · 9.0s',text);self.assertIn('job-1 · subagent main/agents/tests',text);self.assertIn('all green',text)
+
 
 class UserPanes(unittest.TestCase):
     PANE={'name':'shift','title':'SHIFT','rows':[{'text':'Checkout health'},{'field':'session.name'},{'field':'source.loaded'},

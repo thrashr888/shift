@@ -588,13 +588,23 @@ to evaluate—transactional, generation-attributed live behavior—but it lacks 
 of the product surface of a mature coding harness. See `docs/gaps-with-pi.md` for
 the direct comparison and the gaps on both sides.
 
-## Subagent milestone
+## Subagents and recall
 
-`shift` can now fork a validated generation and bounded session checkpoint into
-one supervised read-only child, enforce a durable narrower tool ceiling, and
-return trace, generation, assertion, and disabled-extension references for
-selective promotion. See [Fork the live image](docs/subagents.md) for the
-contract and remaining filesystem/parallelism boundary.
+`spawn` forks the live image into a child session that lives in a folder under
+its parent, `.shift/sessions/NAME/agents/CHILD/`, and runs it as a background
+job. The child keeps the parent's generation, patches, mode and project but
+starts with an empty conversation and a narrower tool ceiling; `job wait`
+returns its whole answer. Several children run in parallel, and a child can
+spawn its own. Every one is an ordinary session: it shows nested in the Session
+tab and resumes with `--resume NAME/agents/CHILD`.
+
+![Two subagents running in the Log tab while the parent waits on them](site/assets/fanout-log.png)
+
+`recall` and `/recall QUERY` search every session's traces in the project,
+children included, and name the session behind each hit. The design and its
+decisions are in [docs/subagents.md](docs/subagents.md).
+
+![The Session tab with two subagents nested under their parent](site/assets/fanout-sessions.png)
 
 ## License
 

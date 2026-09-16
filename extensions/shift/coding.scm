@@ -653,6 +653,9 @@
     (close-port (cdr ends)) (close-port stdin)
     (when error-path (close-port error-port))
     (with-mutex jobs-lock (set! jobs (cons job jobs)))
+    ;; Announce the start too: a quiet child (a subagent's narration goes to
+    ;; its own file) would otherwise not appear in the Log tab until it ends.
+    (catch #t (lambda () (observer (job-event job "running"))) (lambda _ #f))
     (call-with-new-thread
      (lambda ()
        ;; Every chunk goes to the log file at once, so `tail -f` works, and

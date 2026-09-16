@@ -428,12 +428,15 @@ class Model:
             self.sessions={'items':[dict(item) for item in value.get('sessions',[])],'error':None,'requested':False}
         elif kind == 'job':
             job_id=clean(str(value.get('id','')));argv=' '.join(clean(str(p)) for p in value.get('argv',[]))
+            # A subagent job is named by its child session, not by the launcher argv.
+            if value.get('agent'):argv='subagent '+clean(str(value['agent']))
             if value.get('event')=='finished':
                 self.jobs.pop(job_id,None)
                 if value.get('pane'):return  # the pane-output event that follows carries this job
-                entry=run_entry({'output':str(value.get('tail','')),'ok':value.get('ok'),'turn':value.get('turn','?'),'id':None,'truncated':False})
+                # A job's tail is all output: no run header line to strip.
+                entry=run_entry({'output':'\n'+str(value.get('tail','')),'ok':value.get('ok'),'turn':value.get('turn','?'),'id':None,'truncated':False})
                 status=clean(str(value.get('status','')));code=value.get('code')
-                entry.update(kind='job',command=job_id+' · '+argv,at=time.strftime('%H:%M'),
+                entry.update(kind='job',agent=bool(value.get('agent')),command=job_id+' · '+argv,at=time.strftime('%H:%M'),
                              status={'exit':'exit '+str(code),'signal':'killed by signal '+str(code),'timeout':'timeout'}.get(status,status),
                              seconds=str(round(int(value.get('elapsed_ms') or 0)/1000,1)),log=clean(str(value.get('log',''))))
                 self.runs.append(entry);self.panel_scroll['log']=10**9
@@ -1529,7 +1532,7 @@ class Terminal:
             for run in m.runs:
                 line('')
                 # Status first: commands can be long and would push it off the row.
-                tag={'peer':'[peer] ','pane':'[pane] ','job':'[job] ','judge':'[judge] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
+                tag={'peer':'[peer] ','pane':'[pane] ','job':'[agent] ' if run.get('agent') else '[job] ','judge':'[judge] '}.get(run.get('kind','run'),'['+str(run['turn'])+'] ')
                 rows.append([(tag,4,False),(run['status'],2 if run['ok'] else 11,True),
                              ((' · '+run['seconds']+'s') if run['seconds'] else '',4,False)])
                 for part in wrap(run['command'],width,words=True)[:3]:rows.append([(part,1,True)])

@@ -183,6 +183,12 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
 .fields th { font: .75rem/1.6 var(--mono); text-transform: uppercase; color: var(--muted); }
 .fields td:first-child { font-family: var(--mono); white-space: nowrap; }
 .live-section { margin-top: 6rem; padding-top: 3rem; border-top: 1px solid var(--line); }
+.fanout-section { margin-top: 6rem; padding-top: 3rem; border-top: 1px solid var(--line); }
+.shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2rem; margin-top: 3rem; }
+.shots figure { margin: 0; }
+.shots figure.wide { grid-column: 1 / -1; }
+.shots img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel, transparent); }
+.shots figcaption { font-size: .8125rem; color: var(--muted); margin-top: .75rem; max-width: 70ch; }
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 3rem; border-block: 1px solid var(--line); }
 .principles article { padding: 2rem; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .principles article:first-child { padding-left: 0; }
@@ -282,6 +288,8 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; ac
   .demo-footer { padding: 1rem; }
   .motion-controls { flex-wrap: wrap; gap: .5rem; }
   .live-section { margin-top: 4rem; padding-top: 2rem; }
+  .fanout-section { margin-top: 4rem; padding-top: 2rem; }
+  .shots { grid-template-columns: 1fr; gap: 1.5rem; margin-top: 2rem; }
   .principles { grid-template-columns: 1fr; margin-top: 2rem; }
   .principles article, .principles article:first-child, .principles article:last-child { padding: 1.5rem 0; border-right: 0; }
   .principles article + article { border-top: 1px solid var(--line); }

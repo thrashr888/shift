@@ -12,7 +12,8 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES
+SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")}
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS
 PAGES = ("index.html", "panes.html")
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
@@ -62,7 +63,10 @@ def check():
     if errors:
         return errors
 
-    texts = {name: (SITE / name).read_text(encoding="utf-8") for name in PUBLIC_FILES}
+    texts = {name: (SITE / name).read_text(encoding="utf-8") for name in PUBLIC_FILES - SCREENSHOTS}
+    for name in SCREENSHOTS:
+        if (SITE / name).stat().st_size > 900_000:
+            errors.append(f"Screenshot over 900 KB: {name}")
     for name, text in texts.items():
         if re.search(r"localhost|127\.0\.0\.1|/Users/|/home/|\.shift/(?!panes\.scm)|\.env\b", text):
             errors.append(f"Local/private reference in public file: {name}")
