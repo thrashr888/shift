@@ -5,7 +5,8 @@
   #:use-module (live-agent generation)
   #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
             settings-show settings-object setting-source load-dotenv! read-dotenv
-            allow-run! deny-run! run-allow-entries allow-mcp! deny-mcp! mcp-allow-entries))
+            allow-run! deny-run! run-allow-entries allow-mcp! deny-mcp! mcp-allow-entries
+            allow-plugin-set! plugin-enabled? set-plugin-state! plugin-states))
 
 ;; Data only: never evaluate persisted preferences as Scheme. Live image code
 ;; cannot access this module or change the process-owned execution mode.
@@ -19,17 +20,40 @@
 (define session-file #f)
 (define user-file #f)
 (define allow-keys '(run-allow mcp-allow))
-(define (empty-allow-lists) (map (lambda (key) (cons key '((user . ()) (project . ()) (session . ())))) allow-keys))
+(define (empty-allow-lists) (map (lambda (key) (cons key '((user . ()) (project . ()) (session . ()) (plugin . ())))) allow-keys))
+;; plugins: {"name": true|false} per scope; session over user over project;
+;; a plugin nobody mentioned is on.
+(define plugin-states '((user . ()) (project . ()) (session . ())))
+(define (plugin-enabled? name)
+  (let loop ((scopes '(session user project)))
+    (if (null? scopes)
+        #t
+        (let ((entry (assoc name (or (assq-ref plugin-states (car scopes)) '()))))
+          (if entry (cdr entry) (loop (cdr scopes)))))))
+(define (set-plugin-state! name on? scope)
+  (unless (memq scope '(user project session)) (error "scope must be user, project or session" scope))
+  (let* ((current (or (assq-ref plugin-states scope) '()))
+         (next (acons name on? (filter (lambda (e) (not (equal? (car e) name))) current)))
+         (path (scope-file scope))
+         (encoded (apply json-object (map (lambda (e) (cons (car e) (cdr e))) next))))
+    (when path (write-settings path (acons 'plugins encoded (assq-delete-all 'plugins (file-entries path)))))
+    (set! plugin-states (acons scope next (assq-delete-all scope plugin-states)))
+    next))
 (define allow-lists (empty-allow-lists))
 (define (allow-list key scope) (or (assq-ref (assq-ref allow-lists key) scope) '()))
 (define* (allow-scope-set! scope prefixes #:optional (key 'run-allow))
   (let ((scopes (acons scope prefixes (assq-delete-all scope (assq-ref allow-lists key)))))
     (set! allow-lists (acons key scopes (assq-delete-all key allow-lists)))))
+;; The plugin scope is in memory only: enabled plugins' proposals, refreshed
+;; whenever plugins are applied, never written to a file.
 (define (union-allow-lists key)
   (fold (lambda (scope acc)
           (fold (lambda (prefix acc) (if (member prefix acc) acc (append acc (list prefix))))
                 acc (allow-list key scope)))
-        '() '(user project session)))
+        '() '(user project session plugin)))
+(define (allow-plugin-set! key entries)
+  (allow-scope-set! 'plugin entries key)
+  (refresh-run-allow! key))
 (define* (refresh-run-allow! #:optional (key 'run-allow))
   (set! preferences (acons key (union-allow-lists key) (assq-delete-all key preferences))))
 (define (scope-file scope)
@@ -78,7 +102,7 @@
 ;; Oldest scope first: ((entry . scope) ...) for listings.
 (define* (allow-entries #:optional (key 'run-allow))
   (append-map (lambda (scope) (map (lambda (prefix) (cons prefix scope)) (allow-list key scope)))
-              '(user project session)))
+              '(user project session plugin)))
 (define (run-allow-entries) (allow-entries 'run-allow))
 (define (mcp-allow-entries) (allow-entries 'mcp-allow))
 ;; SHIFT_PROVIDER_RETRIES sets the process-wide default so test harnesses can
@@ -88,7 +112,7 @@
     (or (and value (string->number value)) 3)))
 (define defaults `((mode . manual) (effort . default) (fast . #f)
                    (context-limit . #f) (output-reserve . 8192)
-                   (run-allow . ()) (mcp-allow . ()) (skill-dirs . ()) (run-backend . local) (run-sandbox . #f)
+                   (run-allow . ()) (mcp-allow . ()) (skill-dirs . ()) (plugin-dirs . ()) (run-backend . local) (run-sandbox . #f)
                    ;; Prefixes that stay on the host when runs go to the sandbox: macOS
                    ;; toolchains, signing, and git with the user's own keys.
                    (run-host . (("git") ("cargo" "tauri") ("codesign") ("xcodebuild") ("xcrun") ("notarytool")
@@ -129,7 +153,8 @@
                                                  (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (memv c '(#\- #\_)))) name)))
                              value)))
     ;; Extra folders of skills, absolute paths, such as a checked-out skills kit.
-    ((skill-dirs) (and (list? value) (every (lambda (d) (and (string? d) (string-prefix? "/" d))) value)))
+    ((skill-dirs plugin-dirs) (and (list? value) (every (lambda (d) (and (string? d) (string-prefix? "/" d))) value)))
+    ((plugins) (and (json-object? value) (every (lambda (e) (boolean? (cdr e))) (json-object-entries value))))
     ;; judge: off (autopilot asks for anything the rules leave), on (the judge decides in
     ;; autopilot), shadow (on, and manual records the judge's verdict beside yours).
     ((judge) (memq value '(off shadow on)))
@@ -144,7 +169,7 @@
    ((and (memq key '(run-allow run-host)) (json-array? value))
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))
          (json-array-items value)))
-   ((and (memq key '(mcp-allow skill-dirs)) (json-array? value)) (json-array-items value))
+   ((and (memq key '(mcp-allow skill-dirs plugin-dirs)) (json-array? value)) (json-array-items value))
    (else value)))
 (define (encoded value)
   (cond ((symbol? value) (symbol->string value))
@@ -179,6 +204,9 @@
            (cond
             ((memq key allow-keys) (allow-scope-set! source value key) (refresh-run-allow! key)
              (set! sources (acons key source (assq-delete-all key sources))))
+            ((eq? key 'plugins)
+             (set! plugin-states (acons source (map (lambda (e) (cons (car e) (cdr e))) (json-object-entries value))
+                                        (assq-delete-all source plugin-states))))
             (else
              (set! preferences (acons key value (assq-delete-all key preferences)))
              (set! sources (acons key source (assq-delete-all key sources)))))))
@@ -186,6 +214,7 @@
 (define (settings-init! project-state session-state)
   (set! preferences '()) (set! sources '())
   (set! allow-lists (empty-allow-lists))
+  (set! plugin-states '((user . ()) (project . ()) (session . ())))
   (set! project-file (string-append project-state "/settings.json"))
   (set! session-file (and session-state (string-append session-state "/settings.json")))
   (set! user-file (string-append (or (getenv "XDG_CONFIG_HOME")
@@ -238,7 +267,7 @@
                                                    (decode (string->symbol (car entry)) (cdr entry))))
                              (json-object-entries (settings-object generation))))
     (for-each (lambda (key)
-                (allow-scope-set! scope (setting-ref generation key) key)
+                (allow-scope-set! scope (filter (lambda (e) (not (member e (allow-list key 'plugin)))) (setting-ref generation key)) key)
                 (allow-scope-set! 'session '() key))
               allow-keys)
     (when session-file

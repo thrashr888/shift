@@ -31,6 +31,7 @@
   #:use-module (live-agent skills)
   #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
   #:use-module (live-agent judge)
+  #:use-module (live-agent plugins)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:export (main))
@@ -141,6 +142,8 @@
     "       shift-agent --list-sessions [--state-dir PATH]\n"
     "       shift-agent --check-panes [FILE]  lint a pane pack (default .shift/panes.scm)\n"
     "       shift-agent --check-mcp [FILE]    lint an MCP pack (default .shift/mcp.scm)\n"
+    "       shift-agent --check-plugin [DIR]  lint a plugin manifest (default .shift-plugin)\n"
+    "       shift-agent plugin add PATH|URL | update NAME | list\n"
     "       shift-agent session-fork PARENT CHILD\n"
     "\nInteractive terminals open the curses interface.\n"
     "Use --print/-p for one answer, or pipe/redirect input for scripted commands.\n")))
@@ -226,6 +229,11 @@
                                   (substring (cadr rest) (+ equals 1)))))))
       (loop (cddr rest) agent state-dir watch? session-name session-mode list?
             initial-prompt fork-parent fork-child))
+     ((string=? (car rest) "--check-plugin")
+      (let* ((path (if (and (pair? (cdr rest)) (not (string-prefix? "-" (cadr rest)))) (cadr rest) ".shift-plugin"))
+             (outcome (catch #t (lambda () (check-plugin-dir path)) (lambda (key . args) (error-text key args)))))
+        (cond ((string? outcome) (format (current-error-port) "~a: ~a~%" path outcome) (exit 2))
+              (else (format #t "plugin ~a ~a: ok~%" (plugin-field outcome 'name) (plugin-field outcome 'version)) (exit 0)))))
      ((string=? (car rest) "--check-mcp")
       (let* ((path (if (and (pair? (cdr rest)) (not (string-prefix? "-" (cadr rest)))) (cadr rest) ".shift/mcp.scm"))
              (outcome (catch #t (lambda () (check-mcp-file path)) (lambda (key . args) (error-text key args)))))
@@ -284,6 +292,7 @@
     "  /skills           list skills (SKILL.md folders) and which are loaded\n"
     "  /skill NAME       send a skill's instructions with the next prompt\n"
     "  /jobs             list background jobs; /jobs cancel ID stops one\n"
+    "  /plugins          installed plugins; /plugin enable|disable NAME [project|user] toggles one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
     "  /judge [off|shadow|on|report]  the autopilot judge: setting, model, counts, or shadow agreement\n"
@@ -564,6 +573,127 @@
     (unless (and name (mcp-tool-name? name)) (error "use /allow-mcp SERVER__TOOL [session|project|user]"))
     (allow-mcp! name (or scope 'session))
     (format #f "Allowed ~a: ~a" (or scope 'session) name)))
+;; --- plugins ----------------------------------------------------------------
+;; Enabled plugins contribute MCP servers, skills, panes, themes, allowlist
+;; proposals, secret sources and live-image artifacts. apply-plugins! makes the
+;; set of enabled plugins the truth again; artifacts of plugins that went off
+;; are removed like /extension-disable would.
+(define applied-artifacts '())   ; ((plugin-name . (expression ...)) ...)
+(define (emit-plugins!) (when (ui-connected?) (ui-emit! "plugins" (plugins-json plugin-enabled?))))
+(define (enabled-plugins)
+  (filter (lambda (p) (and (plugin-available? p) (plugin-enabled? (plugin-field p 'name)))) (plugin-index)))
+(define (plugin-pane-objects plugin)
+  (let ((file (plugin-field plugin 'panes)))
+    (if file
+        (catch #t
+          (lambda () (json-array-items (panes-pack->json (call-with-input-file file get-string-all))))
+          (lambda (key . args)
+            (format (current-error-port) "plugin ~a: panes skipped: ~a~%" (plugin-field plugin 'name) (error-text key args)) '()))
+        '())))
+(define (apply-plugins! runtime)
+  (let* ((enabled (enabled-plugins)) (names (map (lambda (p) (plugin-field p 'name)) enabled)))
+    ;; servers, secrets
+    (for-each (lambda (p) (mcp-unregister! (string-append "plugin:" (plugin-field p 'name)))) (plugin-index))
+    (for-each (lambda (p) (catch #t (lambda () (mcp-register! (plugin-field p 'mcp) (string-append "plugin:" (plugin-field p 'name))))
+                            (lambda (key . args) (format (current-error-port) "plugin ~a: mcp skipped: ~a~%" (plugin-field p 'name) (error-text key args)))))
+              enabled)
+    (secret-sources! (append-map (lambda (p) (plugin-field p 'secrets)) enabled))
+    ;; skills, panes, themes
+    (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
+                  (append (setting-ref #f 'skill-dirs) (filter-map (lambda (p) (plugin-field p 'skills)) enabled)))
+    (extra-panes (append-map plugin-pane-objects enabled))
+    (extra-theme-dirs (delete-duplicates (append-map (lambda (p) (map dirname (plugin-field p 'themes))) enabled)))
+    (catch #t (lambda () (ui-action! (json-object (cons "action" "reload")))) (lambda _ #f))
+    ;; allowlists
+    (allow-plugin-set! 'run-allow (append-map (lambda (p) (plugin-field p 'allow-run)) enabled))
+    (allow-plugin-set! 'mcp-allow (append-map (lambda (p) (plugin-field p 'allow-mcp)) enabled))
+    ;; live-image artifacts
+    (when runtime
+      (for-each (lambda (entry)
+                  (unless (member (car entry) names)
+                    (for-each (lambda (expression)
+                                (catch #t (lambda () (runtime-remove-patch! runtime expression 'plugin-disable `((plugin . ,(car entry)))))
+                                  (lambda _ #f)))
+                              (cdr entry))))
+                applied-artifacts)
+      (set! applied-artifacts (filter (lambda (e) (member (car e) names)) applied-artifacts))
+      (for-each (lambda (p)
+                  (let ((expressions (map (lambda (file) (call-with-input-file file get-string-all)) (plugin-field p 'agent))))
+                    (for-each (lambda (expression)
+                                (unless (member expression (generation-patches (runtime-current runtime)))
+                                  (catch #t
+                                    (lambda () (runtime-apply-patch! runtime expression 'plugin-load `((plugin . ,(plugin-field p 'name)))))
+                                    (lambda (key . args)
+                                      (format (current-error-port) "plugin ~a: agent artifact rejected: ~a~%" (plugin-field p 'name) (error-text key args))))))
+                              expressions)
+                    (when (pair? expressions)
+                      (set! applied-artifacts (acons (plugin-field p 'name) expressions
+                                                     (filter (lambda (e) (not (string=? (car e) (plugin-field p 'name)))) applied-artifacts))))))
+                enabled))
+    (emit-plugins!) (emit-servers!) (emit-skills!)
+    names))
+(define (show-plugins)
+  (let ((items (json-array-items (plugins-json plugin-enabled?))))
+    (if (null? items)
+        (display "No plugins. Install one with `shift-agent plugin add PATH|URL` or drop a folder in .shift/plugins.\n")
+        (for-each (lambda (o)
+                    (format #t "~a ~a ~a  ~a  ~a~a~%"
+                            (cond ((not (json-object-ref o "valid")) "invalid ")
+                                  ((pair? (json-array-items (json-object-ref o "missing"))) "missing ")
+                                  ((json-object-ref o "enabled") "on      ") (else "off     "))
+                            (json-object-ref o "name") (json-object-ref o "version") (json-object-ref o "source")
+                            (string-join (json-array-items (json-object-ref o "contributes")) ", ")
+                            (let ((r (json-object-ref o "error" #f)) (m (json-array-items (json-object-ref o "missing"))))
+                              (cond ((string? r) (string-append "  " r))
+                                    ((pair? m) (string-append "  needs " (string-join m ", ") " on PATH"))
+                                    (else "")))))
+                  items))))
+(define (plugin-command! runtime text)
+  (let* ((parts (string-tokenize text))
+         (verb (and (pair? parts) (car parts)))
+         (name (and (>= (length parts) 2) (cadr parts)))
+         (scope (if (>= (length parts) 3) (string->symbol (caddr parts)) 'project)))
+    (cond
+     ((member verb '("enable" "disable"))
+      (unless (and name (plugin-find name)) (error "no plugin named" name))
+      (set-plugin-state! name (string=? verb "enable") scope)
+      (apply-plugins! runtime)
+      (let ((p (plugin-find name)))
+        (format #f "~a ~a (~a scope)~a" name (if (string=? verb "enable") "on" "off") scope
+                (if (and (string=? verb "enable") (pair? (plugin-field p 'allow-run)))
+                    (string-append "; runs without asking: " (string-join (map (lambda (x) (string-join x " ")) (plugin-field p 'allow-run)) ", "))
+                    ""))))
+     ((equal? verb "reload") (format #f "plugins applied: ~a" (string-join (apply-plugins! runtime) ", ")))
+     (else (error "use /plugins, /plugin enable|disable NAME [project|user|session], or /plugin reload")))))
+;; shift-agent plugin add PATH|URL, update NAME, list
+(define (user-plugins-directory)
+  (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift/plugins"))
+(define (plugin-cli! args)
+  (define (run . argv) (unless (eqv? 0 (status:exit-val (apply system* argv))) (error "command failed" (string-join argv " "))))
+  (cond
+   ((and (>= (length args) 2) (string=? (car args) "add"))
+    (let* ((source (cadr args)) (dir (user-plugins-directory))
+           (staging (string-append dir "/.incoming-" (number->string (getpid)))))
+      (run "mkdir" "-p" dir)
+      (if (or (string-prefix? "http://" source) (string-prefix? "https://" source) (string-prefix? "git@" source))
+          (run "git" "clone" "-q" "--depth" "1" source staging)
+          (begin (unless (file-exists? (string-append source "/plugin.scm")) (error "no plugin.scm in" source))
+                 (run "cp" "-R" source staging)))
+      (let* ((plugin (catch #t (lambda () (check-plugin-dir staging)) (lambda (key . a) (run "rm" "-rf" staging) (apply throw key a))))
+             (target (string-append dir "/" (plugin-field plugin 'name))))
+        (when (file-exists? target) (run "rm" "-rf" target))
+        (run "mv" staging target)
+        (format #t "installed ~a ~a into ~a~%" (plugin-field plugin 'name) (plugin-field plugin 'version) target))))
+   ((and (= (length args) 2) (string=? (car args) "update"))
+    (let ((target (string-append (user-plugins-directory) "/" (cadr args))))
+      (unless (file-exists? (string-append target "/.git")) (error "not a git checkout; add it again from its source" target))
+      (run "git" "-C" target "pull" "-q" "--ff-only")
+      (format #t "updated ~a~%" (cadr args))))
+   ((equal? args '("list"))
+    (plugins-init! (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) (getcwd)
+                   (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift") '())
+    (show-plugins))
+   (else (error "use shift-agent plugin add PATH|URL, plugin update NAME, or plugin list"))))
 ;; Skills: the model loads one through the `skill` tool; the user queues one
 ;; with /skill NAME and it rides along with the next prompt. Both are recorded
 ;; on the receipt. Policy never changes because a skill was loaded.
@@ -1050,6 +1180,8 @@
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions"))
+        (and (= (length parts) 3) (string=? (car parts) "/plugin") (member (cadr parts) '("enable" "disable"))
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 3) (string=? (car parts) "/mcp") (string=? (cadr parts) "connect")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/skill")
@@ -1199,6 +1331,12 @@
       (unless (member value '("off" "shadow" "on")) (error "use /judge, /judge report, or /judge off|shadow|on"))
       (setting-set! 'judge (string->symbol value))
       (format #t "judge ~a~%" value))
+    'continue)
+   ((string=? line "/plugins") (show-plugins) 'continue)
+   ((string-prefix? "/plugin " line)
+    (catch #t
+      (lambda () (display (plugin-command! runtime (trimmed-command-argument line "/plugin "))) (newline))
+      (lambda (key . args) (format #t "plugin: ~a~%" (error-text key args))))
     'continue)
    ((string=? line "/skills") (show-skills) 'continue)
    ((or (string=? line "/mcp") (string-prefix? "/mcp " line))
@@ -2834,7 +2972,7 @@
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
         (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
         (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral"))))
-      (emit-skills!) (emit-servers!))
+      (emit-skills!) (emit-servers!) (emit-plugins!))
     (define (register-host!)
       (ui-host-handler!
         (lambda (command)
@@ -2853,6 +2991,8 @@
                  (queue-skill! (trimmed-command-argument command "/skill ")))
                 ((string-prefix? "/mcp connect " command)
                  (mcp-command! (trimmed-command-argument command "/mcp ")))
+                ((string-prefix? "/plugin " command)
+                 (plugin-command! runtime (trimmed-command-argument command "/plugin ")))
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
                  (let ((summaries (session-summaries (dirname (dirname (session-directory session))) (session-name session))))
@@ -3000,6 +3140,11 @@
 
 (define (main args)
   (reset-run-usage!)
+  ;; The launcher prepends --agent and --state-dir; the subcommand follows them.
+  (let ((at (list-index (lambda (a) (string=? a "plugin")) args)))
+   (when (and at (< (+ at 1) (length args)) (member (list-ref args (+ at 1)) '("add" "update" "list")))
+    (catch #t (lambda () (plugin-cli! (drop args (+ at 1))) (exit 0))
+      (lambda (key . a) (if (eq? key 'quit) (apply throw key a) (begin (format (current-error-port) "plugin: ~a~%" (error-text key a)) (exit 2)))))))
   (call-with-values
       (lambda () (parse-arguments (transport-arguments args)))
     (lambda (agent-path state-directory watch? requested-session-name session-mode
@@ -3105,6 +3250,14 @@
                                   (cons "at" (strftime "%H:%M" (localtime (current-time))))))))))))
         (read-roots skill-directories)
         (load-dotenv! (string-append (getcwd) "/.env"))
+        ;; SHIFT_PLUGINS=off runs without any plugin, which fixtures rely on.
+        (if (member (getenv "SHIFT_PLUGINS") '("off" ""))
+            (plugins-init! #f #f #f '())
+            (plugins-init! (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
+                           (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
+                           (setting-ref #f 'plugin-dirs)))
+        (catch #t (lambda () (apply-plugins! runtime))
+          (lambda (key . args) (format (current-error-port) "plugins: ~a~%" (error-text key args))))
         (unless (try-transition "startup options" apply-cli-overrides!)
           (exit 2))
         (input-init! state-directory)

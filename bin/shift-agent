@@ -8,7 +8,7 @@ export SHIFT_INSTALL_ROOT="$project_root"
 launch_tui=no
 backend_only=no
 classify_launch() {
-  if [ "${1-}" = "session-fork" ]; then
+  if [ "${1-}" = "session-fork" ] || [ "${1-}" = "plugin" ]; then
     backend_only=yes
     return
   fi

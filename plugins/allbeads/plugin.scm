@@ -1,0 +1,7 @@
+((plugin "allbeads" "0.1")
+ (description "Issue beads across repositories with ab and bd")
+ (requires (command "ab") (command "bd"))
+ (skills "skills")
+ (panes "panes.scm")
+ (allow-run ("ab" "ready") ("ab" "list") ("ab" "show") ("ab" "blocked") ("ab" "search") ("ab" "stats")
+            ("bd" "ready") ("bd" "list") ("bd" "show") ("bd" "blocked") ("bd" "search") ("bd" "stats")))

@@ -1,7 +1,10 @@
 # RFC: plugins
 
-Status: draft, September 15, 2026. Decisions are proposed defaults; the open
-questions at the end are the ones that change the work.
+Status: implemented September 15, 2026, with the seven plugins bundled under
+`plugins/` in this repository until they move to their own. Answers: `agent`
+artifacts are allowed; enabling is scoped project or user with the user's
+answer winning; `plugin add` takes paths and git URLs; installed plugins are
+on by default.
 
 ## Why
 

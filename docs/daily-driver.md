@@ -291,6 +291,51 @@ execute concurrently, four at a time, before their results are recorded and
 returned in the model's order; their spans carry `tool.parallel`. Mutations,
 runs and anything that could prompt stay sequential.
 
+## Plugins
+
+A plugin bundles the data Shift already treats as yours: a folder with a
+`plugin.scm` manifest, read like a pane pack and never evaluated, that names
+MCP servers, a skills folder, a pane pack, theme packs, live-image artifacts,
+run and MCP allowlist proposals, the `.env` names it needs, and secret sources.
+
+```scheme
+((plugin "cortex" "0.1")
+ (description "Repo-local memory the agent recalls and extends")
+ (requires (command "cortex"))
+ (mcp (server "cortex" (command "cortex" "mcp")))
+ (skills "skills")
+ (agent "agent/memory.scm")
+ (allow-run ("cortex" "recall") ("cortex" "stats")))
+```
+
+Plugins are found in `plugins/` of the install (the bundled ones: agentkernel,
+cider, cortex, alchemy, allbeads, tauri-browser and onepassword),
+`~/.config/shift/plugins/`, the folders in the `plugin-dirs` setting,
+`.shift/plugins/` in the project, and a repository's own `.shift-plugin/`;
+later sources shadow earlier ones by name. Installed plugins are on: their
+servers register (and connect lazily), their skills join the index with source
+`dir`, their panes append after the project's, their themes answer `/theme`,
+their allowlist proposals join the allowlist under the `plugin` scope without
+being written anywhere, and their `agent` artifacts load as generations the way
+`/extension-load` does. A plugin whose `requires` command is missing from
+`PATH` shows as missing and contributes nothing. `SHIFT_PLUGINS=off` in the
+environment starts a session with no plugins at all.
+
+`/plugins` lists them; `/plugin disable NAME [project|user|session]` turns one
+off at that scope and `/plugin enable` back on, with the user's answer
+overriding the project's and the session's overriding both; a disabled
+plugin's servers, skills, panes, prefixes and artifacts leave at once. The
+Session tab's PLUGINS section (also a `(source plugins)` pane row) toggles a
+plugin for the project by click. `shift-agent plugin add PATH|GIT-URL` copies
+or clones a plugin into the user folder, `plugin update NAME` pulls it again,
+`plugin list` shows what is installed, and `--check-plugin [DIR]` lints a
+manifest.
+
+`(secret NAME (op "op://vault/item/field"))` resolves through the `op` CLI
+when a server connects, into that server's environment or `$NAME` header, and
+is cached for the process only; a fixed judge rule refuses `op read` and its
+kin so the model never sees a secret.
+
 ## MCP servers as tools
 
 Shift is an MCP client as well as a server. Servers are data in `.shift/mcp.scm`

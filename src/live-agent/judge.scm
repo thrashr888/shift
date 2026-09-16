@@ -79,6 +79,8 @@
      ((force-push? argv) '(deny . "force-push"))
      ((discards-work? argv) '(deny . "discards-work"))
      ((pipe-to-shell? name arguments) '(deny . "pipe-to-shell"))
+     ((and (pair? argv) (string=? (car argv) "op") (pair? (cdr argv)) (member (cadr argv) '("read" "item" "document" "inject")))
+      '(deny . "secret-read"))
      ((shift-state-write? name arguments) '(deny . "shift-state"))
      (else #f))))
 

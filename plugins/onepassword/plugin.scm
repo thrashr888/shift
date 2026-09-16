@@ -1,0 +1,5 @@
+((plugin "onepassword" "0.1")
+ (description "Secrets for servers from 1Password, resolved by the runtime, never by the model")
+ (requires (command "op"))
+ (skills "skills")
+ (allow-run ("op" "whoami") ("op" "vault" "list") ("op" "item" "list")))
