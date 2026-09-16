@@ -115,6 +115,7 @@
 (define cli-allow-runs '())
 (define cli-settings '())
 (define cli-receipt-path #f)
+(define cli-judge-replay #f)
 (define turn-tokens 0)
 ;; Per-turn facts the receipt reports: provider usage, model rounds, and tool
 ;; calls by name. Reset when a turn starts.
@@ -227,6 +228,11 @@
           (exit 2))
         (set! cli-allow-runs (append cli-allow-runs (list prefix))))
       (loop (cddr rest) agent state-dir watch? session-name session-mode list?
+            initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--judge-replay"))
+      ;; Replay judge cases through the configured judge model; JSON lines out.
+      (set! cli-judge-replay (cadr rest)) (set! print-mode? #t)
+      (loop (cddr rest) agent state-dir #f session-name session-mode list?
             initial-prompt fork-parent fork-child))
      ((and (pair? (cdr rest)) (string=? (car rest) "--receipt"))
       (set! cli-receipt-path (cadr rest))
@@ -2055,6 +2061,48 @@
 (define (judge-log-path)
   (and runtime-state-directory-for-judge (string-append runtime-state-directory-for-judge "/judge.jsonl")))
 (define runtime-state-directory-for-judge #f)
+;; One judge.jsonl record carries everything a replay needs: the action, the
+;; preview and the user messages the judge saw, plus the mode and allowlist.
+(define (judge-record generation name arguments preview verdict human)
+  (json-object (cons "turn" (current-turn)) (cons "tool" name)
+               (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
+               (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
+               (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
+               (cons "human" human)
+               (cons "arguments" (if (json-object? arguments) arguments (json-object)))
+               (cons "preview" (or preview ""))
+               (cons "user_messages" (apply json-array (map (lambda (m) (clip m 600)) recent-user-messages)))
+               (cons "mode" (symbol->string (setting-ref generation 'mode)))
+               (cons "run_allow" (apply json-array (map (lambda (p) (apply json-array p)) (setting-ref generation 'run-allow))))))
+(define (judge-replay! runtime path)
+  (let* ((generation (runtime-current runtime))
+         (endpoint (judge-endpoint generation))
+         (key-env (cadddr endpoint))
+         (lines (filter (lambda (l) (not (string-null? (string-trim-both l))))
+                        (string-split (call-with-input-file path get-string-all) #\newline))))
+    (for-each
+     (lambda (line)
+       (let* ((record (json-read line))
+              (messages (let ((m (json-object-ref record "user_messages" #f)))
+                          (if (json-array? m) (filter string? (json-array-items m)) '())))
+              (allow (let ((a (json-object-ref record "run_allow" #f)))
+                       (if (json-array? a) (filter-map (lambda (p) (and (json-array? p) (json-array-items p))) (json-array-items a)) '())))
+              (context `((user-messages . ,messages) (tool . ,(json-object-ref record "tool" "run"))
+                         (arguments . ,(json-object-ref record "arguments" (json-object)))
+                         (preview . ,(json-object-ref record "preview" "")) (root . ,(getcwd)) (remotes . "")
+                         (dirty . unknown) (mode . ,(string->symbol (json-object-ref record "mode" "autopilot")))
+                         (run-allow . ,allow)))
+              (verdict (judge-decide! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) context)))
+         (display (json-write
+                   (apply json-object
+                          (append (json-object-entries record)
+                                  (list (cons "replay"
+                                              (json-object (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
+                                                           (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
+                                                           (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms)))))))))
+         (newline) (force-output)))
+     lines)
+    0))
 (define (consult-judge! runtime generation name arguments preview human)
   ;; Returns the verdict alist; records the span, the counters, the log and the UI event.
   (let* ((endpoint (judge-endpoint generation))
@@ -2073,11 +2121,7 @@
     ;; Shadow decisions are logged by the caller once the human has answered.
     (let ((path (judge-log-path)))
       (when (and path (not (string=? human "pending")))
-        (judge-log! path (json-object (cons "turn" (current-turn)) (cons "tool" name)
-                                      (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
-                                      (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
-                                      (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
-                                      (cons "human" human)))))
+        (judge-log! path (judge-record generation name arguments preview verdict human))))
     (ui-emit! "judge" (json-object (cons "tool" name) (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
                                    (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
                                    (cons "shadow" (not (string=? human "none")))))
@@ -2142,11 +2186,7 @@
                         (answer (ask-human (format #f "\njudge would ~a [~a]: ~a\n" (assq-ref verdict 'verdict) (assq-ref verdict 'rule) (assq-ref verdict 'reason)))))
                    (let ((path (judge-log-path)))
                      (when path
-                       (judge-log! path (json-object (cons "turn" (current-turn)) (cons "tool" name)
-                                                     (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
-                                                     (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
-                                                     (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
-                                                     (cons "human" (if answer "allow" "deny"))))))
+                       (judge-log! path (judge-record generation name arguments preview verdict (if answer "allow" "deny")))))
                    answer)
                  (ask-human #f)))
             (else #f))))
@@ -3340,6 +3380,7 @@
                   (when (and mcp-http? (builtin-enabled? 'mcp))
                     (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
                   (force-output))
+                (when cli-judge-replay (exit (judge-replay! runtime cli-judge-replay)))
                 (when initial-prompt
                   (with-mutex lock
                     ;; Print mode has no one to ask: anything needing approval
@@ -3375,7 +3416,7 @@
     (lambda (agent-path state-directory watch? requested-session-name session-mode
              list? initial-prompt fork-parent fork-child)
       (when print-mode?
-        (unless initial-prompt (error "--print needs a task"))
+        (unless (or initial-prompt cli-judge-replay) (error "--print needs a task"))
         (set! watch? #f)
         (set! mcp-http? #f))
       (unless (and agent-path state-directory)

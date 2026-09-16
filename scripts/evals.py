@@ -6,6 +6,8 @@
     scripts/evals.py run [--instances A,B] ...  run Shift in print mode per instance
     scripts/evals.py grade RUN_ID               grade a run with the official harness
     scripts/evals.py dogfood [--tasks A,B]       attempt current-tree tickets and run hidden local tests
+    scripts/evals.py judge [--cases|--session N] replay judged actions through a judge model; report agreement
+    scripts/evals.py session [NAME|--all]        per-turn review: rounds, failures, waits, judge disagreements
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -19,6 +21,7 @@ import os
 import collections
 import json
 import random
+import re
 import signal
 import shutil
 import subprocess
@@ -550,6 +553,214 @@ def dogfood(args):
     log(f"resolved {sum(r['resolved'] for r in records)}/{len(records)}; results: {run_dir}")
 
 
+# --- judge evals (docs/quality-rfc.md §1) -----------------------------------------
+
+def judge_cases(args):
+    if args.cases:
+        return EVALS / "judge/cases.jsonl"
+    if args.file:
+        return Path(args.file)
+    return ROOT / ".shift/sessions" / (args.session or "default") / "judge.jsonl"
+
+
+def judge_replay(path, model=None):
+    """Replay each record through the backend's judge; returns the records with a `replay` verdict."""
+    command = [str(ROOT / "bin/shift-agent"), "--judge-replay", str(path)]
+    if model:
+        command += ["--model", model]
+    result = sh(command, cwd=ROOT, timeout=3600, env={**os.environ, "SHIFT_PLUGINS": "off"})
+    return [json.loads(line) for line in result.stdout.splitlines() if line.strip().startswith("{")]
+
+
+def judge_report(records):
+    """Agreement with the human where one answered, else with the original verdict."""
+    rows = []
+    for record in records:
+        replay = record.get("replay", {})
+        verdict = "allow" if replay.get("verdict") == "allow" else "deny"
+        expected = record.get("expected") or record.get("human")
+        if expected not in ("allow", "deny"):
+            expected = "allow" if record.get("verdict") == "allow" else "deny"
+        rows.append({"tool": record.get("tool"), "summary": summarize_arguments(record.get("tool"), record.get("arguments", {})),
+                     "expected": expected, "replay": verdict, "rule": replay.get("rule", ""), "reason": replay.get("reason", ""),
+                     "agree": verdict == expected, "false_block": verdict == "deny" and expected == "allow",
+                     "false_allow": verdict == "allow" and expected == "deny", "ms": replay.get("ms", 0),
+                     "model": replay.get("model", "")})
+    return rows
+
+
+def summarize_arguments(tool, arguments):
+    if isinstance(arguments, dict):
+        if "argv" in arguments and isinstance(arguments["argv"], list):
+            return " ".join(map(str, arguments["argv"]))
+        if "path" in arguments:
+            return str(arguments["path"])
+        return " ".join(f"{k}={v}" for k, v in arguments.items())[:100]
+    return ""
+
+
+def judge(args):
+    path = judge_cases(args)
+    if not path.exists():
+        raise SystemExit(f"no judge records at {path}")
+    rows = judge_report(judge_replay(path, args.model))
+    if not rows:
+        raise SystemExit("no cases replayed")
+    model = rows[0]["model"]
+    agree = sum(r["agree"] for r in rows)
+    print(f"judge {model}: {agree}/{len(rows)} agree · false blocks {sum(r['false_block'] for r in rows)} · "
+          f"false allows {sum(r['false_allow'] for r in rows)} · median {sorted(r['ms'] for r in rows)[len(rows)//2]} ms")
+    for r in rows:
+        if not r["agree"]:
+            print(f"  {r['tool']} {r['summary'][:80]}")
+            print(f"    expected {r['expected']}, judge said {r['replay']} [{r['rule']}]: {r['reason'][:160]}")
+    if args.output:
+        Path(args.output).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    if args.cases and agree < len(rows):
+        raise SystemExit(1)
+
+
+# --- session review (docs/quality-rfc.md §2) ---------------------------------------
+
+EVENT_KIND = re.compile(r"\(kind \. ([a-z-]+)\)")
+EVENT_TIME = re.compile(r'"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"')
+
+
+def event_field(line, key):
+    match = re.search(r'\(%s \. "((?:[^"\\]|\\.)*)"\)' % key, line)
+    return match[1] if match else None
+
+
+def event_number(line, key):
+    match = re.search(r"\(%s \. (\d+)\)" % key, line)
+    return int(match[1]) if match else None
+
+
+def parse_time(stamp):
+    return time.mktime(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def session_review(directory):
+    """Per-turn facts from receipts, events and the judge log; no model, no score."""
+    directory = Path(directory)
+    receipts = [json.loads(l) for l in (directory / "receipts.jsonl").read_text().splitlines() if l.strip()] \
+        if (directory / "receipts.jsonl").exists() else []
+    def blank(turn, status="open", error=None, rounds=0, tools=0, failed_runs=0, seconds=0, ended=None):
+        return {"turn": turn, "status": status, "error": error, "rounds": rounds, "tools": tools, "failed_runs": failed_runs,
+                "seconds": seconds, "limit": "limit" in str(error or "") or "budget" in str(error or ""), "ended": ended,
+                "tool_errors": 0, "repeated": 0, "approval_wait": 0, "judged": 0, "false_blocks": 0, "false_allows": 0}
+    # One row per receipt: a failed turn keeps its number, so the same turn can appear twice.
+    rows = [blank(r["turn"], r.get("status"), r.get("error"), r.get("rounds", 0), sum((r.get("tool_calls") or {}).values()),
+                  sum(1 for run in r.get("runs", []) if run.get("exit_code") not in (0, None)),
+                  round((r.get("duration_ms") or 0) / 1000), parse_time(r["at"]) if r.get("at") else None) for r in receipts]
+
+    def row_for(turn, when=None):
+        candidates = [row for row in rows if row["turn"] == turn]
+        if when is not None:
+            ending = [row for row in candidates if row["ended"] is not None and row["ended"] >= when - 1]
+            if ending:
+                return ending[0]
+        if candidates:
+            return candidates[-1]
+        rows.append(blank(turn))
+        return rows[-1]
+    turns = {}
+    current = None
+    calls = collections.Counter()
+    pending_call = None
+    if (directory / "events.scm-log").exists():
+        for line in (directory / "events.scm-log").read_text().splitlines():
+            kind = EVENT_KIND.search(line)
+            stamp = EVENT_TIME.search(line)
+            if not kind or not stamp:
+                continue
+            kind = kind[1]
+            when = parse_time(stamp[1])
+            if kind == "user-input":
+                current = row_for(event_number(line, "turn"), when)
+                calls = collections.Counter()
+            elif current is None:
+                continue
+            elif kind == "tool-call":
+                key = (event_field(line, "tool"), event_field(line, "arguments"))
+                calls[key] += 1
+                if calls[key] == 2:
+                    current["repeated"] += 1
+                pending_call = when
+            elif kind == "tool-approval":
+                if "(decision . ask)" in line and pending_call is not None:
+                    current["approval_wait"] += max(0, when - pending_call)
+                pending_call = None
+            elif kind == "tool-result":
+                output = event_field(line, "output") or ""
+                if output.startswith("tool failed") or output.startswith("tool unavailable"):
+                    current["tool_errors"] += 1
+    if (directory / "judge.jsonl").exists():
+        for line in (directory / "judge.jsonl").read_text().splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            row = row_for(record.get("turn"))
+            row["judged"] += 1
+            verdict, human = record.get("verdict"), record.get("human")
+            if verdict == "block" and human == "allow":
+                row["false_blocks"] += 1
+            if verdict == "allow" and human == "deny":
+                row["false_allows"] += 1
+    for row in rows:
+        row["approval_wait"] = round(row["approval_wait"])
+        row.pop("ended", None)
+    return rows
+
+
+def session_flags(row):
+    flags = []
+    if row["limit"]:
+        flags.append("ended at a limit")
+    if row["status"] not in ("ok", "open"):
+        flags.append(row["status"])
+    if row["failed_runs"]:
+        flags.append(f"{row['failed_runs']} failed run(s)")
+    if row["tool_errors"]:
+        flags.append(f"{row['tool_errors']} tool error(s)")
+    if row["repeated"]:
+        flags.append(f"{row['repeated']} repeated call(s)")
+    if row["false_blocks"]:
+        flags.append(f"{row['false_blocks']} false block(s)")
+    if row["false_allows"]:
+        flags.append(f"{row['false_allows']} false allow(s)")
+    if row["approval_wait"] >= 300:
+        flags.append(f"{row['approval_wait'] // 60} min waiting for approval")
+    return flags
+
+
+def session_directories(root, names=None):
+    sessions = root / ".shift/sessions"
+    if names:
+        return [sessions / name for name in names]
+    found = []
+
+    def walk(directory, prefix):
+        for child in sorted(directory.iterdir()) if directory.exists() else []:
+            if (child / "session.json").exists():
+                found.append((prefix + child.name, child))
+                walk(child / "agents", prefix + child.name + "/agents/")
+    walk(sessions, "")
+    return [path for _, path in found]
+
+
+def session(args):
+    directories = session_directories(ROOT, None if args.all else [args.name or "default"])
+    for directory in directories:
+        rows = session_review(directory)
+        name = str(directory.relative_to(ROOT / ".shift/sessions")) if directory.is_relative_to(ROOT / ".shift/sessions") else str(directory)
+        print(f"session {name}: {len(rows)} turn(s)")
+        print("  turn  status     rounds  tools  wait   judge  notes")
+        for row in rows:
+            judge_text = f"{row['judged']}" + (f" (-{row['false_blocks']}b)" if row["false_blocks"] else "") + (f" (-{row['false_allows']}a)" if row["false_allows"] else "")
+            print(f"  {row['turn']:>4}  {str(row['status'])[:9]:<9}  {row['rounds']:>6}  {row['tools']:>5}  {row['approval_wait']:>4}s  {judge_text:<6} {'; '.join(session_flags(row))}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -582,9 +793,18 @@ def main():
     dogfooder.add_argument("--context-limit", type=int, default=131072)
     dogfooder.add_argument("--timeout", type=int, default=1800)
     dogfooder.add_argument("--run-id")
+    judger = commands.add_parser("judge", help="replay judged actions through a judge model and report agreement")
+    judger.add_argument("--session", help="session whose judge.jsonl to replay (default: default)")
+    judger.add_argument("--file", help="a judge.jsonl or cases file to replay")
+    judger.add_argument("--cases", action="store_true", help="the fixed regression set in evals/judge/cases.jsonl; exits 1 on any disagreement")
+    judger.add_argument("--model", help="PROVIDER/MODEL for the judge; defaults to the agent's judge-model or its own model")
+    judger.add_argument("--output", help="write the per-case rows as JSON lines")
+    reviewer = commands.add_parser("session", help="per-turn review of a session's receipts, events and judge log")
+    reviewer.add_argument("name", nargs="?", help="session name, default 'default' (subagents: PARENT/agents/CHILD)")
+    reviewer.add_argument("--all", action="store_true", help="every session in the project, subagents included")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
-     "dogfood": dogfood}[args.command](args)
+     "dogfood": dogfood, "judge": judge, "session": session}[args.command](args)
 
 
 if __name__ == "__main__":

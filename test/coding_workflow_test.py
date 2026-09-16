@@ -905,6 +905,22 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("matches across", output)
         self.assertIn("one  gen=", output)
 
+    def test_judge_records_replay_through_the_backend(self):
+        Provider.judge_requests = 0
+        self.shift("/mode autopilot\nlist it\n/quit\n", plan=[tool_call("run", {"argv": ["ls", "notes.txt"]}), answer("done")])
+        (record,) = [json.loads(l) for l in (self.state() / "judge.jsonl").read_text().splitlines() if l.strip()]
+        self.assertEqual((record["tool"], record["arguments"]["argv"], record["mode"]), ("run", ["ls", "notes.txt"], "autopilot"))
+        self.assertEqual(record["user_messages"], ["list it"]);self.assertIn("run ls notes.txt", record["preview"])
+        record["expected"] = "allow"
+        cases = self.project / "cases.jsonl";cases.write_text(json.dumps(record) + "\n")
+        Provider.plan = []
+        result = subprocess.run([BIN, "--agent", str(self.agent), "--judge-replay", str(cases)], text=True, capture_output=True,
+                                cwd=self.project, env=self.env, timeout=60, stdin=subprocess.DEVNULL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (replayed,) = [json.loads(l) for l in result.stdout.splitlines() if l.startswith("{")]
+        self.assertEqual(replayed["replay"]["verdict"], "allow");self.assertEqual(replayed["expected"], "allow")
+        self.assertIn("fake", replayed["replay"]["model"])
+
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(
             '/allow-run "sh -c" project\n/allow-run\nrun it\n/quit\n',

@@ -122,7 +122,15 @@ disagreed. `/judge on` keeps the judge for autopilot without the manual-mode
 shadowing; with `/judge off`, autopilot asks for anything the rules do not
 resolve, so nothing runs everything unattended. The
 receipt records `judged`, `blocked` and `judge_ms`, and blocks land in the Log
-tab as `[judge]` entries. Every answer you give an approval prompt (`y`, `a`,
+tab as `[judge]` entries. Each `judge.jsonl` record also stores the action's
+arguments, the run preview and the user messages the judge saw, so
+`scripts/evals.py judge --session NAME` can replay a session's decisions
+through any judge model (`--model PROVIDER/MODEL`) and report agreement with
+your answers, false blocks and false allows; `--cases` runs the fixed set in
+`evals/judge/cases.jsonl` and fails on any disagreement. `scripts/evals.py
+session NAME` (or `--all`) prints a per-turn review of a session: rounds, tool
+failures, repeated calls, minutes spent waiting for approval, judge
+disagreements and turns that ended at a limit. Every answer you give an approval prompt (`y`, `a`,
 `n`, Esc or a typed reply) lands there too as an `[approval]` entry naming the
 tool and its subject.
 

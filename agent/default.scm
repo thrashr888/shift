@@ -9,7 +9,7 @@
 (define agent-stream? #t)
 (define agent-thinking #f)
 (define agent-keep-alive "10m")
-(define agent-max-tool-rounds 6)
+(define agent-max-tool-rounds 12)
 (define agent-compaction-threshold 80)
 (define agent-compaction-keep-recent 24)
 
