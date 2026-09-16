@@ -47,7 +47,7 @@
     (test-equal "resume is not a currently active provider round" 0 (latest "round")))
   (emit generation 9000 (json-read "{\"prompt_eval_count\":8600}") 3)
   (test-equal "completion event uses renderer prompt_tokens key" 8600 (latest "prompt_tokens"))
-  (test-equal "legacy prompt key retained" 8600 (latest "prompt"))
+  (test-equal "the prompt key the panes and telemetry read is kept" 8600 (latest "prompt"))
   (test-equal "completion has same max-rounds field" 6 (latest "max_rounds"))
   (setting-set! 'mode 'plan)
   (emit generation #f)

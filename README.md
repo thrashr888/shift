@@ -10,6 +10,18 @@ better than editing and restarting a conventional extension.
 
 ![The Shift terminal interface in the Acid theme, with the project's SHIFT pane open beside an empty transcript](docs/assets/tui-acid.png)
 
+## Install
+
+```sh
+brew install thrashr888/tap/shift
+shift-agent
+```
+
+The command is `shift-agent`, because `shift` is a shell builtin in every POSIX
+shell. The formula pulls Guile 3, ripgrep and Python 3 and compiles the runtime
+once at install. Run it inside a project; state lives in that project's
+`.shift/`. From a checkout, `./bin/shift-agent` is the same launcher.
+
 ## Principle: making it mine
 
 Shift should become the user's own instrument. Identity, appearance, layout, and
@@ -99,14 +111,6 @@ to watch off; pass `--watch` to opt in there.
 ```sh
 ./bin/shift-agent
 make
-```
-
-Or install it from the tap. The command is `shift-agent`, because `shift` is a
-shell builtin in every POSIX shell:
-
-```sh
-brew install thrashr888/tap/shift
-shift-agent
 ```
 
 The TUI uses Python 3's standard-library curses adapter around the same Guile
@@ -406,7 +410,7 @@ itself, so clients register the URL (`.codex/config.toml` does) and attach to
 the terminal you already have open.
 
 See [daily-driver MCP details](docs/daily-driver.md#live-mcp) for policy,
-transport, session persistence, and the legacy Python supervisor.
+transport, and session persistence.
 
 ## Skills
 
@@ -555,7 +559,6 @@ src/live-agent/main.scm       interactive shell
 src/live-agent/builtins.scm   fixed, process-owned built-in selection
 extensions/shift/mcp.scm     in-process HTTP and stdio MCP server
 extensions/shift/claude.scm  native Claude provider
-extensions/shift/shift_mcp.py legacy multi-process supervisor
 extensions/shift/ollama.scm    native Ollama provider
 extensions/shift/openai.scm    OpenAI-compatible provider
 extensions/shift/http.scm      shared bounded curl transport
@@ -564,7 +567,7 @@ extensions/shift/otel.py      optional Phoenix/OTLP exporter
 bin/shift-agent               the entry point (shift is a shell builtin)
 .codex/config.toml            local MCP registration over HTTP
 extensions/README.md          artifact contract
-test/*                        Scheme runtime tests plus MCP integration test
+test/*                        Scheme runtime tests plus Python integration tests
 ```
 
 The internal Guile module namespace remains `(live-agent ...)`.

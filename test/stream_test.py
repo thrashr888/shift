@@ -12,8 +12,6 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "extensions/shift"))
-from shift_mcp import McpServer  # noqa: E402
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -66,7 +64,8 @@ class Provider(BaseHTTPRequestHandler):
         pass
 
 
-class ReviewRegressions(unittest.TestCase):
+class StreamRegressions(unittest.TestCase):
+    """Unfinished provider streams never become history; suite failures fail the build."""
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="shift-regressions-")
         self.root = Path(self.temp.name)
@@ -94,104 +93,32 @@ class ReviewRegressions(unittest.TestCase):
             "http://127.0.0.1:11434", f"http://127.0.0.1:{self.provider.server_port}"
         )
         (self.root / "agent/default.scm").write_text(image)
-        self.bridge = McpServer(self.root, self.root / ".shift")
 
     def tearDown(self):
         Provider.release.set()
-        self.bridge.close()
         self.provider.shutdown()
         self.provider.server_close()
         self.temp.cleanup()
 
-    def session(self, name="parent"):
-        session = self.bridge._session({"session": name})
-        self.assertEqual(session.start()["state"], "ready")
-        return session
+    def cli(self, stdin, *flags):
+        return subprocess.run(
+            [str(self.root / "bin/shift-agent"), "--no-watch", "--no-mcp", "--agent", str(self.root / "agent/default.scm"),
+             "--state-dir", str(self.root / ".shift"), "--session", "parent", *flags],
+            input=stdin, text=True, capture_output=True, timeout=60, cwd=self.root,
+            env={**os.environ, "XDG_CONFIG_HOME": str(self.root / "config"), "SHIFT_PROVIDER_RETRIES": "0"},
+        )
 
     def checkpoint(self, name):
-        return json.loads(
-            (self.root / ".shift/sessions" / name / "session.json").read_text()
-        )
-
-    def child(self, **kwargs):
-        args = dict(
-            parent_session="parent",
-            child_session="child",
-            tools=["read"],
-            task="answer",
-            timeout_seconds=5,
-        )
-        args.update(kwargs)
-        return self.bridge._run_subagent(args)
-
-    def test_timeout_remains_cancellable_and_does_not_checkpoint(self):
-        session = self.session()
-        Provider.mode = "slow"
-        before = self.checkpoint("parent")
-        self.assertEqual(session.send("wait", 0.2)["state"], "timeout")
-        self.assertTrue(session.status()["busy"])
-        with self.assertRaisesRegex(RuntimeError, "busy"):
-            session.send("do not queue this")
-        cancelled = session.cancel(5)
-        self.assertEqual(cancelled["status"], "cancelled", cancelled)
-        self.assertFalse(session.status()["busy"])
-        self.assertEqual(self.checkpoint("parent")["history"], before["history"])
-
-    def test_failed_child_is_not_a_successful_join(self):
-        self.session()
-        Provider.mode = "error"
-        result = self.child()
-        self.assertEqual(result["status"], "error", result)
-        self.assertEqual(result["state"], "ready")
-        for name in ("parent", "child"):
-            spans = [
-                json.loads(line)
-                for line in (self.root / ".shift/sessions" / name / "traces.jsonl")
-                .read_text()
-                .splitlines()
-            ]
-            supervised = [
-                span for span in spans if span["name"].startswith("subagent.")
-            ]
-            self.assertTrue(supervised)
-            self.assertTrue(all(span["status"] == "ERROR" for span in supervised))
-
-    def test_missing_or_invalid_extension_never_calls_provider(self):
-        self.session()
-        (self.root / "extensions/broken.scm").write_text("(set! missing-name 1)")
-        for name in ("missing", "broken"):
-            with self.assertRaisesRegex(RuntimeError, "extension failed"):
-                self.child(child_session=name, extension=name)
-            self.assertFalse(
-                self.bridge._session({"session": name}).status()["running"]
-            )
-        self.assertEqual(Provider.calls, 0)
-
-    def test_fork_lineage_survives_turn_reset_and_resume(self):
-        self.session()
-        fork = self.bridge._fork_session("parent", "child")["fork"]
-        child = self.session("child")
-        self.assertEqual(child.send("answer", 5)["status"], "ok")
-        child.send("/reset")
-        child.stop()
-        child.start(mode="resume")
-        self.assertEqual(self.checkpoint("child")["fork"], fork)
+        return json.loads((self.root / ".shift/sessions" / name / "session.json").read_text())
 
     def test_unfinished_streams_never_enter_history(self):
-        session = self.session()
-        for mode in (
-            "truncated",
-            "truncated-tool",
-            "length",
-            "ollama-truncated",
-            "ollama-length",
-        ):
-            if mode.startswith("ollama"):
-                session.send("/eval (define agent-provider 'ollama)")
+        self.cli("/quit\n")
+        for mode in ("truncated", "truncated-tool", "length", "ollama-truncated", "ollama-length"):
             Provider.mode = mode
             with self.subTest(mode=mode):
-                result = session.send("answer", 5)
-                self.assertEqual(result["status"], "error", result)
+                flags = ["--set", 'agent-provider="ollama"'] if mode.startswith("ollama") else ["--set", 'agent-provider="openai"']
+                result = self.cli("answer\n/quit\n", *flags)
+                self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(self.checkpoint("parent")["history"], [])
                 self.assertEqual(self.checkpoint("parent")["next_turn"], 1)
                 spans = (self.root / ".shift/sessions/parent/traces.jsonl").read_text()

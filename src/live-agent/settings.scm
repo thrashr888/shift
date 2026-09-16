@@ -37,7 +37,7 @@
 (define (file-entries path)
   (if (and path (file-exists? path))
       (let ((value (call-with-input-file path (lambda (p) (json-read (get-string-all p))))))
-        (map (lambda (entry) (cons (rename (string->symbol (car entry))) (decode (rename (string->symbol (car entry))) (cdr entry))))
+        (map (lambda (entry) (cons (string->symbol (car entry)) (decode (string->symbol (car entry)) (cdr entry))))
              (json-object-entries value)))
       '()))
 ;; (allow-run! prefix scope) persists an argv prefix at that scope and makes
@@ -167,8 +167,6 @@
       (lambda ()
         (unless (port-closed? port) (close-port port))
         (when (file-exists? temporary) (delete-file temporary))))))
-;; Keys that were renamed; files written by earlier builds still load.
-(define (rename key) (if (eq? key 'show-tools) 'show-work key))
 (define (load-settings! path source)
   (when (file-exists? path)
     (when (> (stat:size (stat path)) 32768) (error "settings file too large" path))
@@ -176,7 +174,7 @@
       (unless (json-object? value) (error "settings must be an object" path))
       (for-each
        (lambda (entry)
-         (let* ((key (rename (string->symbol (car entry)))) (value (decode key (cdr entry))))
+         (let* ((key (string->symbol (car entry))) (value (decode key (cdr entry))))
            (unless (valid? key value) (error "invalid setting" path key))
            (cond
             ((memq key allow-keys) (allow-scope-set! source value key) (refresh-run-allow! key)

@@ -55,8 +55,7 @@ test: build
 	@set -e; for suite in sha256 changes patch receipt coding default-agent json provider provider-metadata provider-telemetry tools extensions runtime session trace prompt compaction recovery context daily ui skills settings mcp-client judge; do \
 	  GUILE_AUTO_COMPILE=0 guile $(GUILE_PATHS) test/run.scm test/$$suite.scm; \
 	done
-	python3 test/session_bridge_test.py
-	python3 test/regressions.py
+	python3 test/stream_test.py
 	python3 test/daily_driver_test.py
 	python3 test/claude_test.py
 	python3 test/coding_workflow_test.py

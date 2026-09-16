@@ -25,7 +25,7 @@
 (test-eq "autopilot lets a sandboxed run go without the judge" 'allow (tool-decision 'autopilot "run" (json-object) '() '() #t))
 (test-eq "plan still denies sandboxed runs" 'deny (tool-decision 'plan "run" (json-object) '() '() #t))
 (test-eq "a sandboxed flag on another tool changes nothing" 'ask (tool-decision 'manual "write" (json-object) '() '() #t))
-(test-eq "legacy modes are not silently allowed" 'deny (tool-decision 'accept "run" (json-object)))
+(test-eq "unknown modes are denied" 'deny (tool-decision 'accept "run" (json-object)))
 ;; MCP tools: hints decide plan mode, the scoped allowlist decides manual.
 (mcp-tool-hints (lambda (name)
   (cond ((string=? name "fake__ping") '((read-only . #t) (destructive . #f) (open-world . #f)))
@@ -53,13 +53,13 @@
 (test-assert "run-allowed? is exact on leading elements"
  (and (run-allowed? '("make" "check" "-j4") allow) (not (run-allowed? '("make" "test") allow))))
 (test-eq "manual cannot guess a shell approval" 'ask (tool-decision 'manual "shell" (json-object)))
-(define legacy
+(define idless
  (list (make-message "user" "read")
        (json-read "{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"function\":{\"name\":\"read\",\"arguments\":{\"path\":\"README.md\"}}}]}")
        (json-read "{\"role\":\"tool\",\"tool_name\":\"read\",\"content\":\"read result\"}")))
-(define normalized (normalize-messages legacy))
+(define normalized (normalize-messages idless))
 (define call-id (json-object-ref (car (json-array-items (json-object-ref (cadr normalized) "tool_calls"))) "id"))
-(test-equal "legacy calls and results get matching IDs" call-id (json-object-ref (caddr normalized) "tool_call_id"))
+(test-equal "calls without ids and their results get matching IDs" call-id (json-object-ref (caddr normalized) "tool_call_id"))
 (test-equal "normalization is stable" (json-write (apply json-array normalized))
  (json-write (apply json-array (normalize-messages normalized))))
 (define openai-messages (messages-for-provider 'openai normalized))
@@ -123,7 +123,7 @@
  (not (string-contains (json-write (apply json-array (messages-for-provider 'openai signed-history))) "opaque")))
 (test-error "truncated Claude response rejected" #t
  (parse-claude-response (json-read "{\"stop_reason\":\"max_tokens\",\"content\":[]}") "claude-haiku-4-5-20251001"))
-(test-error "orphan tool result rejected" #t (normalize-messages (list (caddr legacy))))
+(test-error "orphan tool result rejected" #t (normalize-messages (list (caddr idless))))
 (test-assert "token estimate includes tool schemas"
  (> (estimate-input-tokens normalized '("read")) (estimate-input-tokens normalized '())))
 (test-assert "output space reserved" (context-over-budget? 7000 10000 2000))

@@ -81,8 +81,8 @@ Pages with GitHub Actions as its source. Deployments are manual, not triggered
 by pushes or pull requests.
 
 The quickstart uses the launcher on `main`, which opens the curses interface by
-default in an interactive terminal; `--tui` remains a compatibility alias. Keep
-the site copy in step with the published launcher.
+default in an interactive terminal. Keep the site copy in step with the
+published launcher; the command is `shift-agent`.
 
 After explicit approval to publish:
 

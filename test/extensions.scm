@@ -6,7 +6,7 @@
 (test-begin "extensions")
 
 (define test-root
-  (string-append "/tmp/lisp-agent-extensions-test-" (number->string (getpid))))
+  (string-append "/tmp/shift-extensions-test-" (number->string (getpid))))
 (define extension-root (string-append test-root "/extensions"))
 (define state-root (string-append test-root "/state"))
 (system* "mkdir" "-p" test-root)
