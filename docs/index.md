@@ -20,6 +20,7 @@ One line per document, then the open work those documents still describe.
 | [plugins-rfc.md](plugins-rfc.md) | RFC: plugins as folders of data that bundle skills, MCP servers, panes, themes, allowlist proposals and live-image artifacts; implemented, seven bundled. |
 | [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [quality-rfc.md](quality-rfc.md) | RFC: judge evals, session review, compaction scoring, diagnostics, hardening, the runtime handoff and the live-repair proof, in that order. |
+| [context-notes-rfc.md](context-notes-rfc.md) | RFC: compaction the agent does itself, after Codex's context management: a reminder, a notes tool, an explicit new_context reset with pointers; open questions listed. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
 Pane packs have a published reference at
@@ -36,6 +37,8 @@ Packaging:
   - **Export and promotion.** Session export and sharing, and a reviewed path from
     an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
   - **Packs.** File/URL extension packs ([daily-driver-plan](daily-driver-plan.md)).
+Features:
+  - **Context notes.** Reminder, notes tool and explicit reset instead of a summary ([context-notes-rfc](context-notes-rfc.md)), pending the RFC's two questions.
 Evals/Quality:
   - **Job resource limits.** Memory ceilings for jobs and subagents; macOS does not honour RLIMIT_AS and the run path has no shell ([quality-rfc](quality-rfc.md)).
   - **Symlink and race analysis** of the filesystem confinement ([gaps-with-pi](gaps-with-pi.md)).
