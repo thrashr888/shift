@@ -5,7 +5,9 @@ each step landing with tests. Implemented so far: 1 (judge evals), 2
 (session review), 3 (compaction quality), 4 (diagnostics) and 5 except the
 resource limits: the authority audit (`test/authority.scm` against
 `test/authority-allowlist.txt`), the seeded parser fuzz suite, secret
-redaction, `trace-content`, and the Ubuntu test workflow are in. 6 (the `/upgrade` handoff with `runtime.version` on spans) is in. Memory
+redaction, `trace-content`, and the Ubuntu test workflow are in. 6 (the `/upgrade` handoff with `runtime.version` on spans) and 7 (five
+live-repair tasks under `evals/live-repair`, run both ways by
+`scripts/evals.py live-repair`) are in; the first result table is below. Memory
 ceilings for jobs are not enforced; macOS does not honour RLIMIT_AS and the
 run path deliberately has no shell to set one.
 

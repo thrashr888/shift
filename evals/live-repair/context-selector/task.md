@@ -1,0 +1,1 @@
+When I ask about the runbook, you never read docs/runbook.md. Fix your live context selection so that any message mentioning the word runbook selects docs/runbook.md, and other messages select nothing.

@@ -9,6 +9,7 @@
     scripts/evals.py judge [--cases|--session N] replay judged actions through a judge model; report agreement
     scripts/evals.py session [NAME|--all]        per-turn review: rounds, failures, waits, judge disagreements
     scripts/evals.py compaction [--replay]       score compaction summaries by durable-fact coverage
+    scripts/evals.py live-repair [--tasks A,B]   fix behavior defects with live_eval and with edit-plus-reload; compare
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -721,6 +722,104 @@ def compaction(args):
                 print(f"    missing: {item['text']}")
 
 
+# --- the live-repair proof (docs/quality-rfc.md §7) --------------------------------
+
+REPAIR = EVALS / "live-repair"
+MODES = {"live": {"ceiling": "read,rg,live_eval,traces",
+                  "note": "This is a running Shift session: change your own live behavior with live_eval. Do not edit files."},
+         "reload": {"ceiling": "read,rg,write,edit,apply_patch,status,diff",
+                    "note": "Your agent file is agent.scm in this directory; edit it with edit or write so the change takes effect on reload. Do not use live_eval."}}
+
+
+def repair_tasks(names=None):
+    names = names or sorted(p.name for p in REPAIR.iterdir() if p.is_dir())
+    for name in names:
+        for file in ("task.md", "defect.scm", "check.scm"):
+            if not (REPAIR / name / file).is_file():
+                raise ValueError(f"missing {name}/{file}")
+    return names
+
+
+def repair_workspace(task, mode, run_id):
+    work = WORK / "live-repair" / run_id / f"{task}-{mode}"
+    shutil.rmtree(work, ignore_errors=True)
+    (work / "docs").mkdir(parents=True)
+    (work / "docs/runbook.md").write_text("# Runbook\n\nUse port 4317 for the collector.\n")
+    (work / "agent.scm").write_text((REPAIR / "agent.scm").read_text() + "\n" + (REPAIR / task / "defect.scm").read_text())
+    (work / ".shift").mkdir()
+    return work
+
+
+def check_repair(agent, state, session_json, check):
+    """Run the Scheme grader: (resolved, survived_reload)."""
+    result = sh(["guile", "--no-auto-compile", "-L", str(ROOT / "src"), "-L", str(ROOT / "extensions"),
+                 str(ROOT / "scripts/live_repair_check.scm"), str(agent), str(state), str(session_json), str(check)],
+                cwd=ROOT, timeout=120, check=False)
+    lines = result.stdout.splitlines()
+    return ("check resolved" in lines, "after-reload resolved" in lines)
+
+
+def live_repair(args):
+    names = repair_tasks(args.tasks.split(",") if args.tasks else None)
+    modes = [args.mode] if args.mode else ["live", "reload"]
+    run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S") + "-live-repair"
+    run_dir = RESULTS / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    (run_dir / "receipts").mkdir();(run_dir / "logs").mkdir()
+    env = environment()
+    env["XDG_CONFIG_HOME"] = str(run_dir / "empty-config")
+    env["SHIFT_PLUGINS"] = "off"
+    records = []
+    for task in names:
+        for mode in modes:
+            work = repair_workspace(task, mode, run_id)
+            agent, state = work / "agent.scm", work / ".shift"
+            session_json = state / "sessions/repair/session.json"
+            check = REPAIR / task / "check.scm"
+            baseline, _ = check_repair(agent, state, session_json, check)
+            if baseline:
+                raise RuntimeError(f"{task}: the defect does not fail the check")
+            prompt = (REPAIR / task / "task.md").read_text().strip() + "\n\n" + MODES[mode]["note"]
+            receipt = run_dir / "receipts" / f"{task}-{mode}.json"
+            env_mode = {**env, "SHIFT_TOOL_CEILING": MODES[mode]["ceiling"]}
+            command = [str(ROOT / "bin/shift-agent"), "--agent", str(agent), "--state-dir", str(state), "--session", "repair",
+                       "--mode", "autopilot", "--print", prompt, "--receipt", str(receipt), "--model", args.model,
+                       "--set", f"agent-max-tool-rounds={args.rounds}", "--set", 'agent-keep-alive="1m"']
+            log(f"live-repair {task} [{mode}]: running {args.model}")
+            started = time.monotonic()
+            exit_code = logged_run(command, work, env_mode, args.timeout, run_dir / "logs" / f"{task}-{mode}")
+            wall = round(time.monotonic() - started, 1)
+            resolved, survived = check_repair(agent, state, session_json, check)
+            record = {"task": task, "mode": mode, "model": args.model, "exit_code": exit_code, "wall_s": wall,
+                      "resolved": resolved, "survived_reload": survived if mode == "live" else None,
+                      "failure_class": "wall_timeout" if exit_code == 124 else "completed" if exit_code == 0 else "turn_failed",
+                      **collect(receipt)}
+            records.append(record)
+            with (run_dir / "results.jsonl").open("a") as handle:
+                handle.write(json.dumps(record) + "\n")
+            log(f"  resolved={resolved} · {record['rounds']} rounds · {wall}s")
+    print(repair_report(records))
+    return records
+
+
+def repair_report(records):
+    lines = ["task                live                     reload"]
+    by = {(r["task"], r["mode"]): r for r in records}
+    for task in sorted({r["task"] for r in records}):
+        cells = []
+        for mode in ("live", "reload"):
+            r = by.get((task, mode))
+            cells.append("-" if not r else f"{'ok ' if r['resolved'] else 'no '} {r['rounds']:>2} rounds {r['wall_s']:>6}s")
+        lines.append(f"{task:<18}  {cells[0]:<24} {cells[1]}")
+    for mode in ("live", "reload"):
+        rows = [r for r in records if r["mode"] == mode]
+        if rows:
+            walls = sorted(r["wall_s"] for r in rows);rounds = sorted(r["rounds"] for r in rows)
+            extra = f" · survived reload {sum(bool(r['survived_reload']) for r in rows)}/{len(rows)}" if mode == "live" else ""
+            lines.append(f"{mode}: resolved {sum(r['resolved'] for r in rows)}/{len(rows)} · median {rounds[len(rounds)//2]} rounds · median {walls[len(walls)//2]}s{extra}")
+    return "\n".join(lines)
+
+
 # --- session review (docs/quality-rfc.md §2) ---------------------------------------
 
 EVENT_KIND = re.compile(r"\(kind \. ([a-z-]+)\)")
@@ -910,12 +1009,19 @@ def main():
     compactor.add_argument("--all", action="store_true")
     compactor.add_argument("--replay", action="store_true", help="summarize each stored prefix again with the current or --model model")
     compactor.add_argument("--model")
+    repairer = commands.add_parser("live-repair", help="fix each behavior defect with live_eval and with edit-plus-reload; compare")
+    repairer.add_argument("--tasks", help="comma-separated task names under evals/live-repair")
+    repairer.add_argument("--mode", choices=["live", "reload"], help="only one of the two ways")
+    repairer.add_argument("--model", default="ollama/qwen3.8:27b-mlx")
+    repairer.add_argument("--rounds", type=int, default=12)
+    repairer.add_argument("--timeout", type=int, default=900)
+    repairer.add_argument("--run-id")
     reviewer = commands.add_parser("session", help="per-turn review of a session's receipts, events and judge log")
     reviewer.add_argument("name", nargs="?", help="session name, default 'default' (subagents: PARENT/agents/CHILD)")
     reviewer.add_argument("--all", action="store_true", help="every session in the project, subagents included")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
-     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction}[args.command](args)
+     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction, "live-repair": live_repair}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -212,6 +212,40 @@ class CompactionQuality(unittest.TestCase):
         self.assertTrue(any("compaction 1: summary covers 0/3 durable facts · lossy" in l for l in lines), lines)
         self.assertTrue(any("compaction 2: summary covers 3/3 durable facts" in l and "lossy" not in l for l in lines), lines)
 
+class LiveRepair(unittest.TestCase):
+    def test_grader_needs_the_fix_to_survive_a_reload(self):
+        with tempfile.TemporaryDirectory(prefix="shift-repair-") as tmp:
+            work = Path(tmp);(work / ".shift/sessions/repair").mkdir(parents=True)
+            (work / "agent.scm").write_text((evals.REPAIR / "agent.scm").read_text() + (evals.REPAIR / "agent-name/defect.scm").read_text())
+            session = work / ".shift/sessions/repair/session.json"
+            session.write_text('{"patches":[]}')
+            self.assertEqual(evals.check_repair(work / "agent.scm", work / ".shift", session, evals.REPAIR / "agent-name/check.scm"), (False, False))
+            session.write_text(json.dumps({"patches": ['(define agent-name "atlas")']}))
+            self.assertEqual(evals.check_repair(work / "agent.scm", work / ".shift", session, evals.REPAIR / "agent-name/check.scm"), (True, True))
+
+    def test_run_compares_both_modes_with_a_fake_model(self):
+        with tempfile.TemporaryDirectory(prefix="shift-repair-run-") as tmp:
+            root = Path(tmp)
+            def fake_model(command, repo, env, timeout, prefix):
+                receipt = Path(command[command.index("--receipt") + 1])
+                receipt.write_text(json.dumps({"status": "ok", "rounds": 2, "tool_calls": {"live_eval": 1}, "tokens": {"prompt": 10, "completion": 5}, "changed": [], "runs": []}))
+                session = Path(command[command.index("--state-dir") + 1]) / "sessions/repair/session.json"
+                session.parent.mkdir(parents=True, exist_ok=True)
+                if "live_eval" in env["SHIFT_TOOL_CEILING"]:
+                    session.write_text(json.dumps({"patches": ['(define agent-name "atlas")']}))
+                else:
+                    session.write_text('{"patches":[]}')
+                    agent = Path(command[command.index("--agent") + 1])
+                    agent.write_text(agent.read_text().replace('(define agent-name "repair-fixture")', '(define agent-name "atlas")'))
+                return 0
+            with patch.multiple(evals, WORK=root / "work", RESULTS=root / "results"), \
+                 patch.object(evals, "logged_run", side_effect=fake_model), patch.object(evals, "environment", return_value={}):
+                records = evals.live_repair(argparse.Namespace(tasks="agent-name", mode=None, model="fake", rounds=4, timeout=10, run_id="trial"))
+            self.assertEqual([(r["mode"], r["resolved"], r["survived_reload"]) for r in records], [("live", True, True), ("reload", True, None)])
+            report = evals.repair_report(records)
+            self.assertIn("live: resolved 1/1", report);self.assertIn("reload: resolved 1/1", report)
+            self.assertTrue((root / "results/trial/results.jsonl").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
