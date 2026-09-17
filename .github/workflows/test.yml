@@ -22,9 +22,13 @@ jobs:
       - name: Install Guile and ripgrep
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q guile-3.0 ripgrep
-          # Debian keeps guild beside the real guile binary and registers no `guild` alternative.
-          command -v guild >/dev/null || sudo ln -s "$(dirname "$(readlink -f "$(command -v guile)")")/guild" /usr/local/bin/guild
+          # guild (the compiler) ships in guile-3.0-dev on Debian and Ubuntu.
+          sudo apt-get install -y -q guile-3.0 guile-3.0-dev ripgrep
+          if ! command -v guild >/dev/null; then
+            candidate="$(ls /usr/bin/guild* /usr/lib/*/guile/3.0/bin/guild 2>/dev/null | head -1)"
+            echo "guild candidates:"; ls -la /usr/bin/guild* /usr/lib/*/guile/3.0/bin/ 2>/dev/null || true
+            [ -n "$candidate" ] && sudo ln -s "$candidate" /usr/local/bin/guild
+          fi
           guile --version | head -1; guild --version | head -1
       - name: Run the suite
         run: make test
