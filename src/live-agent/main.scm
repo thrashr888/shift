@@ -2070,7 +2070,7 @@
 ;; One judge.jsonl record carries everything a replay needs: the action, the
 ;; preview and the user messages the judge saw, plus the mode and allowlist.
 (define (judge-record generation name arguments preview verdict human)
-  (json-object (cons "turn" (current-turn)) (cons "tool" name)
+  (json-object (cons "turn" (current-turn)) (cons "at" (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time)))) (cons "tool" name)
                (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
                (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
                (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))

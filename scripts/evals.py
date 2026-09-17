@@ -801,7 +801,7 @@ def session_review(directory):
             if not line.strip():
                 continue
             record = json.loads(line)
-            row = row_for(record.get("turn"))
+            row = row_for(record.get("turn"), parse_time(record["at"]) if record.get("at") else None)
             row["judged"] += 1
             verdict, human = record.get("verdict"), record.get("human")
             if verdict == "block" and human == "allow":

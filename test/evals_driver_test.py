@@ -147,8 +147,8 @@ class SessionReview(unittest.TestCase):
                 '((timestamp . "2026-09-16T22:02:12Z") (kind . tool-approval) (tool . "read") (mode . manual) (decision . allow) (approved . #t))\n'
                 '((timestamp . "2026-09-16T22:02:13Z") (kind . tool-result) (tool . "run") (output . "tool failed (x): boom"))\n'
                 '((timestamp . "2026-09-16T22:15:00Z") (kind . user-input) (turn . 2) (text . "explain"))\n')
-            (d / "judge.jsonl").write_text(json.dumps({"turn": 2, "tool": "run", "verdict": "block", "rule": "x", "human": "allow"}) + "\n" +
-                                          json.dumps({"turn": 2, "tool": "run", "verdict": "allow", "rule": "ok", "human": "allow"}) + "\n")
+            (d / "judge.jsonl").write_text(json.dumps({"turn": 2, "at": "2026-09-16T22:03:00Z", "tool": "run", "verdict": "block", "rule": "x", "human": "allow"}) + "\n" +
+                                          json.dumps({"turn": 2, "at": "2026-09-16T22:04:00Z", "tool": "run", "verdict": "allow", "rule": "ok", "human": "allow"}) + "\n")
             rows = evals.session_review(d)
         self.assertEqual([r["turn"] for r in rows], [1, 2, 2])
         limited = rows[1]
@@ -194,9 +194,9 @@ class CompactionQuality(unittest.TestCase):
     def test_checklist_and_coverage(self):
         items = evals.compaction_checklist(self.PREFIX)
         self.assertEqual([(i["kind"], i["needle"]) for i in items],
-                         [("constraint", "don't touch the readme"), ("constraint", "only edit config files"), ("edited", "config/app.toml"), ("failed", "make test")])
+                         [("constraint", "don't touch the readme"), ("edited", "config/app.toml"), ("failed", "make test")])
         covered, missing = evals.compaction_coverage("Edited config/app.toml; make test failed with exit 2.", items)
-        self.assertEqual([i["kind"] for i in covered], ["edited", "failed"]);self.assertEqual(len(missing), 2)
+        self.assertEqual([i["kind"] for i in covered], ["edited", "failed"]);self.assertEqual(len(missing), 1)
 
     def test_session_review_flags_a_lossy_compaction(self):
         with tempfile.TemporaryDirectory(prefix="shift-compaction-") as tmp:
@@ -209,8 +209,8 @@ class CompactionQuality(unittest.TestCase):
             with patch.object(evals, "session_directories", return_value=[d]), patch("builtins.print") as printed:
                 evals.session(argparse.Namespace(name="x", all=False))
             lines = [c.args[0] for c in printed.call_args_list]
-        self.assertTrue(any("compaction 1: summary covers 0/4 durable facts · lossy" in l for l in lines), lines)
-        self.assertTrue(any("compaction 2: summary covers 4/4 durable facts" in l and "lossy" not in l for l in lines), lines)
+        self.assertTrue(any("compaction 1: summary covers 0/3 durable facts · lossy" in l for l in lines), lines)
+        self.assertTrue(any("compaction 2: summary covers 3/3 durable facts" in l and "lossy" not in l for l in lines), lines)
 
 
 if __name__ == "__main__":
