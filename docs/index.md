@@ -38,8 +38,6 @@ Packaging:
   - **Judge evals.** An evals `judge` subcommand that replays `judge.jsonl` through a candidate model and reports agreement ([autopilot-judge-rfc](autopilot-judge-rfc.md)).
   - **Packs.** File/URL extension packs ([daily-driver-plan](daily-driver-plan.md)).
 Evals/Quality:
-  - **Stable-runtime handoff.** The versioned supervisor for upgrading the trusted runtime in place ([live-updates](live-updates.md)).
-  - **Compaction quality.** A summary-quality evaluator and deterministic replay ([dogfooding](dogfooding.md), [gaps-with-pi](gaps-with-pi.md)).
-  - **The proof.** An evaluation showing that generation-attributed live repair beats edit-plus-reload on a realistic task set ([gaps-with-pi](gaps-with-pi.md), [evals-rfc](evals-rfc.md)).
-  - **Diagnostics.** LSP or compiler JSON alongside exit status ([coding-workflow-rfc](coding-workflow-rfc.md), [dogfooding](dogfooding.md)).
-  - **Hardening.** An authority audit of the Scheme evaluator, fuzzing, resource limits, secret redaction, trace privacy defaults, cross-platform testing([gaps-with-pi](gaps-with-pi.md)).
+  - **Job resource limits.** Memory ceilings for jobs and subagents; macOS does not honour RLIMIT_AS and the run path has no shell ([quality-rfc](quality-rfc.md)).
+  - **Symlink and race analysis** of the filesystem confinement ([gaps-with-pi](gaps-with-pi.md)).
+  - **The proof, continued.** Rerun the live-repair set as the sandbox teaches the model less painfully; edit-plus-reload still wins on rounds ([quality-rfc](quality-rfc.md)).
