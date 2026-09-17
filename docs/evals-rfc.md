@@ -101,6 +101,39 @@ output reserve. That fix is regression-tested; this batch has not been rerun
 with it. This rerun changes both provider and model, so it does not
 isolate the effect of retries or the finish nudge.
 
+## Seven-miss rerun, September 17, 2026
+
+The same seven instances, model (`ollama/qwen3.8:27b-mlx`), backend
+(agentkernel) and limits as the September 10 rerun, after the quality work in
+[quality-rfc.md](quality-rfc.md): failing runs lead with diagnostics, the
+autopilot judge gates mutations, secrets are redacted, and the judge prompt
+was corrected twice. Graded by the official harness
+(`evals/results/ollama-misses-7-after-quality`): **3 of 7 resolved**,
+against 1 of 7 on September 10.
+
+| Instance | Graded outcome and turn ending | Rounds | Prompt tokens | Output tokens | Wall seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `django__django-16877` | Resolved; completed, with a patch | 26 | 513,768 | 3,102 | 369.9 |
+| `sympy__sympy-15875` | Unresolved; round limit, with a patch | 41 | 2,358,351 | 8,678 | 1680.0 |
+| `sphinx-doc__sphinx-10435` | Unresolved; round limit, no edits | 41 | 2,444,582 | 4,890 | 829.9 |
+| `mwaskom__seaborn-3187` | Resolved; completed, with a patch | 40 | 2,139,555 | 3,267 | 704.6 |
+| `pylint-dev__pylint-8898` | Resolved; round limit, with a patch | 41 | 1,509,805 | 3,484 | 516.4 |
+| `sphinx-doc__sphinx-9461` | Unresolved; round limit, with a patch | 41 | 2,738,313 | 6,272 | 750.4 |
+| `django__django-15957` | Unresolved; token budget, no edits | 39 | 4,082,362 | 2,630 | 712.8 |
+
+Total: 15,786,736 prompt tokens, all uncached, and 32,323 output tokens over
+5564.0 seconds (92.7 minutes), excluding grading.
+
+Two of the three resolved instances, `django-16877` and `seaborn-3187`, were
+wrong or round-limited last time; `pylint-8898` resolved even though the turn
+ended at the round limit, because the patch on disk was already right.
+`sympy-15875`, the only instance resolved on September 10, hit the round limit
+this time with an incomplete patch. One run per instance on a local model is
+noisy, so read this as "better, on this slice, this time", not as a measured
+effect of any single change. The Sonnet 5 comparison over the full 25-instance
+slice could not run: the Anthropic key had reached its monthly usage limit
+until October 1.
+
 ## Dogfood assessment, September 10, 2026
 
 Two tasks were attempted with `ollama/qwen3.8:27b-mlx` against clean commit

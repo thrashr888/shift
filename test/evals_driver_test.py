@@ -25,6 +25,7 @@ class DogfoodDriver(unittest.TestCase):
 import json,sys
 from pathlib import Path
 assert not Path('evals').exists(), 'hidden fixtures leaked'
+assert sys.argv[sys.argv.index('--mode') + 1] == 'autopilot', 'print mode needs a real policy mode'
 assert Path('value.txt').read_text() == 'working tree'
 assert Path('untracked.txt').read_text() == 'included'
 Path('value.txt').write_text('fixed')
