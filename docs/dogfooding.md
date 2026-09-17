@@ -56,8 +56,9 @@ granting the inner model authority to accept its own runtime changes.
   model fallback.
 - Stable-runtime upgrades need the versioned supervisor/handoff described in
   `docs/live-updates.md`; only the user-owned live image updates in process.
-- The Scheme evaluator and filesystem confinement need deeper adversarial tests,
-  resource limits, secret redaction, and cross-platform validation.
+- The evaluator's allowlist is audited and the parsers fuzzed in the suite,
+  secrets are redacted and traces can be bounded; job resource limits and
+  symlink/race analysis remain open.
 - Durable checkpoints are local and gitignored under `.shift/`, with no
   built-in export or share workflow yet.
 

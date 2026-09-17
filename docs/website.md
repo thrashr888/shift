@@ -77,7 +77,8 @@ The WORKING label remains visible. There are no third-party scripts or fonts.
 ## Publish deliberately
 
 The public site is hosted at <https://thrashr888.github.io/shift/> using GitHub
-Pages with GitHub Actions as its source. Deployments are manual, not triggered
+Pages with GitHub Actions as its source (`.github/workflows/test.yml` runs
+`make test` on Ubuntu for every push; publishing is a separate manual workflow). Deployments are manual, not triggered
 by pushes or pull requests.
 
 The quickstart uses the launcher on `main`, which opens the curses interface by

@@ -2,8 +2,12 @@
 
 Status: RFC. Decisions are listed; implementation follows in the order below,
 each step landing with tests. Implemented so far: 1 (judge evals), 2
-(session review), 3 (compaction quality), 4 (diagnostics) and the
-redaction and trace-privacy parts of 5.
+(session review), 3 (compaction quality), 4 (diagnostics) and 5 except the
+resource limits: the authority audit (`test/authority.scm` against
+`test/authority-allowlist.txt`), the seeded parser fuzz suite, secret
+redaction, `trace-content`, and the Ubuntu test workflow are in. Memory
+ceilings for jobs are not enforced; macOS does not honour RLIMIT_AS and the
+run path deliberately has no shell to set one.
 
 ## What the real-world test showed
 
