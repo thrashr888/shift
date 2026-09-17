@@ -1,15 +1,29 @@
 (define-module (live-agent policy)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
-  #:export (mcp-tool-hints tool-decision run-argv-of run-allowed?))
+  #:export (normalize-argv mcp-tool-hints tool-decision run-argv-of run-allowed?))
 ;; No live-image binding can override this decision. Three modes: manual asks
 ;; before each tool except allowlisted runs, plan permits reads only, and
 ;; autopilot runs everything without asking. Nothing infers approval.
 (define (run-argv-of arguments)
-  (let ((value (json-object-ref arguments "argv" #f)))
-    (if (and (json-array? value) (every string? (json-array-items value)))
-        (json-array-items value)
-        '())))
+  (normalize-argv (json-object-ref arguments "argv" #f)))
+;; Models send argv as a JSON array of strings, an array with numbers, the
+;; array as a JSON string, or one command string; all of them become argv.
+;; Anything else yields '() and the caller reports the shape it wants.
+(define (normalize-argv value)
+  (define (items->strings items)
+    (if (every (lambda (x) (or (string? x) (number? x))) items)
+        (map (lambda (x) (if (number? x) (number->string x) x)) items)
+        '()))
+  (cond
+   ((json-array? value) (items->strings (json-array-items value)))
+   ((and (string? value) (string-prefix? "[" (string-trim value)))
+    (let ((parsed (catch #t (lambda () (json-read value)) (lambda _ #f))))
+      (if (json-array? parsed) (items->strings (json-array-items parsed)) '())))
+   ((and (string? value) (not (string-null? (string-trim-both value)))
+         (not (string-index value #\|)) (not (string-index value #\")) (not (string-index value #\')))
+    (string-tokenize value))
+   (else '())))
 ;; Exact leading-element match: ("cargo" "test") allows ("cargo" "test" "--" "x")
 ;; and never ("cargo" "publish").
 (define (run-allowed? argv prefixes)

@@ -223,9 +223,13 @@
   (and (tool-result-success? in-sub) (string-contains (output in-sub) "/sub\n")))
 (test-assert "cwd cannot escape the project"
   (not (tool-result-success? (run-tool (args (cons "argv" (json-array "pwd")) (cons "cwd" "../"))))))
-(test-assert "argv must be a non-empty string array"
+(test-assert "argv must be non-empty and shell syntax is refused"
   (and (not (tool-result-success? (run-tool (args (cons "argv" (json-array))))))
-       (not (tool-result-success? (run-tool (args (cons "argv" "ls")))))))
+       (not (tool-result-success? (run-tool (args (cons "argv" "cat a | sed -n 1p")))))))
+(test-assert "argv accepts a command string, a JSON-encoded array and numbers"
+  (and (string-contains (output (run-tool (args (cons "argv" "echo plain string")))) "plain string")
+       (string-contains (output (run-tool (args (cons "argv" "[\"echo\", \"encoded\", \"array\"]")))) "encoded array")
+       (string-contains (output (run-tool (args (cons "argv" (json-array "echo" 42))))) "42")))
 (test-assert "timeouts are bounded"
   (not (tool-result-success? (run-tool (args (cons "argv" (json-array "true")) (cons "timeout_seconds" 9999))))))
 (define big (run-tool (args (cons "argv" (json-array "sh" "-c" "i=0; while [ $i -lt 9000 ]; do echo line-$i-0123456789; i=$((i+1)); done")))))

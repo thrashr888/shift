@@ -1,4 +1,6 @@
 (define-module (live-agent tools)
+  #:use-module (srfi srfi-1)
+  #:use-module (ice-9 threads)
   #:use-module (ice-9 format)
   #:use-module (ice-9 popen)
   #:use-module (ice-9 textual-ports)
@@ -83,6 +85,7 @@
 ;; runtime data so ceilings and policy can refer to them even when disabled.
 (define coding-tool-names '("status" "diff" "apply_patch" "run" "job"))
 
+(define spawn-lock (make-mutex))
 (define max-tool-output (* 64 1024))
 (define max-write-input (* 256 1024))
 (define max-edit-input (* 512 1024))
@@ -112,10 +115,23 @@
       (error "tool argument must be a string" key))
     value))
 
+
+;; Inside an agentkernel sandbox the project is mounted at /workspace, and a
+;; model that has seen that path in run output uses it. On a host with no
+;; /workspace the prefix means the project root.
+(define (unalias-workspace requested)
+  (cond
+   ((not (string? requested)) requested)
+   ((file-exists? "/workspace") requested)
+   ((string=? requested "/workspace") ".")
+   ((string-prefix? "/workspace/" requested) (substring requested 11))
+   (else requested)))
+
 (define (resolve-existing-path requested working-directory label)
   (unless (and (string? requested) (not (string-null? requested)))
     (error "path must be a non-empty string" requested))
-  (let* ((root (canonicalize-path working-directory))
+  (let* ((requested (unalias-workspace requested))
+         (root (canonicalize-path working-directory))
          (candidate
           (canonicalize-path
            (if (absolute-file-name? requested)
@@ -144,7 +160,8 @@
 (define (resolve-write-path requested working-directory)
   (unless (and (string? requested) (not (string-null? requested)))
     (error "path must be a non-empty string" requested))
-  (let* ((root (canonicalize-path working-directory))
+  (let* ((requested (unalias-workspace requested))
+         (root (canonicalize-path working-directory))
          (unresolved
           (if (absolute-file-name? requested)
               requested
@@ -281,19 +298,67 @@
     (when (> size max-edit-input)
       (error "edit file exceeds the 512 KiB limit" size))
     (let* ((content (call-with-input-file candidate get-string-all))
-           (count (occurrence-count content old-text)))
-      (when (= count 0)
-        (error "old_text was not found" requested))
+           (count (occurrence-count content old-text))
+           (loose (and (= count 0) (not replace-all?) (loose-window content old-text))))
+      (when (and (= count 0) (not loose))
+        (error (string-append "old_text was not found in " requested (nearest-line-hint content old-text))))
       (when (and (> count 1) (not replace-all?))
         (error "old_text is ambiguous; set replace_all to true" count))
-      (let ((updated (replace-occurrences content old-text new-text)))
+      (let ((updated (if loose
+                         (string-append (substring content 0 (car loose))
+                                        (reindent new-text (cadr loose) (caddr loose))
+                                        (substring content (cadddr loose)))
+                         (replace-occurrences content old-text new-text))))
         (when (> (string-length updated) max-write-input)
           (error "edited content exceeds the 256 KiB write limit"
                  (string-length updated)))
         (finish-change
          "edit" root candidate content updated
-         (format #f "edited ~a occurrence~a in ~a"
-                 count (if (= count 1) "" "s") requested))))))
+         (if loose
+             (format #f "edited 1 occurrence in ~a (matched ignoring surrounding whitespace)" requested)
+             (format #f "edited ~a occurrence~a in ~a"
+                     count (if (= count 1) "" "s") requested)))))))
+
+;; When old_text is not in the file verbatim, one window of lines that
+;; matches after trimming each line is still an unambiguous target: models
+;; drop or add indentation far more often than they misremember words.
+;; Returns (start file-indent old-indent end) as character offsets, or #f.
+(define (loose-window content old-text)
+  (let* ((old-lines (let ((ls (string-split old-text #\newline)))
+                      (if (and (> (length ls) 1) (string-null? (last ls))) (drop-right ls 1) ls)))
+         (wanted (map string-trim-both old-lines))
+         (lines (string-split content #\newline))
+         (n (length wanted)))
+    (and (pair? wanted) (not (every string-null? wanted)) (<= n (length lines))
+         (let loop ((i 0) (offset 0) (rest lines) (found '()))
+           (if (< (- (length lines) i) n)
+               (and (= (length found) 1)
+                    (let* ((start (caar found)) (window (take (list-tail lines (cdar found)) n))
+                           (end (+ start (apply + (map string-length window)) (- n 1)))
+                           ;; old_text ending in a newline replaces the file's newline too.
+                           (end (if (and (string-suffix? "\n" old-text) (< end (string-length content))) (+ end 1) end)))
+                      (list start (leading-space (car window)) (leading-space (car old-lines)) end)))
+               (let ((match? (every (lambda (a b) (string=? (string-trim-both a) b)) (take rest n) wanted)))
+                 (loop (+ i 1) (+ offset (string-length (car rest)) 1) (cdr rest)
+                       (if match? (cons (cons offset i) found) found))))))))
+(define (leading-space line)
+  (substring line 0 (- (string-length line) (string-length (string-trim line)))))
+(define (reindent text file-indent old-indent)
+  (if (string=? file-indent old-indent) text
+      (string-join
+       (map (lambda (line)
+              (if (and (not (string-null? line)) (string-prefix? old-indent line))
+                  (string-append file-indent (substring line (string-length old-indent)))
+                  line))
+            (string-split text #\newline))
+       "\n")))
+(define (nearest-line-hint content old-text)
+  (let* ((first (find (lambda (l) (not (string-null? l))) (map string-trim-both (string-split old-text #\newline))))
+         (lines (string-split content #\newline))
+         (at (and first (list-index (lambda (l) (string-contains l first)) lines))))
+    (cond ((not first) "")
+          (at (format #f "; its first line appears at line ~a, read that region and retry with the exact text" (+ at 1)))
+          (else "; none of its first line appears in the file, read the file again"))))
 
 (define (prepare-change name arguments working-directory)
   (cond
@@ -398,13 +463,19 @@
             (dynamic-wind
               (lambda () #t)
               (lambda ()
-                (let* ((port
-                        (with-error-to-port
-                         error-port
-                         (lambda ()
-                           (apply open-pipe* OPEN_READ "rg" arguments))))
-                       (output (get-string-all port))
-                       (status (close-pipe port)))
+                ;; Parallel prefetch runs rg from several threads; spawning
+                ;; concurrently has produced exec failures (exit 127) with
+                ;; no stderr, so spawns are serialized and retried once.
+                (let* ((run (lambda ()
+                              (let* ((port (with-mutex spawn-lock
+                                             (with-error-to-port error-port
+                                               (lambda () (apply open-pipe* OPEN_READ "rg" arguments)))))
+                                     (output (get-string-all port)))
+                                (cons output (close-pipe port)))))
+                       (first (run))
+                       (attempt (if (eqv? 127 (status:exit-val (cdr first))) (begin (usleep 50000) (run)) first))
+                       (output (car attempt))
+                       (status (cdr attempt)))
                   (force-output error-port)
                   (seek error-port 0 SEEK_SET)
                   (list output (get-string-all error-port)

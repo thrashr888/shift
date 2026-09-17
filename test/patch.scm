@@ -56,8 +56,11 @@
       (let ((message (apply format #f (cadr args) (caddr args))))
         (and (string-contains message "hunk 1 does not match x.txt")
              (string-contains message "expected \"b\", found \"X\""))))))
-(test-error "short hunk bodies are rejected" #t
-  (parse-patch "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n"))
+(let* ((patches (parse-patch "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n"))
+       (hunk (car (file-patch-hunks (car patches)))))
+  (test-equal "declared hunk counts are advisory; the body is what counts" '(2 . 1)
+    (cons ((@@ (live-agent patch) hunk-old-count) hunk) ((@@ (live-agent patch) hunk-new-count) hunk)))
+  (test-equal "a miscounted hunk still applies" "a\nc\n" (apply-file-patch "a\nb\nc\n" (car patches))))
 (test-error "hunk headers must be well formed" #t
   (parse-patch "--- a/x\n+++ b/x\n@@ nonsense @@\n a\n"))
 (test-error "a missing +++ line is rejected" #t

@@ -227,4 +227,31 @@
     (equal? "hi\n" (call-with-input-file (string-append tool-root "/deep/new/dir/note.txt") get-string-all))))
 (test-error "new folders cannot climb out of the project" #t
   (prepare-change "write" (json-object (cons "path" "deep/../../escape.txt") (cons "content" "x")) tool-root))
+(define loose-root (string-append "/tmp/shift-tools-loose-" (number->string (getpid))))
+(system* "mkdir" "-p" loose-root)
+(call-with-output-file (string-append loose-root "/code.py")
+  (lambda (port) (display "class A:\n    def f(self):\n        return 1\n\n    def g(self):\n        return 2\n" port)))
+(define loose
+  (prepare-change "edit" (json-object (cons "path" "code.py")
+                                      (cons "old_text" "def f(self):\n    return 1\n")
+                                      (cons "new_text" "def f(self):\n    return 10\n"))
+                  loose-root))
+(test-assert "an edit whose indentation is off matches the unique trimmed window and re-indents"
+  (and (string-contains (prepared-change-summary loose) "ignoring surrounding whitespace")
+       (equal? (prepared-change-after-text loose)
+               "class A:\n    def f(self):\n        return 10\n\n    def g(self):\n        return 2\n")))
+(test-assert "a missing old_text names the line where its first line appears"
+  (catch #t
+    (lambda () (prepare-change "edit" (json-object (cons "path" "code.py") (cons "old_text" "def g(self):\n    return 99\n") (cons "new_text" "x")) loose-root) #f)
+    (lambda (key . args) (string-contains (format #f "~s" args) "appears at line 5"))))
+(test-assert "an ambiguous trimmed window is not guessed"
+  (catch #t
+    (lambda () (prepare-change "edit" (json-object (cons "path" "code.py") (cons "old_text" "return 1\n") (cons "new_text" "x")) loose-root) #t)
+    (lambda _ #f)))
+(unless (file-exists? "/workspace")
+  (test-assert "/workspace paths mean the project root when no such mount exists"
+    (string-contains (tool-result-output (execute-tool "read" (json-object (cons "path" "/workspace/code.py")) loose-root 'deny (lambda _ #t)))
+                     "class A:")))
+(system* "rm" "-rf" loose-root)
+
 (test-end "tools")

@@ -16,6 +16,7 @@
   #:use-module (live-agent changes)
   #:use-module (live-agent diff)
   #:use-module (live-agent redact)
+  #:use-module (live-agent policy)
   #:use-module (live-agent patch)
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
@@ -289,7 +290,7 @@
 
 (define (parse-run-arguments arguments root)
   (let* ((argv-value (json-object-ref arguments "argv" #f))
-         (argv (and (json-array? argv-value) (json-array-items argv-value)))
+         (argv (let ((normalized (normalize-argv argv-value))) (and (pair? normalized) normalized)))
          (cwd (json-object-ref arguments "cwd" "."))
          (background? (json-object-ref arguments "background" #f))
          (timeout (json-object-ref arguments "timeout_seconds" default-timeout))
@@ -297,7 +298,7 @@
     (unless (boolean? background?) (error "background must be true or false"))
     (unless (and argv (pair? argv)
                  (every (lambda (item) (and (string? item) (not (string-null? item)))) argv))
-      (error "argv must be a non-empty array of strings"))
+      (error "argv must be a non-empty array of strings, such as [\"python\", \"-m\", \"pytest\"]; pipes and redirection need shell"))
     (unless (and (string? cwd) (valid-relative-path? cwd))
       (error "cwd must be a project-relative directory"))
     (unless (and (integer? timeout) (>= timeout 1) (<= timeout ceiling))

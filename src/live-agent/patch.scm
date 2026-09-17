@@ -67,34 +67,43 @@
          (new-start (cadr ranges)) (new-count (cddr ranges)))
     (let loop ((rest lines) (body '()) (old-left old-count) (new-left new-count)
                (last-kind #f) (old-no-newline? #f) (new-no-newline? #f))
+      (define (finish)
+        ;; Declared counts are advisory: models miscount, and the body is
+        ;; what gets applied. The recorded counts describe the body.
+        (let* ((lines (reverse body))
+               (olds (count (lambda (l) (memv (car l) '(#\space #\-))) lines))
+               (news (count (lambda (l) (memv (car l) '(#\space #\+))) lines)))
+          (values (make-hunk old-start olds new-start news lines
+                             (if old-no-newline? #t #f) (if new-no-newline? #t #f))
+                  rest)))
+      (define (body-line? line)
+        (or (string-null? line) (memv (string-ref line 0) '(#\space #\- #\+ #\\))))
+      (define (next-hunk-or-file? line)
+        (or (string-prefix? "@@" line) (string-prefix? "--- " line) (string-prefix? "diff " line)))
       (cond
-       ((and (= old-left 0) (= new-left 0))
-        (if (and (pair? rest) (string-prefix? "\\" (car rest)))
-            (loop (cdr rest) body 0 0 last-kind
-                  (or old-no-newline? (memv last-kind '(#\space #\-)))
-                  (or new-no-newline? (memv last-kind '(#\space #\+))))
-            (values (make-hunk old-start old-count new-start new-count (reverse body)
-                               (if old-no-newline? #t #f) (if new-no-newline? #t #f))
-                    rest)))
-       ((null? rest) (error "hunk ends before its declared line counts" header))
+       ((null? rest) (finish))
+       ((next-hunk-or-file? (car rest)) (finish))
+       ;; Counts satisfied and the next line is not part of a hunk: done.
+       ((and (= old-left 0) (= new-left 0) (not (body-line? (car rest)))) (finish))
+       ;; A blank line that ends the input, or precedes something that is
+       ;; not hunk body, ends the hunk; a blank inside a hunk is context.
+       ((and (string-null? (car rest))
+             (or (every string-null? (cdr rest)) (not (body-line? (cadr rest))) (next-hunk-or-file? (cadr rest))))
+        (finish))
        (else
         (let* ((line (car rest))
                (kind (if (string-null? line) #\space (string-ref line 0)))
                (text (if (string-null? line) "" (substring line 1))))
           (case kind
             ((#\space)
-             (when (or (= old-left 0) (= new-left 0))
-               (error "hunk has more lines than its header declares" header))
              (loop (cdr rest) (cons (cons #\space text) body)
-                   (- old-left 1) (- new-left 1) #\space old-no-newline? new-no-newline?))
+                   (max 0 (- old-left 1)) (max 0 (- new-left 1)) #\space old-no-newline? new-no-newline?))
             ((#\-)
-             (when (= old-left 0) (error "hunk has more lines than its header declares" header))
              (loop (cdr rest) (cons (cons #\- text) body)
-                   (- old-left 1) new-left #\- old-no-newline? new-no-newline?))
+                   (max 0 (- old-left 1)) new-left #\- old-no-newline? new-no-newline?))
             ((#\+)
-             (when (= new-left 0) (error "hunk has more lines than its header declares" header))
              (loop (cdr rest) (cons (cons #\+ text) body)
-                   old-left (- new-left 1) #\+ old-no-newline? new-no-newline?))
+                   old-left (max 0 (- new-left 1)) #\+ old-no-newline? new-no-newline?))
             ((#\\)
              (loop (cdr rest) body old-left new-left last-kind
                    (or old-no-newline? (memv last-kind '(#\space #\-)))
