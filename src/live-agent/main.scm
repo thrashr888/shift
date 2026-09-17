@@ -64,7 +64,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "recall" "spawn" "live_eval" "extension")
+  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "recall" "notes" "spawn" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -1803,6 +1803,7 @@
                   (cond
                    ((string=? name "traces") (execute-traces tracer arguments))
                    ((string=? name "recall") (execute-recall tracer arguments))
+                   ((string=? name "notes") (execute-notes tracer arguments))
                    ((member name mutation-tool-names)
                     (execute-change! runtime generation tracer name arguments #f))
                    ((member name coding-tool-names)
@@ -2654,6 +2655,8 @@
                               (execute-traces tracer (tool-call-arguments call)))
                              ((string=? name "recall")
                               (execute-recall tracer (tool-call-arguments call)))
+                             ((string=? name "notes")
+                              (execute-notes tracer (tool-call-arguments call)))
                              ((string=? name "spawn")
                               (execute-spawn runtime generation tracer (tool-call-arguments call) span))
                              ((string=? name "job")
@@ -2913,7 +2916,7 @@
                (tail (drop messages (+ 1 (length history) (length context-messages)))))
           (when (null? prefix)
             (error "Context budget exceeded; current turn is too large to compact safely. Use /compact, /reset, or a larger /context limit."))
-          (let* ((summary (summarize-compaction generation prefix))
+          (let* ((summary (or (notes-compaction! runtime tracer generation prefix) (summarize-compaction generation prefix)))
                  (compacted (compact-history-with-summary history summary 4)))
             (record-compaction! tracer generation prefix summary 4 "token-budget")
             (set! history compacted)
@@ -3033,6 +3036,112 @@
 (define (without-ephemeral messages)
   (filter (lambda (message) (not (json-object-ref message "ephemeral" #f))) messages))
 
+;; --- session notes -----------------------------------------------------------
+;; Working notes are session state under notes/, written by the model through
+;; the notes tool: during a turn when it wants, and when the window fills.
+(define max-note-bytes (* 64 1024))
+(define (notes-directory tracer) (string-append (runtime-state-directory tracer) "/notes"))
+(define (notes-path tracer requested)
+  (unless (and (string? requested) (not (string-null? requested)) (<= (string-length requested) 200)
+               (not (string-prefix? "/" requested))
+               (not (any (lambda (part) (member part '("" "." ".."))) (string-split requested #\/))))
+    (error "notes path must be a relative file name such as plan.md" requested))
+  (string-append (notes-directory tracer) "/" requested))
+(define (notes-listing tracer)
+  (let ((directory (notes-directory tracer)))
+    (if (not (file-exists? directory)) '()
+        (let walk ((prefix "") (dir directory))
+          (append-map
+           (lambda (name)
+             (let ((path (string-append dir "/" name)))
+               (if (eq? 'directory (stat:type (stat path)))
+                   (walk (string-append prefix name "/") path)
+                   (let ((text (call-with-input-file path get-string-all)))
+                     (list (list (string-append prefix name) (length (string-split (string-trim-right text) #\newline)) (string-length text)))))))
+           (sort (scandir dir (lambda (n) (not (member n '("." ".."))))) string<?))))))
+(define (notes-signature tracer)
+  (map (lambda (entry) (cons (car entry) (caddr entry))) (notes-listing tracer)))
+(define (execute-notes tracer arguments)
+  (catch #t
+    (lambda ()
+      (let ((action (json-object-ref arguments "action" "list")))
+        (cond
+         ((string=? action "list")
+          (let ((entries (notes-listing tracer)))
+            (make-tool-result #t (if (null? entries) "No notes yet."
+                                     (string-join (map (lambda (e) (format #f "~a (~a lines, ~a bytes)" (car e) (cadr e) (caddr e))) entries) "\n")))))
+         ((string=? action "read")
+          (let ((path (notes-path tracer (json-object-ref arguments "path" #f))))
+            (unless (file-exists? path) (error "no such note" (json-object-ref arguments "path" "")))
+            (make-tool-result #t (call-with-input-file path get-string-all))))
+         ((member action '("write" "append"))
+          (let* ((path (notes-path tracer (json-object-ref arguments "path" #f)))
+                 (text (json-object-ref arguments "text" #f)))
+            (unless (string? text) (error "text is required"))
+            (let ((existing (if (and (string=? action "append") (file-exists? path)) (stat:size (stat path)) 0)))
+              (when (> (+ existing (string-length text)) max-note-bytes) (error "a note is limited to 64 KiB")))
+            (ensure-note-folder! path)
+            (let ((port (open-file path (if (string=? action "append") "a" "w"))))
+              (display text port) (close-port port))
+            (make-tool-result #t (format #f "~a ~a" (if (string=? action "write") "wrote" "appended to") (json-object-ref arguments "path" "")))))
+         (else (error "action must be list, read, write or append" action)))))
+    (lambda (key . arguments) (make-tool-result #f (error-text key arguments)))))
+(define (ensure-note-folder! path)
+  (let ((parent (dirname path)))
+    (unless (file-exists? parent) (ensure-note-folder! parent) (mkdir parent))))
+(define (compaction-count tracer)
+  (let ((directory (string-append (runtime-state-directory tracer) "/compactions")))
+    (if (file-exists? directory)
+        (length (filter (lambda (n) (string-suffix? ".json" n)) (scandir directory (lambda (n) (not (member n '("." "..")))))))
+        0)))
+;; Compaction the agent does itself: before the window resets, one bounded
+;; exchange asks it to save what the next window must know with the notes
+;; tool. The reset then carries pointers to those files, not a summary.
+;; Returns the pointer text, or #f when no note was written so the caller
+;; falls back to a summary.
+(define (notes-compaction! runtime tracer generation prefix)
+  (if (string=? (setting-ref generation 'agent-model) "demo") #f
+  (catch #t
+    (lambda ()
+      (let* ((window (+ 1 (compaction-count tracer)))
+             (provider (setting-ref generation 'agent-provider))
+             (key-environment (setting-ref generation 'agent-api-key-environment))
+             (api-key (and key-environment (getenv key-environment)))
+             (before (notes-signature tracer))
+             (request (make-message "user"
+                        (format #f "Context window ~a is full and will reset now. Save what the next window must know with the notes tool: progress, decisions, unresolved work, exact file paths and commands, and which earlier turns matter (traces and recall can find them later). Write or append files under notes, then reply with one line." window))))
+        (let loop ((messages (append (list (make-message "system" (generation-ref generation 'agent-system-prompt))) prefix (list request)))
+                   (round 0))
+          (let* ((completion (provider-complete provider (setting-ref generation 'agent-model) (setting-ref generation 'agent-base-url) api-key
+                                                messages '("notes") #f #f (setting-ref generation 'agent-keep-alive)
+                                                (string-append "shift-" (generation-fingerprint generation) "-notes")
+                                                (lambda _ #t) (lambda _ #t)))
+                 (calls (completion-tool-calls completion)))
+            (record-run-usage! (usage-attributes completion))
+            (if (or (null? calls) (>= round 4))
+                (and (not (equal? before (notes-signature tracer)))
+                     (notes-pointer tracer window))
+                (loop (append messages (list (completion-assistant-message completion))
+                              (map (lambda (call)
+                                     (make-tool-result-message provider (tool-call-id call) (tool-call-name call)
+                                       (tool-result-output
+                                        (if (string=? (tool-call-name call) "notes")
+                                            (execute-notes tracer (tool-call-arguments call))
+                                            (make-tool-result #f "only the notes tool is available while the window resets")))))
+                                   calls))
+                      (+ round 1)))))))
+    (lambda (key . args)
+      (format (current-error-port) "notes compaction skipped; summarizing instead: ~a~%" (error-text key args))
+      #f))))
+(define (notes-pointer tracer window)
+  (string-append
+   (format #f "Context window ~a was reset after these notes were saved:~%" window)
+   (string-join (map (lambda (e) (format #f "- ~a (~a lines)" (car e) (cadr e))) (notes-listing tracer)) "\n")
+   "\nRead them with the notes tool before continuing. Earlier turns are searchable with traces (this session) and recall (every session)."))
+(define (notes-snapshot tracer)
+  (apply json-object (map (lambda (e) (cons (car e) (call-with-input-file (string-append (notes-directory tracer) "/" (car e)) get-string-all)))
+                          (notes-listing tracer))))
+
 ;; What a compaction replaced, beside the checkpoint: compactions/N.json holds
 ;; the prefix and the summary so the summary can be scored and re-summarized.
 (define (record-compaction! tracer generation prefix summary keep-recent reason)
@@ -3050,7 +3159,8 @@
             (display (json-write (json-object (cons "at" (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
                                               (cons "reason" reason) (cons "generation" (generation-id generation))
                                               (cons "keep_recent" keep-recent)
-                                              (cons "prefix" (apply json-array prefix)) (cons "summary" summary)))
+                                              (cons "prefix" (apply json-array prefix)) (cons "summary" summary)
+                                              (cons "notes" (notes-snapshot tracer))))
                      port)
             (newline port)))
         path))
@@ -3129,7 +3239,8 @@
                   (lambda ()
                     (catch #t
                       (lambda ()
-                        (let* ((summary (summarize-compaction generation prefix))
+                        (let* ((summary (or (notes-compaction! runtime tracer generation prefix)
+                                            (summarize-compaction generation prefix)))
                                (compacted
                                 (compact-history-with-summary
                                  history summary keep-recent)))

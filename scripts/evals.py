@@ -676,6 +676,12 @@ def compaction_checklist(prefix):
     return items
 
 
+def compaction_text(record):
+    """What the next window can see: the summary or pointer text plus every note it points at."""
+    notes = record.get("notes") or {}
+    return (record.get("summary") or "") + "\n" + "\n".join(str(v) for v in notes.values())
+
+
 def compaction_coverage(summary, checklist):
     haystack = (summary or "").lower()
     covered = [item for item in checklist if item["needle"].lower() in haystack]
@@ -710,7 +716,7 @@ def compaction(args):
             continue
         for path, record in records:
             checklist = compaction_checklist(record.get("prefix", []))
-            covered, missing = compaction_coverage(record.get("summary", ""), checklist)
+            covered, missing = compaction_coverage(compaction_text(record), checklist)
             line = f"session {name} · compaction {path.stem} ({record.get('reason', '?')}, {len(record.get('prefix', []))} messages): used summary covers {len(covered)}/{len(checklist)}"
             if args.replay:
                 candidate = compaction_replay(path, args.model)
@@ -961,7 +967,7 @@ def session(args):
             print(f"  {row['turn']:>4}  {str(row['status'])[:9]:<9}  {row['rounds']:>6}  {row['tools']:>5}  {row['approval_wait']:>4}s  {judge_text:<6} {'; '.join(session_flags(row))}")
         for path, record in compaction_records(directory):
             checklist = compaction_checklist(record.get("prefix", []))
-            covered, missing = compaction_coverage(record.get("summary", ""), checklist)
+            covered, missing = compaction_coverage(compaction_text(record), checklist)
             lossy = checklist and len(covered) < 0.6 * len(checklist)
             print(f"  compaction {path.stem}: summary covers {len(covered)}/{len(checklist)} durable facts" + (" · lossy" if lossy else ""))
 

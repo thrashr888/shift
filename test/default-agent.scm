@@ -37,7 +37,7 @@
   (memq 'live_eval (generation-ref generation 'agent-tools)))
 
 (test-equal "enables the complete constrained coding tool set"
-  '(read rg skill write edit apply_patch status diff run job spawn tool_search shell traces recall live_eval extension ui)
+  '(read rg skill write edit apply_patch status diff run job spawn tool_search shell traces recall notes live_eval extension ui)
   (generation-ref generation 'agent-tools))
 
 (test-equal "compacts after a bounded number of messages"

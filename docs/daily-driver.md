@@ -85,7 +85,13 @@ Before each tool-loop request, the runtime checks an 80% input-plus-output budge
 It summarizes earlier complete turns, retaining the current turn and tool chain.
 If the retained turn or summarization request cannot fit, it pauses with a useful
 error and preserves the original checkpoint. Message-count compaction remains a
-fallback. `/compact` also works explicitly. Every compaction writes what it
+fallback. `/compact` also works explicitly. Compaction is notes-first: before
+the window resets, the harness asks the model to save progress, decisions,
+unresolved work and exact paths with the `notes` tool (files under the
+session's `notes/` folder, never in the project), then replaces the earlier
+context with a pointer that lists those files and reminds it that `traces` and
+`recall` reach earlier turns. If the model writes no note, the summary
+compaction runs instead. Every compaction writes what it
 replaced beside the checkpoint, `compactions/N.json` with the prefix and the
 summary; `scripts/evals.py compaction` scores each summary by how many durable
 facts from its prefix it still carries (edited files, failing commands, user

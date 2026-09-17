@@ -1,6 +1,6 @@
 # Context notes RFC: compaction the agent does itself
 
-Status: RFC. Prompted by Codex's experimental context management for Astra
+Status: implemented (see the decision). Prompted by Codex's experimental context management for Astra
 (traced by Owen Gretzinger, September 8, 2026): instead of summarizing when
 the window fills, the harness warns the agent, the agent writes notes with
 tools, then explicitly resets to a fresh window that carries pointers to the
@@ -19,6 +19,19 @@ search and read what it left behind.
 What is missing is the loop: a warning before the window fills, a place to
 write working notes that survive the reset, a reset the agent chooses, and a
 fresh window that starts from pointers rather than a summary.
+
+## Decision (September 17)
+
+Minimal surface, no manual loop: one new tool, `notes`, and nothing else the
+user has to learn. `/compact` and the token-budget guard both run the same
+backend flow: the harness asks the model once to save what the next window
+must know with `notes`, executes those calls (up to four rounds, notes only),
+and resets the window to a pointer that lists the note files, with the usual
+recent suffix. If the model writes nothing, the summary compaction runs as
+before. There is no `new_context` tool, no reminder threshold and no new
+setting; `notes` is allowed in every mode because it writes session state,
+not project files. The design below is kept for the record; items 1 and 3 were
+folded into the backend as described here.
 
 ## Design
 

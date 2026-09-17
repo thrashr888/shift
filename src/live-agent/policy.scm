@@ -39,7 +39,7 @@
 ;; sandboxed? says the run would execute inside the agentkernel sandbox, which
 ;; is its own boundary: manual and autopilot let it run without asking or judging.
 (define* (tool-decision mode name arguments #:optional (run-allow '()) (mcp-allow '()) (sandboxed? #f))
-  (let ((read-only? (or (member name '("read" "rg" "traces" "recall" "status" "diff" "skill" "job" "tool_search" "spawn"))
+  (let ((read-only? (or (member name '("read" "rg" "traces" "recall" "notes" "status" "diff" "skill" "job" "tool_search" "spawn"))
                         (and (mcp-tool-name? name)
                              (let ((hints ((mcp-tool-hints) name)))
                                (and hints (assq-ref hints 'read-only)

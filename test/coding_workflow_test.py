@@ -157,7 +157,7 @@ class CodingWorkflow(unittest.TestCase):
             ('(define agent-model "demo")', '(define agent-model "fake")'),
             ("http://127.0.0.1:11434", f"http://127.0.0.1:{self.server.server_port}"),
             ("(define agent-tools '(read rg))",
-             "(define agent-tools '(read rg skill write edit apply_patch status diff run job spawn tool_search recall))"),
+             "(define agent-tools '(read rg skill write edit apply_patch status diff run job spawn tool_search recall notes))"),
             ("(define agent-max-tool-rounds 1)", "(define agent-max-tool-rounds 6)"),
             ("(define agent-compaction-threshold 12)", "(define agent-compaction-threshold 80)"),
         ):
@@ -223,7 +223,7 @@ class CodingWorkflow(unittest.TestCase):
     edit_notes = tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"})
 
     def test_agent_ui_patch_is_immediate_durable_and_does_not_change_permissions(self):
-        self.agent.write_text(self.agent.read_text().replace('tool_search recall))', 'tool_search recall ui))'))
+        self.agent.write_text(self.agent.read_text().replace('tool_search recall notes))', 'tool_search recall notes ui))'))
         plan = [tool_call("ui", {"action":"patch", "patch":{"identity":"thrashr888", "branding":"replace", "placement":"left"}}),
                 tool_call("ui", {"action":"get"}), answer("Your interface is updated.")]
         code, out, err = self.print_mode("Make this mine", plan, "--mode", "autopilot")
@@ -792,7 +792,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(len(self.receipts("quiet")), 1, "the receipt is still recorded")
         self.assertEqual(json.loads((self.project / "quiet.json").read_text())["status"], "ok")
         out = self.shift("/mode autopilot\n/work off\n/tools\nlook\n/receipt\n/quit\n", plan, session="repl")
-        self.assertIn("tools read rg skill write edit apply_patch status diff run job spawn tool_search recall · show-work off", out)
+        self.assertIn("tools read rg skill write edit apply_patch status diff run job spawn tool_search recall notes · show-work off", out)
         self.assertNotIn("tool>", out)
         self.assertEqual(out.count("turn 1 · fake"), 1, "/receipt still shows it on request")
         out = self.shift("/work on\nlook\n/quit\n", plan, session="repl")
@@ -950,7 +950,8 @@ class CodingWorkflow(unittest.TestCase):
     def test_compaction_keeps_its_prefix_and_summary_for_scoring_and_replay(self):
         self.shift("/mode autopilot\nfirst\nsecond\nthird\n/compact\n/quit\n",
                    plan=[tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"}), answer("edited"),
-                         answer("two"), answer("three"), answer("Summary: the user asked first; notes.txt was edited (8080 to 9443).")])
+                         answer("two"), answer("three"), answer("no notes needed"),
+                         answer("Summary: the user asked first; notes.txt was edited (8080 to 9443).")])
         (record,) = [json.loads(p.read_text()) for p in sorted((self.state() / "compactions").glob("*.json"))]
         self.assertEqual(record["reason"], "manual");self.assertEqual(record["keep_recent"], 4)
         self.assertEqual(record["prefix"][0]["role"], "user");self.assertIn("notes.txt", record["summary"])
@@ -1013,6 +1014,42 @@ class CodingWorkflow(unittest.TestCase):
         spans = [json.loads(l) for l in (self.state() / "traces.jsonl").read_text().splitlines() if l.strip()]
         versions = {s["attributes"].get("runtime.version") for s in spans}
         self.assertEqual(len(versions), 1);self.assertTrue(next(iter(versions)).startswith(head), versions)
+
+    def test_compact_asks_for_notes_then_resets_to_pointers(self):
+        # Three turns, then /compact: the notes exchange gets the notes tool, writes a file, and the
+        # reset carries pointers instead of a summary; the checkpoint history starts from them.
+        self.shift("/mode autopilot\nfirst\nsecond\nthird\n/compact\n/quit\n",
+                   plan=[answer("one"), answer("two"), answer("three"),
+                         tool_call("notes", {"action": "write", "path": "plan.md", "text": "# Plan\n- first was answered with one\n"}),
+                         tool_call("notes", {"action": "append", "path": "plan.md", "text": "- next: nothing\n"}),
+                         answer("saved")])
+        notes = self.state() / "notes/plan.md"
+        self.assertEqual(notes.read_text(), "# Plan\n- first was answered with one\n- next: nothing\n")
+        history = self.checkpoint()["history"]
+        self.assertIn("Context window 1 was reset after these notes were saved", history[0]["content"])
+        self.assertIn("plan.md (3 lines)", history[0]["content"]);self.assertIn("notes tool", history[0]["content"])
+        (record,) = [json.loads(p.read_text()) for p in sorted((self.state() / "compactions").glob("*.json"))]
+        self.assertIn("plan.md", record["notes"]);self.assertIn("first was answered", record["notes"]["plan.md"])
+        request = [m for m in Provider.last_messages if m.get("role") == "user"][-1]["content"]
+        self.assertIn("Context window 1 is full", request)
+
+    def test_compact_falls_back_to_a_summary_when_no_note_is_written(self):
+        self.shift("/mode autopilot\nfirst\nsecond\nthird\n/compact\n/quit\n",
+                   plan=[answer("one"), answer("two"), answer("three"), answer("nothing to save"),
+                         answer("Summary: three greetings, nothing changed.")])
+        history = self.checkpoint()["history"]
+        self.assertIn("Summary: three greetings", history[0]["content"])
+        self.assertFalse((self.state() / "notes").exists())
+
+    def test_notes_tool_keeps_session_state_out_of_the_project(self):
+        self.shift("/mode plan\nremember\n/quit\n",
+                   plan=[tool_call("notes", {"action": "write", "path": "todo/next.md", "text": "ship it\n"}),
+                         tool_call("notes", {"action": "list"}), tool_call("notes", {"action": "read", "path": "todo/next.md"}),
+                         tool_call("notes", {"action": "write", "path": "../escape.md", "text": "x"}), answer("done")])
+        results = self.tool_results()
+        self.assertEqual(results[0], "wrote todo/next.md");self.assertIn("todo/next.md (1 lines, 8 bytes)", results[1])
+        self.assertEqual(results[2], "ship it\n");self.assertIn("relative file name", results[3])
+        self.assertTrue((self.state() / "notes/todo/next.md").exists());self.assertFalse((self.project / "todo").exists())
 
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(

@@ -701,6 +701,19 @@
              (cons "type" "boolean")
              (cons "description" "Only return ERROR or CANCELLED spans"))))
      '()))
+   ((string=? name "notes")
+    (function-tool
+     "notes"
+     (string-append
+      "Your working notes for this session: files under the session's notes folder, never in the "
+      "project. They survive context resets; when the window fills, the harness asks you to save "
+      "progress, decisions, unresolved work and exact paths here, then resets to a fresh window "
+      "that lists these files. Read them first in a new window. Actions: list, read, write, append.")
+     (json-object
+      (cons "action" (string-parameter "list, read, write, or append"))
+      (cons "path" (string-parameter "Notes-relative file name such as plan.md (read, write, append)"))
+      (cons "text" (string-parameter "Content to write or append")))
+     '("action")))
    ((string=? name "recall")
     (function-tool
      "recall"
