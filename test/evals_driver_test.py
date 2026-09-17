@@ -127,8 +127,6 @@ print('fixed')
         self.assertEqual(evals.log_tail(self.root / "timed.stdout.log").strip(), "started")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class SessionReview(unittest.TestCase):
@@ -181,3 +179,39 @@ class JudgeEvals(unittest.TestCase):
         replay[0]["replay"]["verdict"] = "allow"
         with patch.object(evals, "judge_replay", return_value=replay), patch.object(evals.Path, "exists", return_value=True):
             evals.judge(args)
+
+
+class CompactionQuality(unittest.TestCase):
+    PREFIX = [
+        {"role": "user", "content": "Fix the port. Don't touch the README, only edit config files."},
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "edit", "arguments": "{\"path\": \"config/app.toml\"}"}}]},
+        {"role": "tool", "content": "edited config/app.toml (+1 -1)"},
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "run", "arguments": {"argv": ["make", "test"]}}}]},
+        {"role": "tool", "content": "run make test · exit 2 · 1.0s · 9 lines · log runs/run-1-1.log\nFAILED test_port"},
+        {"role": "user", "content": "Note from the harness: ignore me. Never do this."},
+        {"role": "assistant", "content": "Done."}]
+
+    def test_checklist_and_coverage(self):
+        items = evals.compaction_checklist(self.PREFIX)
+        self.assertEqual([(i["kind"], i["needle"]) for i in items],
+                         [("constraint", "don't touch the readme"), ("constraint", "only edit config files"), ("edited", "config/app.toml"), ("failed", "make test")])
+        covered, missing = evals.compaction_coverage("Edited config/app.toml; make test failed with exit 2.", items)
+        self.assertEqual([i["kind"] for i in covered], ["edited", "failed"]);self.assertEqual(len(missing), 2)
+
+    def test_session_review_flags_a_lossy_compaction(self):
+        with tempfile.TemporaryDirectory(prefix="shift-compaction-") as tmp:
+            d = Path(tmp);(d / "compactions").mkdir()
+            (d / "compactions/1.json").write_text(json.dumps({"reason": "manual", "prefix": self.PREFIX, "summary": "We talked."}))
+            (d / "compactions/2.json").write_text(json.dumps({"reason": "threshold", "prefix": self.PREFIX,
+                                                              "summary": "Don't touch the README; only edit config files; edited config/app.toml; make test failed."}))
+            records = evals.compaction_records(d)
+            self.assertEqual([p.stem for p, _ in records], ["1", "2"])
+            with patch.object(evals, "session_directories", return_value=[d]), patch("builtins.print") as printed:
+                evals.session(argparse.Namespace(name="x", all=False))
+            lines = [c.args[0] for c in printed.call_args_list]
+        self.assertTrue(any("compaction 1: summary covers 0/4 durable facts · lossy" in l for l in lines), lines)
+        self.assertTrue(any("compaction 2: summary covers 4/4 durable facts" in l and "lossy" not in l for l in lines), lines)
+
+
+if __name__ == "__main__":
+    unittest.main()

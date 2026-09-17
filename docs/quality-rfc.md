@@ -1,8 +1,8 @@
 # Quality RFC: evals that would have caught the default-session failure
 
 Status: RFC. Decisions are listed; implementation follows in the order below,
-each step landing with tests. Implemented so far: 1 (judge evals) and 2
-(session review).
+each step landing with tests. Implemented so far: 1 (judge evals), 2
+(session review) and 3 (compaction quality).
 
 ## What the real-world test showed
 

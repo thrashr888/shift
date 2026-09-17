@@ -8,6 +8,7 @@
     scripts/evals.py dogfood [--tasks A,B]       attempt current-tree tickets and run hidden local tests
     scripts/evals.py judge [--cases|--session N] replay judged actions through a judge model; report agreement
     scripts/evals.py session [NAME|--all]        per-turn review: rounds, failures, waits, judge disagreements
+    scripts/evals.py compaction [--replay]       score compaction summaries by durable-fact coverage
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -620,6 +621,106 @@ def judge(args):
         raise SystemExit(1)
 
 
+# --- compaction quality (docs/quality-rfc.md §3) -------------------------------------
+
+CONSTRAINT = re.compile(r"(?i)\b(don'?t|do not|never|always|only|must not|must)\b")
+
+
+def message_text(message):
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def compaction_checklist(prefix):
+    """Durable facts a summary must carry, read off the prefix without a model."""
+    items = []
+    seen = set()
+
+    def add(kind, text, needle):
+        if needle and (kind, needle) not in seen:
+            seen.add((kind, needle))
+            items.append({"kind": kind, "text": text, "needle": needle})
+    for message in prefix:
+        role = message.get("role")
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call.get("function", {})
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {}
+                name = function.get("name")
+                if name in ("write", "edit") and isinstance(arguments, dict) and arguments.get("path"):
+                    add("edited", f"edited {arguments['path']}", str(arguments["path"]))
+                if name == "apply_patch" and isinstance(arguments, dict):
+                    for line in str(arguments.get("patch", "")).splitlines():
+                        if line.startswith("+++ b/"):
+                            add("edited", f"edited {line[6:]}", line[6:])
+        elif role == "tool":
+            match = re.match(r"run (.+?) · exit (\d+)", message_text(message))
+            if match and match[2] != "0":
+                words = match[1].split()
+                add("failed", f"failed: {match[1]} (exit {match[2]})", " ".join(words[:2]))
+        elif role == "user":
+            text = message_text(message)
+            if text.startswith("Note from the harness") or text.startswith("Earlier session summary"):
+                continue
+            for sentence in re.split(r"(?<=[.!?\n])\s+", text):
+                if CONSTRAINT.search(sentence):
+                    words = re.findall(r"[\w'./-]+", sentence)
+                    if len(words) >= 3:
+                        add("constraint", sentence.strip()[:160], " ".join(words[:4]).lower())
+    return items
+
+
+def compaction_coverage(summary, checklist):
+    haystack = (summary or "").lower()
+    covered = [item for item in checklist if item["needle"].lower() in haystack]
+    missing = [item for item in checklist if item["needle"].lower() not in haystack]
+    return covered, missing
+
+
+def compaction_records(directory):
+    folder = Path(directory) / "compactions"
+    if not folder.exists():
+        return []
+    files = sorted(folder.glob("*.json"), key=lambda p: int(p.stem) if p.stem.isdigit() else 0)
+    return [(path, json.loads(path.read_text())) for path in files]
+
+
+def compaction_replay(path, model=None):
+    command = [str(ROOT / "bin/shift-agent"), "--summarize-replay", str(path)]
+    if model:
+        command += ["--model", model]
+    result = sh(command, cwd=ROOT, timeout=3600, env={**os.environ, "SHIFT_PLUGINS": "off"})
+    lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    return json.loads(lines[-1]) if lines else {"summary": "", "model": ""}
+
+
+def compaction(args):
+    directories = session_directories(ROOT, None if args.all else [args.session or "default"])
+    for directory in directories:
+        records = compaction_records(directory)
+        name = directory.name if not directory.is_relative_to(ROOT / ".shift/sessions") else str(directory.relative_to(ROOT / ".shift/sessions"))
+        if not records:
+            print(f"session {name}: no compactions recorded")
+            continue
+        for path, record in records:
+            checklist = compaction_checklist(record.get("prefix", []))
+            covered, missing = compaction_coverage(record.get("summary", ""), checklist)
+            line = f"session {name} · compaction {path.stem} ({record.get('reason', '?')}, {len(record.get('prefix', []))} messages): used summary covers {len(covered)}/{len(checklist)}"
+            if args.replay:
+                candidate = compaction_replay(path, args.model)
+                c_covered, c_missing = compaction_coverage(candidate.get("summary", ""), checklist)
+                line += f" · {candidate.get('model', 'candidate')} covers {len(c_covered)}/{len(checklist)}"
+                missing = c_missing if args.replay else missing
+            print(line)
+            for item in missing:
+                print(f"    missing: {item['text']}")
+
+
 # --- session review (docs/quality-rfc.md §2) ---------------------------------------
 
 EVENT_KIND = re.compile(r"\(kind \. ([a-z-]+)\)")
@@ -759,6 +860,11 @@ def session(args):
         for row in rows:
             judge_text = f"{row['judged']}" + (f" (-{row['false_blocks']}b)" if row["false_blocks"] else "") + (f" (-{row['false_allows']}a)" if row["false_allows"] else "")
             print(f"  {row['turn']:>4}  {str(row['status'])[:9]:<9}  {row['rounds']:>6}  {row['tools']:>5}  {row['approval_wait']:>4}s  {judge_text:<6} {'; '.join(session_flags(row))}")
+        for path, record in compaction_records(directory):
+            checklist = compaction_checklist(record.get("prefix", []))
+            covered, missing = compaction_coverage(record.get("summary", ""), checklist)
+            lossy = checklist and len(covered) < 0.6 * len(checklist)
+            print(f"  compaction {path.stem}: summary covers {len(covered)}/{len(checklist)} durable facts" + (" · lossy" if lossy else ""))
 
 
 def main():
@@ -799,12 +905,17 @@ def main():
     judger.add_argument("--cases", action="store_true", help="the fixed regression set in evals/judge/cases.jsonl; exits 1 on any disagreement")
     judger.add_argument("--model", help="PROVIDER/MODEL for the judge; defaults to the agent's judge-model or its own model")
     judger.add_argument("--output", help="write the per-case rows as JSON lines")
+    compactor = commands.add_parser("compaction", help="score stored compaction summaries by durable-fact coverage; --replay re-summarizes")
+    compactor.add_argument("--session", help="session name (default: default)")
+    compactor.add_argument("--all", action="store_true")
+    compactor.add_argument("--replay", action="store_true", help="summarize each stored prefix again with the current or --model model")
+    compactor.add_argument("--model")
     reviewer = commands.add_parser("session", help="per-turn review of a session's receipts, events and judge log")
     reviewer.add_argument("name", nargs="?", help="session name, default 'default' (subagents: PARENT/agents/CHILD)")
     reviewer.add_argument("--all", action="store_true", help="every session in the project, subagents included")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
-     "dogfood": dogfood, "judge": judge, "session": session}[args.command](args)
+     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction}[args.command](args)
 
 
 if __name__ == "__main__":

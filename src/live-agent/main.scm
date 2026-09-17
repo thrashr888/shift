@@ -116,6 +116,7 @@
 (define cli-settings '())
 (define cli-receipt-path #f)
 (define cli-judge-replay #f)
+(define cli-compaction-replay #f)
 (define turn-tokens 0)
 ;; Per-turn facts the receipt reports: provider usage, model rounds, and tool
 ;; calls by name. Reset when a turn starts.
@@ -232,6 +233,11 @@
      ((and (pair? (cdr rest)) (string=? (car rest) "--judge-replay"))
       ;; Replay judge cases through the configured judge model; JSON lines out.
       (set! cli-judge-replay (cadr rest)) (set! print-mode? #t)
+      (loop (cddr rest) agent state-dir #f session-name session-mode list?
+            initial-prompt fork-parent fork-child))
+     ((and (pair? (cdr rest)) (string=? (car rest) "--summarize-replay"))
+      ;; Summarize a stored compaction prefix again with the configured model.
+      (set! cli-compaction-replay (cadr rest)) (set! print-mode? #t)
       (loop (cddr rest) agent state-dir #f session-name session-mode list?
             initial-prompt fork-parent fork-child))
      ((and (pair? (cdr rest)) (string=? (car rest) "--receipt"))
@@ -2844,6 +2850,7 @@
             (error "Context budget exceeded; current turn is too large to compact safely. Use /compact, /reset, or a larger /context limit."))
           (let* ((summary (summarize-compaction generation prefix))
                  (compacted (compact-history-with-summary history summary 4)))
+            (record-compaction! tracer generation prefix summary 4 "token-budget")
             (set! history compacted)
             (set! messages (append (list system) history context-messages tail))
             (set! raw-estimate (estimate-input-tokens messages enabled-tools))
@@ -2961,6 +2968,36 @@
 (define (without-ephemeral messages)
   (filter (lambda (message) (not (json-object-ref message "ephemeral" #f))) messages))
 
+;; What a compaction replaced, beside the checkpoint: compactions/N.json holds
+;; the prefix and the summary so the summary can be scored and re-summarized.
+(define (record-compaction! tracer generation prefix summary keep-recent reason)
+  (catch #t
+    (lambda ()
+      (let* ((directory (string-append (runtime-state-directory tracer) "/compactions"))
+             (existing (if (file-exists? directory)
+                           (length (filter (lambda (n) (string-suffix? ".json" n))
+                                           (scandir directory (lambda (n) (not (member n '("." "..")))))))
+                           0))
+             (path (format #f "~a/~a.json" directory (+ existing 1))))
+        (unless (file-exists? directory) (mkdir directory))
+        (call-with-output-file path
+          (lambda (port)
+            (display (json-write (json-object (cons "at" (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
+                                              (cons "reason" reason) (cons "generation" (generation-id generation))
+                                              (cons "keep_recent" keep-recent)
+                                              (cons "prefix" (apply json-array prefix)) (cons "summary" summary)))
+                     port)
+            (newline port)))
+        path))
+    (lambda (key . args)
+      (format (current-error-port) "compaction record not written: ~a~%" (error-text key args)) #f)))
+(define (compaction-replay! runtime path)
+  (let* ((generation (runtime-current runtime))
+         (record (call-with-input-file path (lambda (port) (json-read (get-string-all port)))))
+         (prefix (let ((p (json-object-ref record "prefix" #f))) (if (json-array? p) (json-array-items p) '())))
+         (summary (summarize-compaction generation prefix)))
+    (display (json-write (json-object (cons "summary" summary) (cons "model" (format #f "~a/~a" (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model))))))
+    (newline) (force-output) 0))
 (define (summarize-compaction generation prefix)
   (when (context-over-budget? (+ 256 (estimate-input-tokens prefix '()))
                               (model-context-limit generation)
@@ -3031,6 +3068,7 @@
                                (compacted
                                 (compact-history-with-summary
                                  history summary keep-recent)))
+                          (record-compaction! tracer generation prefix summary keep-recent (if force? "manual" "threshold"))
                           (trace-end!
                            span "OK"
                            `((generation.id . ,(generation-id generation))
@@ -3381,6 +3419,7 @@
                     (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
                   (force-output))
                 (when cli-judge-replay (exit (judge-replay! runtime cli-judge-replay)))
+                (when cli-compaction-replay (exit (compaction-replay! runtime cli-compaction-replay)))
                 (when initial-prompt
                   (with-mutex lock
                     ;; Print mode has no one to ask: anything needing approval
@@ -3416,7 +3455,7 @@
     (lambda (agent-path state-directory watch? requested-session-name session-mode
              list? initial-prompt fork-parent fork-child)
       (when print-mode?
-        (unless (or initial-prompt cli-judge-replay) (error "--print needs a task"))
+        (unless (or initial-prompt cli-judge-replay cli-compaction-replay) (error "--print needs a task"))
         (set! watch? #f)
         (set! mcp-http? #f))
       (unless (and agent-path state-directory)

@@ -85,7 +85,13 @@ Before each tool-loop request, the runtime checks an 80% input-plus-output budge
 It summarizes earlier complete turns, retaining the current turn and tool chain.
 If the retained turn or summarization request cannot fit, it pauses with a useful
 error and preserves the original checkpoint. Message-count compaction remains a
-fallback. `/compact` also works explicitly. Raw usage and tool outcomes remain in
+fallback. `/compact` also works explicitly. Every compaction writes what it
+replaced beside the checkpoint, `compactions/N.json` with the prefix and the
+summary; `scripts/evals.py compaction` scores each summary by how many durable
+facts from its prefix it still carries (edited files, failing commands, user
+constraints), `--replay` re-summarizes the stored prefixes with the current or
+`--model` model for comparison, and `scripts/evals.py session` flags a lossy
+one. Raw usage and tool outcomes remain in
 local traces, with Claude token counts exported to Phoenix.
 
 ## Tool policy

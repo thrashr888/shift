@@ -52,6 +52,31 @@ def answer(text, usage=None):
     )
 
 
+def unstream(text):
+    """The same planned reply as one JSON completion, for requests with stream=false."""
+    content, calls, usage, finish = "", {}, None, "stop"
+    for line in text.splitlines():
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        event = json.loads(line[6:])
+        usage = event.get("usage", usage)
+        for choice in event.get("choices", []):
+            delta = choice.get("delta", {})
+            content += delta.get("content") or ""
+            for call in delta.get("tool_calls", []):
+                slot = calls.setdefault(call.get("index", 0), {"id": call.get("id"), "type": "function", "function": {"name": "", "arguments": ""}})
+                slot["function"]["name"] += call.get("function", {}).get("name") or ""
+                slot["function"]["arguments"] += call.get("function", {}).get("arguments") or ""
+            finish = choice.get("finish_reason") or finish
+    message = {"role": "assistant", "content": content or None}
+    if calls:
+        message["tool_calls"] = [calls[i] for i in sorted(calls)]
+    body = {"choices": [{"index": 0, "message": message, "finish_reason": finish}]}
+    if usage:
+        body["usage"] = usage
+    return json.dumps(body)
+
+
 PROVIDER_ERROR = "provider-error"
 RATE_LIMITED = "rate-limited"
 
@@ -91,10 +116,11 @@ class Provider(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"error":{"message":"unavailable"}}')
             return
+        streamed = body.get("stream", True)
         self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Type", "text/event-stream" if streamed else "application/json")
         self.end_headers()
-        self.wfile.write(step.encode())
+        self.wfile.write((step if streamed else unstream(step)).encode())
 
     def do_GET(self):
         # The OpenAI-compatible model list the Model tab asks for; no inference.
@@ -920,6 +946,21 @@ class CodingWorkflow(unittest.TestCase):
         (replayed,) = [json.loads(l) for l in result.stdout.splitlines() if l.startswith("{")]
         self.assertEqual(replayed["replay"]["verdict"], "allow");self.assertEqual(replayed["expected"], "allow")
         self.assertIn("fake", replayed["replay"]["model"])
+
+    def test_compaction_keeps_its_prefix_and_summary_for_scoring_and_replay(self):
+        self.shift("/mode autopilot\nfirst\nsecond\nthird\n/compact\n/quit\n",
+                   plan=[tool_call("edit", {"path": "notes.txt", "old_text": "8080", "new_text": "9443"}), answer("edited"),
+                         answer("two"), answer("three"), answer("Summary: the user asked first; notes.txt was edited (8080 to 9443).")])
+        (record,) = [json.loads(p.read_text()) for p in sorted((self.state() / "compactions").glob("*.json"))]
+        self.assertEqual(record["reason"], "manual");self.assertEqual(record["keep_recent"], 4)
+        self.assertEqual(record["prefix"][0]["role"], "user");self.assertIn("notes.txt", record["summary"])
+        self.assertTrue(any(m.get("role") == "tool" for m in record["prefix"]))
+        Provider.plan = [answer("Replayed summary mentions notes.txt too.")]
+        result = subprocess.run([BIN, "--agent", str(self.agent), "--summarize-replay", str(self.state() / "compactions/1.json")],
+                                text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60, stdin=subprocess.DEVNULL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replayed = json.loads([l for l in result.stdout.splitlines() if l.startswith("{")][-1])
+        self.assertIn("Replayed summary", replayed["summary"]);self.assertIn("fake", replayed["model"])
 
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(
