@@ -3,6 +3,23 @@
 
 (test-begin "coding")
 
+(test-equal "diagnostics come from compiler, traceback, pytest, unittest, cargo and make lines"
+  '("src/app.scm:12:5: warning: unused variable"
+    "tests/test_x.py::test_port: failed - AssertionError: 8080 != 9443"
+    "app.py:3 in main"
+    "pkg.mod.Case.test_thing: error"
+    "src/main.rs:7:9: error[E0308]: mismatched types"
+    "make: [test] Error 2")
+  (diagnostics-of (string-join
+    '("compiling src/app.scm" "src/app.scm:12:5: warning: unused variable"
+      "FAILED tests/test_x.py::test_port - AssertionError: 8080 != 9443"
+      "Traceback (most recent call last):" "  File \"app.py\", line 3, in main" "    boom()"
+      "ERROR: test_thing (pkg.mod.Case.test_thing)"
+      "error[E0308]: mismatched types" "  --> src/main.rs:7:9"
+      "12:34:56 not a location" "make: *** [test] Error 2" "make: *** [test] Error 2")
+    "\n")))
+(test-equal "clean output has no diagnostics" '() (diagnostics-of "all 12 tests passed\nok\n"))
+
 (define (write-file! root path text)
   (call-with-output-file (string-append root "/" path) (lambda (port) (display text port))))
 (define (mutate! ledger root turn path before after)

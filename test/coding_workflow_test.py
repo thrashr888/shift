@@ -962,6 +962,17 @@ class CodingWorkflow(unittest.TestCase):
         replayed = json.loads([l for l in result.stdout.splitlines() if l.startswith("{")][-1])
         self.assertIn("Replayed summary", replayed["summary"]);self.assertIn("fake", replayed["model"])
 
+    def test_failing_runs_lead_with_diagnostics(self):
+        script = "printf 'x.py:3:1: error: bad name\\nFAILED t.py::test_a - boom\\n'; exit 1"
+        self.shift("/mode autopilot\ntest it\n/quit\n", plan=[tool_call("run", {"argv": ["sh", "-c", script]}), answer("done")])
+        result = self.tool_results()[0]
+        self.assertIn("exit 1", result.splitlines()[0])
+        self.assertIn("diagnostics (2):\n  x.py:3:1: error: bad name\n  t.py::test_a: failed - boom", result)
+        receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(receipt["runs"][0]["diagnostics"], ["x.py:3:1: error: bad name", "t.py::test_a: failed - boom"])
+        self.shift("/mode autopilot\nok\n/quit\n", plan=[tool_call("run", {"argv": ["sh", "-c", "echo x.py:3:1: fine"]}), answer("done")])
+        self.assertNotIn("diagnostics", self.tool_results()[-1], "a successful run carries no diagnostics")
+
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(
             '/allow-run "sh -c" project\n/allow-run\nrun it\n/quit\n',

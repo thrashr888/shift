@@ -238,7 +238,12 @@ recently undone turn, including after reopening the session. Failed undo attempt
 and later edits leave that value unchanged. `diff` takes `scope` `turn` (default), `session`, or
 `git` (working tree against HEAD) and optional `paths`. Both are read-only, work
 without git, spawn `git` and `diff` without a shell, and are bounded at 64 KiB.
-Omit `coding` from `SHIFT_BUILTINS` to remove the tools.
+A failing `run` leads with `diagnostics (N):`, the locations its output points
+at, read with regular expressions: `path:line:col: message` from compilers,
+guild and linters, Python traceback frames, pytest and unittest failure lines,
+cargo `-->` locations and make errors. The receipt lists them per run and the
+Log tab shows them under the run. Omit `coding` from `SHIFT_BUILTINS` to remove
+the tools.
 
 `make build` compiles the runtime into `build/`; `bin/shift-agent` and `make test` load
 those modules and fall back to source, with a note, when a file is newer than its

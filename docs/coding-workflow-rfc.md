@@ -40,8 +40,8 @@ repositories. The TUI waits until this loop is dependable.
   non-interactive command with captured output.
 - No model-based approval classification. Any new allow decision is
   deterministic, process-owned data.
-- No diagnostics integration (LSP, compiler JSON). Test results are exit status
-  plus bounded output.
+- No LSP or compiler JSON. Failing runs now lead with regex-derived
+  diagnostics (locations, failed tests); the rest is exit status plus bounded output.
 - No TUI. The REPL renders diffs and receipts as plain text that a later TUI
   can turn into cards without changing the controller.
 

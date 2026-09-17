@@ -2,7 +2,7 @@
 
 Status: RFC. Decisions are listed; implementation follows in the order below,
 each step landing with tests. Implemented so far: 1 (judge evals), 2
-(session review) and 3 (compaction quality).
+(session review), 3 (compaction quality) and 4 (diagnostics).
 
 ## What the real-world test showed
 

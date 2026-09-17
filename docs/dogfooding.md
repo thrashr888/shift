@@ -40,8 +40,8 @@ granting the inner model authority to accept its own runtime changes.
 - `status`, `diff`, `apply_patch`, and `run` now replace the shell for the
   inspect-change-test loop, with diff previews at approval, `/undo`, and
   `/recover restore`, and the end-of-turn receipt records changed files,
-  commands, test outcomes and tokens. There is still no diagnostics integration,
-  so test results are exit status plus bounded output.
+  commands, test outcomes and tokens. Failing runs lead with regex-derived
+  diagnostics; there is no LSP integration.
 - Long sessions now compact into a traced summary and can search pre-compaction
   trace evidence, checkpoints can fork into generation-pinned children, and
   `turn-token-budget` ends a runaway turn with a recorded reason, but there is

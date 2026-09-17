@@ -3,6 +3,7 @@
 ;; steps of docs/coding-workflow-rfc.md. Nothing here goes through a shell.
 (define-module (shift coding)
   #:use-module (ice-9 textual-ports)
+  #:use-module (ice-9 regex)
   #:use-module (ice-9 binary-ports)
   #:use-module (ice-9 iconv)
   #:use-module (rnrs bytevectors)
@@ -18,7 +19,7 @@
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
             executed-argv capture-process unwrap-agentkernel-output
-            job-observer! take-job-notices stop-jobs! job-list start-job! start-child-job! cancel-job! job-event job-identity job-tags job-state run-placement))
+            diagnostics-of job-observer! take-job-notices stop-jobs! job-list start-job! start-child-job! cancel-job! job-event job-identity job-tags job-state run-placement))
 
 (define max-output (* 64 1024))
 (define max-patch-input (* 512 1024))
@@ -482,6 +483,44 @@
       (start-job! arguments root ledger turn context)
       (execute-run-now arguments root ledger turn context)))
 
+;; --- diagnostics -----------------------------------------------------------
+;; What a failing run points at, read off its output with regular expressions:
+;; path:line[:col]: message (compilers, guild, linters), Python tracebacks,
+;; pytest and unittest failure lines, cargo's --> locations, make errors.
+(define location-rx (make-regexp "^([^ \t:]+\\.[A-Za-z0-9_]+|[^ \t:]*/[^ \t:]+):([0-9]+)(:([0-9]+))?:? *(.*)$"))
+(define python-frame-rx (make-regexp "^ *File \"([^\"]+)\", line ([0-9]+)(, in (.*))?$"))
+(define pytest-rx (make-regexp "^(FAILED|ERROR) ([^ ]+)( - (.*))?$"))
+(define unittest-rx (make-regexp "^(FAIL|ERROR): ([^ ]+) \\(([^)]+)\\)"))
+(define cargo-rx (make-regexp "^ *--> ([^:]+):([0-9]+):([0-9]+)"))
+(define make-rx (make-regexp "^make(\\[[0-9]+\\])?: \\*\\*\\* (.*)$"))
+(define max-diagnostics 12)
+(define (diagnostics-of text)
+  (let loop ((lines (string-split text #\newline)) (previous "") (found '()))
+    (if (or (null? lines) (>= (length found) max-diagnostics))
+        (reverse found)
+        (let* ((line (string-trim-right (car lines)))
+               (m (lambda (rx) (regexp-exec rx line)))
+               (entry
+                (cond
+                 ((m python-frame-rx) => (lambda (h) (string-append (match:substring h 1) ":" (match:substring h 2)
+                                                                    (if (match:substring h 4) (string-append " in " (match:substring h 4)) ""))))
+                 ((m pytest-rx) => (lambda (h) (string-append (match:substring h 2) ": " (string-downcase (match:substring h 1))
+                                                              (if (match:substring h 4) (string-append " - " (match:substring h 4)) ""))))
+                 ((m unittest-rx) => (lambda (h) (string-append (match:substring h 3) ": " (string-downcase (match:substring h 1)))))
+                 ((m cargo-rx) => (lambda (h) (string-append (match:substring h 1) ":" (match:substring h 2) ":" (match:substring h 3) ": " previous)))
+                 ((m make-rx) => (lambda (h) (string-append "make: " (match:substring h 2))))
+                 ((m location-rx) => (lambda (h) (let ((message (match:substring h 5)))
+                                                   (and (not (string-null? message))
+                                                        (string-append (match:substring h 1) ":" (match:substring h 2)
+                                                                       (if (match:substring h 4) (string-append ":" (match:substring h 4)) "")
+                                                                       ": " message)))))
+                 (else #f))))
+          (loop (cdr lines) line (if (and entry (not (member entry found))) (cons entry found) found))))))
+(define (diagnostics-text diagnostics)
+  (if (null? diagnostics) ""
+      (string-append (format #f "diagnostics (~a):~%" (length diagnostics))
+                     (string-concatenate (map (lambda (d) (string-append "  " d "\n")) diagnostics)))))
+
 (define (execute-run-now arguments root ledger turn context)
   (let-values (((argv workdir absolute timeout) (parse-run-arguments arguments root)))
     (let* ((backend (if (eq? (run-placement argv context) 'sandbox) 'agentkernel 'local))
@@ -496,6 +535,7 @@
         (let* ((log (write-log! ledger turn bytes))
                (changed (changed-seen-files ledger root))
                (success? (and (eq? status 'exit) (= code 0)))
+               (diagnostics (if success? '() (diagnostics-of (bytevector->string (last-bytes bytes tail-bytes) "UTF-8" 'substitute))))
                (status-text (case status
                               ((exit) (format #f "exit ~a" code))
                               ((signal) (format #f "killed by signal ~a" code))
@@ -514,7 +554,8 @@
                                     (cons "error" (if (eq? status 'exit) json-null status-text))))
                  (cons "status" (symbol->string status))
                  (cons "duration_ms" duration)
-                 (cons "log" log))))
+                 (cons "log" log)
+                 (cons "diagnostics" (apply json-array diagnostics)))))
           (ledger-record-run! ledger turn record)
           (make-tool-result
            success?
@@ -525,6 +566,7 @@
             (if (null? changed)
                 ""
                 (format #f "files changed since you last read them: ~a~%" (string-join changed ", ")))
+            (if success? "" (diagnostics-text diagnostics))
             (bounded-bytes bytes log))))))))
 
 ;; --- background jobs ------------------------------------------------------
@@ -614,6 +656,8 @@
                                   (cons "output_bytes" (stat:size (stat log-path)))
                                   (cons "error" (if (eq? status 'exit) json-null (job-status-text job)))))
      (cons "status" (symbol->string status))
+     (cons "diagnostics" (apply json-array (if (and (eq? status 'exit) (eqv? code 0)) '()
+                                               (diagnostics-of (catch #t (lambda () (job-tail job)) (lambda _ ""))))))
      (cons "duration_ms" (job-duration job))
      (cons "log" (job-log job))
      (cons "job" (job-id job))))
