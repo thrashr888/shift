@@ -34,6 +34,7 @@
   #:use-module (live-agent plugins)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
+  #:use-module (live-agent redact)
   #:export (main))
 
 (define turn-active? #f)
@@ -3263,6 +3264,7 @@
         (turn-count (if session (session-next-turn session) 1))
         (lock (make-mutex)))
     (define (publish-session!)
+      (trace-content (setting-ref (runtime-current runtime) 'trace-content))
       (when (ui-connected?)
         (let ((generation (runtime-current runtime)))
           (sync-ui-identity! generation)
@@ -3515,6 +3517,7 @@
         (unless runtime (exit 1))
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
+        (trace-content (setting-ref (runtime-current runtime) 'trace-content))
         (ui-init! state-directory (and session runtime-state-directory))
         (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) (setting-ref #f 'skill-dirs))
         (mcp-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))

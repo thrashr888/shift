@@ -15,6 +15,7 @@
   #:use-module (live-agent tools)
   #:use-module (live-agent changes)
   #:use-module (live-agent diff)
+  #:use-module (live-agent redact)
   #:use-module (live-agent patch)
   #:use-module (live-agent sha256)
   #:export (coding-tool-schema coding-execute coding-prepare run-argv
@@ -458,9 +459,12 @@
          (path (string-append directory "/" name)))
     (unless (file-exists? directory) (mkdir directory))
     (call-with-output-file path
-      (lambda (port) (put-bytevector port bytes))
+      (lambda (port) (put-bytevector port (redact-bytes bytes)))
       #:binary #t)
     (string-append "runs/" name)))
+(define (redact-bytes bytes)
+  (if (zero? (secret-count)) bytes
+      (string->bytevector (redact (bytevector->string bytes "UTF-8" 'substitute)) "UTF-8")))
 
 ;; Files the session had seen whose content changed during the command,
 ;; so the model re-reads them instead of failing a stale check later.
@@ -706,6 +710,7 @@
        ;; to a bounded in-memory tail for the tool and the Log tab.
        (let ((log (open-file (car paths) "wb")) (recent (make-bytevector 0)) (last-emit 0))
          (define (take-chunk! chunk)
+           (set! chunk (redact-bytes chunk))
            (put-bytevector log chunk) (force-output log)
            (set! recent (last-bytes (append-bytes recent chunk) job-tail-bytes))
            (set-job-tail! job (tail-text recent))

@@ -4,6 +4,7 @@
   #:use-module (ice-9 textual-ports)
   #:use-module (srfi srfi-9)
   #:use-module (live-agent json)
+  #:use-module (live-agent redact)
   #:use-module (live-agent sha256)
   #:use-module (live-agent diff)
   #:use-module (live-agent builtins)
@@ -46,7 +47,8 @@
   (changes tool-result-changes))
 
 (define* (make-tool-result success? output #:optional (changes '()))
-  (%make-tool-result success? output changes))
+  ;; Every tool result passes here, so this is where secrets are redacted.
+  (%make-tool-result success? (redact output) changes))
 
 ;; A mutation is prepared without touching the project, shown for approval,
 ;; then committed only if the target still matches the prepared pre-image.

@@ -973,6 +973,32 @@ class CodingWorkflow(unittest.TestCase):
         self.shift("/mode autopilot\nok\n/quit\n", plan=[tool_call("run", {"argv": ["sh", "-c", "echo x.py:3:1: fine"]}), answer("done")])
         self.assertNotIn("diagnostics", self.tool_results()[-1], "a successful run carries no diagnostics")
 
+    def test_dotenv_secrets_never_reach_results_logs_or_traces(self):
+        (self.project / ".env").write_text("DEMO_TOKEN=s3cr3t-value-9000\nTINY=ab\n")
+        self.shift("/mode autopilot\nshow it\n/quit\n",
+                   plan=[tool_call("run", {"argv": ["sh", "-c", "echo token=$DEMO_TOKEN; echo tiny=$TINY"]}), answer("done")])
+        result = self.tool_results()[0]
+        self.assertIn("token=[redacted DEMO_TOKEN]", result);self.assertIn("tiny=ab", result);self.assertNotIn("s3cr3t", result)
+        log = (self.state() / "runs/run-1-1.log").read_text()
+        self.assertIn("[redacted DEMO_TOKEN]", log);self.assertNotIn("s3cr3t", log)
+        self.assertNotIn("s3cr3t", (self.state() / "traces.jsonl").read_text())
+        self.assertNotIn("s3cr3t", (self.state() / "events.scm-log").read_text())
+        self.assertNotIn("s3cr3t", json.dumps(Provider.last_messages), "the model never sees the value either")
+
+    def test_trace_content_setting_limits_what_traces_keep(self):
+        code, out, err = self.print_mode("look", [tool_call("read", {"path": "notes.txt"}), answer("seen")],
+                                         "--mode", "autopilot", "--set", 'trace-content="off"', session="quiet-trace")
+        self.assertEqual(code, 0, err)
+        spans = [json.loads(l) for l in (self.state("quiet-trace") / "traces.jsonl").read_text().splitlines() if l.strip()]
+        reads = [s for s in spans if s["name"] == "tool.read"]
+        self.assertTrue(reads);self.assertNotIn("output.value", reads[0]["attributes"]);self.assertNotIn("input.value", reads[0]["attributes"])
+        self.assertEqual(reads[0]["attributes"]["tool.name"], "read")
+        code, out, err = self.print_mode("look", [tool_call("read", {"path": "notes.txt"}), answer("seen")],
+                                         "--mode", "autopilot", "--set", 'trace-content="bounded"', session="short-trace")
+        spans = [json.loads(l) for l in (self.state("short-trace") / "traces.jsonl").read_text().splitlines() if l.strip()]
+        chat = [s for s in spans if s["name"].endswith(".chat")][0]
+        self.assertTrue(all(len(v) <= 201 for k, v in chat["attributes"].items() if isinstance(v, str) and k.endswith(".value")))
+
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(
             '/allow-run "sh -c" project\n/allow-run\nrun it\n/quit\n',

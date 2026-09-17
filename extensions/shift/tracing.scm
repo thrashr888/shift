@@ -8,6 +8,7 @@
   #:use-module (srfi srfi-9)
   #:use-module (live-agent provider)
   #:use-module (live-agent json)
+  #:use-module (live-agent redact)
   #:export (tracer?
             make-tracer
             tracer-path
@@ -78,12 +79,23 @@
                      (number->string (string-length value)) "]")
       value))
 
+(define (content-key? key)
+  (let ((name (attribute-key key)))
+    (or (string-suffix? ".value" name) (string-contains name "messages")
+        (string-contains name "prompt.") (string=? name "error.message"))))
 (define (attributes->json attributes)
-  (apply
-   json-object
-   (map (lambda (entry)
-          (cons (attribute-key (car entry)) (bounded (cdr entry))))
-        attributes)))
+  (let ((mode (trace-content)))
+    (apply
+     json-object
+     (filter-map
+      (lambda (entry)
+        (let ((value (cdr entry)) (content? (content-key? (car entry))))
+          (cond
+           ((and content? (eq? mode 'off) (not (equal? (attribute-key (car entry)) "error.message"))) #f)
+           ((and content? (eq? mode 'bounded) (string? value) (> (string-length value) 200))
+            (cons (attribute-key (car entry)) (redact (string-append (substring value 0 200) "…"))))
+           (else (cons (attribute-key (car entry)) (bounded (redact value)))))))
+      attributes))))
 
 (define (open-otel-bridge endpoint)
   (let* ((root (or (getenv "SHIFT_PROJECT_ROOT")

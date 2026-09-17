@@ -425,6 +425,18 @@ a `(source servers)` pane row) shows state and tool counts; clicking a server
 that is not connected connects it. Results are bounded to 64 KiB; images and
 other non-text content are named with their type and size, not inlined.
 
+## Secrets and trace privacy
+
+Values loaded from the project's `.env` and anything `op read` returns for an
+MCP server are registered as secrets when the process sees them. Every tool
+result, run log, trace attribute, event record and receipt has them replaced by
+`[redacted NAME]` before it is written or shown, so a model that prints a token
+never sees it and a shared trace never carries it. Values shorter than six
+characters are left alone. The `trace-content` setting (`/settings
+trace-content bounded`, or `--set`) decides how much prompt and output text
+traces keep: `full` (default), `bounded` clips content attributes to 200
+characters, `off` keeps names, timings, token counts and errors only.
+
 ## Print mode and unattended runs
 
 ```

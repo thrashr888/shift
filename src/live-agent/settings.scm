@@ -2,6 +2,7 @@
   #:use-module (ice-9 textual-ports)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
+  #:use-module (live-agent redact)
   #:use-module (live-agent generation)
   #:export (settings-init! setting-ref setting-set! setting-set-json! settings-set! settings-save!
             settings-show settings-object setting-source load-dotenv! read-dotenv
@@ -117,7 +118,7 @@
                    ;; toolchains, signing, and git with the user's own keys.
                    (run-host . (("git") ("cargo" "tauri") ("codesign") ("xcodebuild") ("xcrun") ("notarytool")
                                 ("open") ("swift") ("swiftc") ("brew")))
-                   (judge . shadow) (judge-model . #f)
+                   (judge . shadow) (judge-model . #f) (trace-content . full)
                    (turn-token-budget . #f) (show-work . #t)
                    (provider-retries . ,default-provider-retries)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
@@ -158,13 +159,15 @@
     ;; judge: off (autopilot asks for anything the rules leave), on (the judge decides in
     ;; autopilot), shadow (on, and manual records the judge's verdict beside yours).
     ((judge) (memq value '(off shadow on)))
+    ;; trace-content: full, bounded (content clipped to 200 chars), off (names and timings only).
+    ((trace-content) (memq value '(full bounded off)))
     ((judge-model) (or (not value) (and (string? value) (string-index value #\/))))
     ((run-backend) (memq value '(local agentkernel)))
     ((run-sandbox) (or (not value) (and (string? value) (not (string-null? value)))))
     (else #f)))
 (define (decode key value)
   (cond
-   ((and (string? value) (memq key '(mode agent-provider agent-thinking effort run-backend judge)))
+   ((and (string? value) (memq key '(mode agent-provider agent-thinking effort run-backend judge trace-content)))
     (string->symbol value))
    ((and (memq key '(run-allow run-host)) (json-array? value))
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))
@@ -310,5 +313,7 @@
                       (loop (get-line port) entries)))))))
       '()))
 (define (load-dotenv! path)
-  (for-each (lambda (entry) (unless (getenv (car entry)) (setenv (car entry) (cdr entry))))
+  (for-each (lambda (entry)
+              (register-secret! (car entry) (cdr entry))
+              (unless (getenv (car entry)) (setenv (car entry) (cdr entry))))
             (read-dotenv path)))
