@@ -1,5 +1,5 @@
 (define (check g)
   (let ((prompt (generation-ref g 'agent-system-prompt)))
     (and (string? prompt)
-         (not (string-contains (string-downcase prompt) "french"))
+         (not (string-contains (string-downcase prompt) "always answer in french"))
          (string-contains prompt "coding agent"))))

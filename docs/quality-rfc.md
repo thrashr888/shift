@@ -122,6 +122,24 @@ whether the fix survived a reload. The claim it tests is the one in the README:
 generation-attributed repair is faster and no less correct than
 edit-plus-reload. Five tasks first; the number grows with the evidence.
 
+## First live-repair results
+
+Two runs on `ollama/qwen3.8:27b-mlx`, five tasks, both modes, September 17.
+
+| Run | Live | Reload | What changed between them |
+| --- | --- | --- | --- |
+| First | 2/5 resolved, median 4 rounds, 44 s | 4/5, median 4 rounds, 46 s | The shadow judge blocked two `live_eval` calls as "policy change"; `rg` and `agent-name` failed for that reason alone. |
+| Second | 4/5 resolved, median 5 rounds, 50 s, 4/5 survived a reload | 5/5, median 3 rounds, 32 s | Judge prompt: a requested behavior change is not a policy change (both blocks are now judge cases); rejected `live_eval` calls list the live bindings and their kinds. |
+
+The remaining live failure, `tools-search`, wrote `"rg"` as a string where the
+tool list holds symbols; the validation error now says so, and a third run of
+that task alone resolved it live in 4 rounds. On this model the claim does not
+hold yet: edit-plus-reload resolved every task in fewer rounds, because the
+model already knows how to edit a file and has to be taught the sandbox one
+error message at a time. Every live failure so far was a harness message the
+model could not recover from, and each one became a fix; the table gets a new
+row when the full set reruns.
+
 ## Order
 
 1, 2, 3, 4, 5, 6, 7. The first two come straight from the incident and need no

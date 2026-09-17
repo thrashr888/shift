@@ -211,7 +211,10 @@
                           (memq tool '(read rg skill write edit shell traces recall spawn live_eval extension
                                        status diff apply_patch run job tool_search ui)))
                         tools))
-      (error "agent-tools contains an unsupported tool" tools)))
+      (error (if (and (list? tools) (any string? tools))
+                 "agent-tools contains an unsupported tool; tool names are symbols such as rg, not strings"
+                 "agent-tools contains an unsupported tool")
+             tools)))
   (let ((rounds (module-ref module 'agent-max-tool-rounds)))
     (unless (and (integer? rounds) (>= rounds 0) (<= rounds 64))
       (error "agent-max-tool-rounds must be an integer from 0 through 64" rounds)))

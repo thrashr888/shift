@@ -1909,7 +1909,29 @@
     (lambda (key . arguments)
       (make-tool-result
        #f
-       (string-append "live evaluation rejected: " (caught-error-detail key arguments))))))
+       (string-append "live evaluation rejected: " (caught-error-detail key arguments)
+                      "\n" (live-bindings-hint generation))))))
+;; What a rejected live change may target: the generation's agent-* and
+;; extension-* bindings with their kinds, so the model stops probing for them.
+(define (live-bindings-hint generation)
+  (let* ((module (generation-module generation))
+         (names (sort (filter (lambda (name)
+                                (let ((text (symbol->string name)))
+                                  (or (string-prefix? "agent-" text) (string-prefix? "extension-" text))))
+                              (module-map (lambda (name variable) name) module))
+                      (lambda (a b) (string<? (symbol->string a) (symbol->string b)))))
+         (kind (lambda (value)
+                 (cond ((procedure? value) "procedure") ((string? value) "string")
+                       ((and (list? value) (pair? value) (every symbol? value)) "list of symbols")
+                       ((list? value) "list")
+                       ((boolean? value) "boolean") ((number? value) "number") ((symbol? value) "symbol") (else "value")))))
+    (string-append
+     "Live bindings you can define or set! directly (no probing needed): "
+     (string-join (map (lambda (name)
+                         (string-append (symbol->string name) " (" (kind (module-ref module name)) ")"))
+                       names)
+                  ", ")
+     ". Only define, define*, set! and begin are accepted at top level; the sandbox has no procedure?, bound-identifier? or exception handlers.")))
 
 (define (execute-extension runtime generation arguments)
   (catch #t
