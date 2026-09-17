@@ -23,6 +23,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q guile-3.0 ripgrep
-          guile --version | head -1
+          # Debian names the compiler guild-3.0 and registers no plain `guild`.
+          command -v guild >/dev/null || sudo ln -s "$(command -v guild-3.0)" /usr/local/bin/guild
+          guile --version | head -1; guild --version | head -1
       - name: Run the suite
         run: make test
