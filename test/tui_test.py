@@ -1764,14 +1764,16 @@ class TerminfoRepeat(unittest.TestCase):
         lines[0]='shift-rep-test|xterm-256color with rep,'
         lines.insert(1,'\trep=%p1%c\\E[%p2%{1}%-%db,')
         lines.insert(2,'\tTc,')  # an extended capability that must survive the copy
-        src=Path(self.temp.name)/'rep.src';src.write_text('\n'.join(lines)+'\n')
+        # A sibling entry without rep: the platform's own xterm-256color may carry rep (Linux) or not (macOS).
+        norep=[line for line in lines if not line.strip().startswith('rep=')];norep[0]='shift-norep-test|xterm-256color without rep,'
+        src=Path(self.temp.name)/'rep.src';src.write_text('\n'.join(lines)+'\n\n'+'\n'.join(norep)+'\n')
         subprocess.run(['tic','-x','-o',self.temp.name,str(src)],capture_output=True,check=True)
         self.env={**os.environ,'TERM':'shift-rep-test','TERMINFO':self.temp.name}
 
     def test_private_terminfo_drops_rep_only_when_needed(self):
         with patch.dict(os.environ,self.env):
             self.assertIsNone(tui.rep_free_terminfo('shift-rep-test',(6,1)))
-            self.assertIsNone(tui.rep_free_terminfo('xterm-256color',(6,0)))
+            self.assertIsNone(tui.rep_free_terminfo('shift-norep-test',(6,0)))
             directory=tui.rep_free_terminfo('shift-rep-test',(6,0))
         self.assertIsNotNone(directory);self.addCleanup(shutil.rmtree,directory,True)
         copy=subprocess.run(['infocmp','-A',directory,'-x','-1','shift-rep-test'],capture_output=True,text=True,check=True).stdout
