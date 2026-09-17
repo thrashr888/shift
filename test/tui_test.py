@@ -1425,6 +1425,20 @@ class SessionSwitcher(unittest.TestCase):
         self.assertEqual(terminal.model.source_identity['loaded']['label'],'abc')
         self.assertIn('Opening session task',terminal.model.notice)
 
+    def test_upgrade_sends_the_command_and_resets_like_a_switch(self):
+        terminal=self.tab();m=terminal.model;child=terminal.child
+        m.session['runtime']='abc12345'
+        self.assertTrue(terminal.local('/upgrade'))
+        child.send.assert_called_once_with('/upgrade');child.close.assert_not_called()
+        self.assertIsNot(terminal.model,m);self.assertEqual(terminal.model.upgrade_from,'abc12345')
+        self.assertIn('Upgrading',terminal.model.notice)
+        terminal.model.event({'type':'session','value':{'name':'main','provider':'ollama','model':'demo','mode':'autopilot','turn':3,'runtime':'def67890'}})
+        self.assertEqual(terminal.model.notice,'Runtime upgraded: abc12345 → def67890')
+        terminal.model.control('ready');terminal.model.panel_tab='session';terminal.draw()
+        self.assertIn('Runtime: def67890','\n'.join(terminal.screen.line(y) for y in range(40)))
+        busy=self.tab();busy.model.control('working');busy.local('/upgrade')
+        self.assertIn('Turn running',busy.model.notice);busy.child.send.assert_not_called()
+
     def test_switch_refusals_never_close_the_backend(self):
         terminal=self.tab();m=terminal.model
         for name,expected in (('main','Already in session'),('dogfood','open in another process')):

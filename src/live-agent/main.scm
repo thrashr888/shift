@@ -118,6 +118,42 @@
 (define cli-receipt-path #f)
 (define cli-judge-replay #f)
 (define cli-compaction-replay #f)
+(define process-arguments '())
+(define upgrade-requested? #f)
+;; The install identity: a git label for a checkout, the Cellar version for a
+;; brew install, otherwise unknown. Recorded on every span as runtime.version.
+(define runtime-version-label "unknown")
+(define (install-version root)
+  (catch #t
+    (lambda ()
+      (cond
+       ((not root) "unknown")
+       ((and (file-exists? (string-append root "/.git")) (builtin-enabled? 'coding))
+        (let* ((run (builtin-ref 'coding 'run-argv))
+               (head (run (list "git" "-C" root "rev-parse" "--short=8" "HEAD")))
+               (dirty (run (list "git" "-C" root "status" "--porcelain"))))
+          (if (eqv? 0 (car head))
+              (string-append (string-trim-both (cdr head))
+                             (if (and (eqv? 0 (car dirty)) (not (string-null? (string-trim-both (cdr dirty))))) " +dirty" ""))
+              "unknown")))
+       ((string-contains root "/Cellar/shift/")
+        (let* ((after (substring root (+ (string-contains root "/Cellar/shift/") 14)))
+               (slash (string-index after #\/)))
+          (if slash (substring after 0 slash) after)))
+       (else "unknown")))
+    (lambda _ "unknown")))
+;; The same launch again, resuming this session: the arguments this process
+;; received minus any session selector or prompt.
+(define (upgrade-arguments arguments session-name)
+  (let loop ((rest arguments) (out '()))
+    (cond
+     ((null? rest) (append (reverse out) (list "--resume" session-name)))
+     ((member (car rest) '("--session" "--new-session" "--resume" "--print" "-p"))
+      (loop (if (pair? (cdr rest)) (cddr rest) '()) out))
+     ((and (pair? (cdr rest)) (member (car rest) '("--agent" "--state-dir" "--mode" "--model" "--allow-run" "--set" "--receipt" "--mcp-port")))
+      (loop (cddr rest) (cons (cadr rest) (cons (car rest) out))))
+     ((string-prefix? "-" (car rest)) (loop (cdr rest) (cons (car rest) out)))
+     (else (loop (cdr rest) out)))))
 (define turn-tokens 0)
 ;; Per-turn facts the receipt reports: provider usage, model rounds, and tool
 ;; calls by name. Reset when a turn starts.
@@ -319,6 +355,7 @@
     "  /skills           list skills (SKILL.md folders) and which are loaded\n"
     "  /skill NAME       send a skill's instructions with the next prompt\n"
     "  /jobs             list background jobs and subagents; /jobs cancel ID stops one\n"
+    "  /upgrade          checkpoint and hand this session to the current install in place\n"
     "  /recall QUERY     search every session's traces in this project, subagents included\n"
     "  /plugins          installed plugins; /plugin enable|disable NAME [project|user] toggles one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
@@ -1638,6 +1675,11 @@
     'continue)
    ((string=? line "/reset") 'reset)
    ((or (string=? line "/quit") (string=? line "/exit")) 'quit)
+   ((string=? line "/upgrade")
+    (cond ((not session) (display "Upgrade needs a durable session.\n") 'continue)
+          (else (runtime-record! runtime 'runtime-handoff `((from . ,runtime-version-label) (session . ,(session-name session))))
+                (format #t "handing session ~a to the current install (from ~a)~%" (session-name session) runtime-version-label)
+                (set! upgrade-requested? #t) 'quit)))
    (else
     (format (current-error-port) "Unknown command. Enter /help.~%")
     'continue)))
@@ -3280,7 +3322,8 @@
         (cons "mcp" (if mcp-running? (format #f "http://127.0.0.1:~a/mcp" mcp-port) json-null))
         (cons "mode" (symbol->string (setting-ref (runtime-current runtime) 'mode)))
         (cons "show_work" (setting-ref (runtime-current runtime) 'show-work))
-        (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral"))))
+        (cons "turn" turn-count) (cons "name" (if session (session-name session) "ephemeral"))
+        (cons "runtime" runtime-version-label)))
       (emit-skills!) (emit-servers!) (emit-plugins!))
     (define (register-host!)
       (ui-host-handler!
@@ -3432,6 +3475,10 @@
                     ;; Exit status is the turn outcome: 0 completed, 1 failed
                     ;; or cancelled. Harness errors exit 2 before this point.
                     (if (string=? operation-status "ok") 0 1)
+                ;; Piped input is read unbuffered so nothing typed ahead is
+                ;; lost in this process's buffer when /upgrade execs the next one.
+                (begin
+                (unless (isatty? (current-input-port)) (setvbuf (current-input-port) 'none))
                 (let loop ()
                   (let ((line (read-user-line "shift> ")))
                     (cond
@@ -3442,11 +3489,12 @@
                                        (lambda () (process! line))
                                        (lambda () (unlock-mutex lock)))))
                          (unless (eq? action 'quit) (loop))))
-                      (else (display "Session busy with an MCP operation.\n") (loop))))))))
+                      (else (display "Session busy with an MCP operation.\n") (loop)))))))))
         (lambda () (ui-host-handler! #f) (stop-mcp!))))))
 
 (define (main args)
   (reset-run-usage!)
+  (set! process-arguments args)
   ;; The launcher prepends --agent and --state-dir; the subcommand follows them.
   (let ((at (list-index (lambda (a) (string=? a "plugin")) args)))
    (when (and at (< (+ at 1) (length args)) (member (list-ref args (+ at 1)) '("add" "update" "list")))
@@ -3518,6 +3566,8 @@
         (set! ledger (open-ledger runtime-state-directory))
         (settings-init! state-directory (and session runtime-state-directory))
         (trace-content (setting-ref (runtime-current runtime) 'trace-content))
+        (set! runtime-version-label (install-version (getenv "SHIFT_INSTALL_ROOT")))
+        (trace-runtime-version! runtime-version-label)
         (ui-init! state-directory (and session runtime-state-directory))
         (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) (setting-ref #f 'skill-dirs))
         (mcp-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
@@ -3624,4 +3674,12 @@
                            (show-close-message session)))
                      (when session (close-session! session))))))
             (when print-mode?
-              (exit (if (integer? outcome) outcome 1))))))))))
+              (exit (if (integer? outcome) outcome 1)))
+            ;; The handoff: the checkpoint is written and every resource is
+            ;; released, so the launcher can start the current install on the
+            ;; same pipes and session. Nothing survives from this image.
+            (when (and upgrade-requested? session)
+              (let ((launcher (string-append (or (getenv "SHIFT_INSTALL_ROOT") (getcwd)) "/bin/shift-agent"))
+                    (arguments (upgrade-arguments process-arguments (session-name session))))
+                (force-output (current-output-port)) (force-output (current-error-port))
+                (apply execl launcher launcher arguments))))))))))

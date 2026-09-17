@@ -999,6 +999,21 @@ class CodingWorkflow(unittest.TestCase):
         chat = [s for s in spans if s["name"].endswith(".chat")][0]
         self.assertTrue(all(len(v) <= 201 for k, v in chat["attributes"].items() if isinstance(v, str) and k.endswith(".value")))
 
+    def test_upgrade_hands_the_session_to_the_current_install_in_place(self):
+        output = self.shift("/mode autopilot\nfirst\n/upgrade\nsecond\n/quit\n", plan=[answer("one"), answer("two")])
+        self.assertIn("handing session w to the current install", output)
+        self.assertIn("session w · resumed", output.replace("\u00b7", "·"))
+        checkpoint = self.checkpoint()
+        self.assertEqual(checkpoint["next_turn"], 3)
+        self.assertEqual([m["content"] for m in checkpoint["history"] if m["role"] == "user"], ["first", "second"])
+        self.assertEqual(len((self.state() / "receipts.jsonl").read_text().splitlines()), 2)
+        events = (self.state() / "events.scm-log").read_text()
+        self.assertIn("(kind . runtime-handoff)", events)
+        head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True).stdout.strip()
+        spans = [json.loads(l) for l in (self.state() / "traces.jsonl").read_text().splitlines() if l.strip()]
+        versions = {s["attributes"].get("runtime.version") for s in spans}
+        self.assertEqual(len(versions), 1);self.assertTrue(next(iter(versions)).startswith(head), versions)
+
     def test_allow_run_persists_per_scope_and_skips_the_prompt(self):
         output = self.shift(
             '/allow-run "sh -c" project\n/allow-run\nrun it\n/quit\n',

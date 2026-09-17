@@ -19,10 +19,13 @@
             trace-span-id
             trace-search
             trace-recall
+            runtime-version
             trace-close!
             session-id-of span-id-of trace-id-of usage-attributes))
 
 (define write-lock (make-mutex))
+;; The install that produced a span, beside the generation that shaped it.
+(define runtime-version (make-parameter #f))
 
 (define-record-type <tracer>
   (%make-tracer path session-id session-name bridge)
@@ -139,6 +142,7 @@
     (if (tracer-session-name tracer)
         `((session.name . ,(tracer-session-name tracer)))
         '())
+    (if (runtime-version) `((runtime.version . ,(runtime-version))) '())
     attributes)
    #f))
 

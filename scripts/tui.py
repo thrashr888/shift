@@ -54,6 +54,7 @@ COMMANDS = {
     '/receipt':'Last turn receipt',
     '/session':'Current session, or switch to NAME', '/skills':'List skills and which are loaded', '/skill':'Send a skill with the next prompt',
     '/jobs':'List background jobs and subagents (cancel ID stops one)', '/recall':'Search every session\'s traces in this project',
+    '/upgrade':'Hand this session to the current install in place',
     '/allow-run':'Allow a run prefix without asking (add project or user to persist)',
     '/learn':'Write this conversation\'s procedure as a project skill (NAME [notes])',
     '/plugins':'Installed plugins and what they contribute', '/plugin':'enable|disable NAME [project|user], or reload',
@@ -515,6 +516,9 @@ class Model:
             self.history_index=len(self.history)
         elif kind == 'session':
             self.session = value
+            if getattr(self,'upgrade_from',None) is not None and value.get('runtime'):
+                before,self.upgrade_from=self.upgrade_from,None
+                self.notice=('Runtime upgraded: '+str(before)+' → '+str(value['runtime'])) if value['runtime']!=before else 'Runtime restarted on the same install '+str(value['runtime'])
         elif kind == 'turn-start':
             self.current_turn=value['turn']
             self.usage={**self.usage,'prompt':None,'prompt_tokens':None,'prompt_source':'unavailable',
@@ -1477,6 +1481,7 @@ class Terminal:
             title('SESSION');line(str(m.session.get('name','default')))
             line(str(m.session.get('provider','?'))+'/'+str(m.session.get('model','starting')))
             line('Mode: '+m.session.get('mode','manual'));line('Turn: '+str(m.session.get('turn','unknown')))
+            if m.session.get('runtime'):line('Runtime: '+str(m.session['runtime']),4)
         @section('skills')
         def _skills():
             title('SKILLS')
@@ -1850,6 +1855,19 @@ class Terminal:
         if name=='/theme' and not value:self.cycle_theme();return True
         if name=='/mode' and value:
             self.request_mode(value);return True
+        if name=='/upgrade':
+            # The backend checkpoints and execs the current install on the same
+            # pipes; the model resets like a session switch so the resumed
+            # history is not appended twice.
+            m=self.model
+            if m.approval or not m.ready or m.command_pending is not None:
+                m.notice='Finish approval before upgrading.' if m.approval else 'Turn running; upgrade when ready.';return True
+            identity=m.source_identity;tab=m.panel_tab;previous=m.session.get('runtime')
+            self.child.send('/upgrade')
+            self.model=Model();self.model.source_identity=identity;self.model.panel_tab=tab
+            self.model.upgrade_from=previous;self.model.notice='Upgrading the runtime in place…'
+            self.anchor=None;self.menu=False;self.palette_draft=None
+            return True
         if name=='/session' and value:
             self.switch_session(value);return True
         if name=='/pane':

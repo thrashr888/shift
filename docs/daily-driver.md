@@ -437,6 +437,17 @@ trace-content bounded`, or `--set`) decides how much prompt and output text
 traces keep: `full` (default), `bounded` clips content attributes to 200
 characters, `off` keeps names, timings, token counts and errors only.
 
+## Upgrading the runtime in place
+
+`/upgrade` is the development-scale runtime handoff: the session checkpoints,
+jobs and servers stop, and the backend execs the launcher from the current
+install against the same session and the same pipes, so a `brew upgrade` or a
+`git pull` takes effect without leaving the conversation. The TUI resets its
+view exactly as a session switch does and then reports `Runtime upgraded: OLD
+→ NEW`. Every trace span carries `runtime.version`, a git label for a checkout
+or the Cellar version for a brew install, next to the generation that shaped
+it, and the events log records the handoff.
+
 ## Print mode and unattended runs
 
 ```
@@ -755,6 +766,7 @@ the cached identity. No inference request is made for these measurements.
 | Click an idle Session row or `/session NAME` | Switch durable sessions when idle; running sessions are marked, not switchable |
 | Click a pane command or `/pane run NAME [ROW]` | Start a user-owned pane's allowlisted commands as background jobs |
 | Click a Session-tab skill or `/skill NAME` | Send a skill's instructions with the next prompt; `/skills` lists them |
+| `/upgrade` | Checkpoint and hand this session to the current install in place; the notice names the old and new runtime versions |
 | `/jobs`, `/jobs cancel ID` | List background jobs or stop one; the Log tab shows them running |
 | `/mouse off` | Release mouse tracking for the terminal's own selection (`on` takes it back) |
 | Click `‹` or `›` in the tab strip | Turn the page when the tabs do not fit |

@@ -46,6 +46,12 @@ than mutating the stable runtime in place:
    every later trace.
 7. Keep the previous process and artifact available for bounded rollback.
 
+At development scale, `/upgrade` already performs steps 4 to 7 for one
+process: it checkpoints, releases every resource and execs the current install
+against the same session, and every span records `runtime.version` beside the
+generation. The signed-artifact supervisor remains the production version of
+that contract.
+
 That path preserves the useful property of live generations: every result can
 be attributed to both a behavior generation and a stable runtime release. The
 current file watcher is the development-scale proof of the behavior-generation
