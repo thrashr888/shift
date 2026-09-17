@@ -35,7 +35,6 @@ Features:
 Packaging:
   - **Export and promotion.** Session export and sharing, and a reviewed path from
     an exported Scheme artifact into base source ([gaps-with-pi](gaps-with-pi.md)).
-  - **Judge evals.** An evals `judge` subcommand that replays `judge.jsonl` through a candidate model and reports agreement ([autopilot-judge-rfc](autopilot-judge-rfc.md)).
   - **Packs.** File/URL extension packs ([daily-driver-plan](daily-driver-plan.md)).
 Evals/Quality:
   - **Job resource limits.** Memory ceilings for jobs and subagents; macOS does not honour RLIMIT_AS and the run path has no shell ([quality-rfc](quality-rfc.md)).
