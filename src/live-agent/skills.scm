@@ -176,7 +176,9 @@
 ;; model so supporting files are reachable through read.
 (define* (skill-load! name #:key (by-model #t))
   (let ((rec (skill-find name)))
-    (unless rec (error "no skill named" name))
+    (unless rec (error (format #f "no skill named ~s; available: ~a" name
+                               (let ((names (map (lambda (r) (field r 'name)) (skill-index))))
+                                 (if (null? names) "none" (string-join names ", "))))))
     (unless (field rec 'valid) (error (format #f "skill ~a is invalid: ~a" name (field rec 'error))))
     (when (and by-model (not (field rec 'model?)))
       (error (format #f "skill ~a is user-only; load it with /skill ~a" name name)))

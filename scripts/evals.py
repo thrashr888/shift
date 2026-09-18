@@ -10,6 +10,7 @@
     scripts/evals.py session [NAME|--all]        per-turn review: rounds, failures, waits, judge disagreements
     scripts/evals.py compaction [--replay]       score compaction summaries by durable-fact coverage
     scripts/evals.py live-repair [--tasks A,B]   fix behavior defects with live_eval and with edit-plus-reload; compare
+    scripts/evals.py answers [--tasks A,B]       repo questions with a checkable answer and method (did it use the plugin?)
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -242,6 +243,7 @@ def collect(receipt_path):
         files_changed=[change["path"] for change in receipt["changed"]],
         runs=[{"command": run["command"][:4], "exit_code": run["exit_code"], "status": run["status"]}
               for run in receipt["runs"]],
+        mcp_tools=receipt.get("mcp_tools", []),
     )
     return metrics
 
@@ -826,6 +828,52 @@ def repair_report(records):
     return "\n".join(lines)
 
 
+# --- answer tasks: checkable questions with a checkable method ------------------------
+
+def answers(args):
+    root = EVALS / "answers"
+    names = args.tasks.split(",") if args.tasks else sorted(p.name for p in root.iterdir() if p.is_dir())
+    run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S") + "-answers"
+    run_dir = RESULTS / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    (run_dir / "receipts").mkdir();(run_dir / "logs").mkdir()
+    env = environment()
+    env["XDG_CONFIG_HOME"] = str(run_dir / "empty-config")
+    env.pop("SHIFT_TOOL_CEILING", None)
+    records = []
+    for name in names:
+        task = (root / name / "task.md").read_text().strip()
+        expect = json.loads((root / name / "expect.json").read_text())
+        env_task = {**env, "SHIFT_PLUGINS": expect.get("plugins", "off")}
+        receipt = run_dir / "receipts" / f"{name}.json"
+        state = WORK / "answers" / run_id / name
+        shutil.rmtree(state, ignore_errors=True);state.mkdir(parents=True)
+        command = [str(ROOT / "bin/shift-agent"), "--state-dir", str(state), "--session", "answer", "--mode", "autopilot",
+                   "--print", task, "--receipt", str(receipt), "--model", args.model,
+                   "--set", f"agent-max-tool-rounds={args.rounds}", "--set", 'agent-keep-alive="1m"']
+        log(f"answers {name}: running {args.model}")
+        started = time.monotonic()
+        exit_code = logged_run(command, ROOT, env_task, args.timeout, run_dir / "logs" / name)
+        wall = round(time.monotonic() - started, 1)
+        answer = log_tail(run_dir / "logs" / f"{name}.stdout.log", 4000)
+        collected = collect(receipt)
+        used = [t for t in (collected.get("mcp_tools") or []) if str(t).startswith(expect.get("mcp_tools_prefix", ""))]
+        missing = [s for s in expect.get("answer_contains", []) if s not in answer]
+        any_of = expect.get("answer_contains_any", [])
+        if any_of and not any(s in answer for s in any_of):
+            missing.append("one of " + "|".join(any_of))
+        method_ok = not expect.get("mcp_tools_prefix") or bool(used)
+        record = {"task": name, "model": args.model, "exit_code": exit_code, "wall_s": wall, "answer_ok": not missing,
+                  "method_ok": method_ok, "resolved": not missing and method_ok and exit_code == 0, "missing": missing,
+                  "mcp_tools_used": used, "answer_tail": answer[-600:], **collected}
+        records.append(record)
+        with (run_dir / "results.jsonl").open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+        log(f"  resolved={record['resolved']} · answer {'ok' if not missing else 'missing ' + ','.join(missing)} · method {'ok' if method_ok else 'no plugin tool used'} · {record['rounds']} rounds · {wall}s")
+    log(f"answers: resolved {sum(r['resolved'] for r in records)}/{len(records)}; results: {run_dir}")
+    return records
+
+
 # --- session review (docs/quality-rfc.md §2) ---------------------------------------
 
 EVENT_KIND = re.compile(r"\(kind \. ([a-z-]+)\)")
@@ -1022,12 +1070,18 @@ def main():
     repairer.add_argument("--rounds", type=int, default=12)
     repairer.add_argument("--timeout", type=int, default=900)
     repairer.add_argument("--run-id")
+    answerer = commands.add_parser("answers", help="questions about this repo with a checkable answer and a checkable method (plugin use)")
+    answerer.add_argument("--tasks", help="comma-separated task names under evals/answers")
+    answerer.add_argument("--model", default="ollama/qwen3.8:27b-mlx")
+    answerer.add_argument("--rounds", type=int, default=12)
+    answerer.add_argument("--timeout", type=int, default=900)
+    answerer.add_argument("--run-id")
     reviewer = commands.add_parser("session", help="per-turn review of a session's receipts, events and judge log")
     reviewer.add_argument("name", nargs="?", help="session name, default 'default' (subagents: PARENT/agents/CHILD)")
     reviewer.add_argument("--all", action="store_true", help="every session in the project, subagents included")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
-     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction, "live-repair": live_repair}[args.command](args)
+     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction, "live-repair": live_repair, "answers": answers}[args.command](args)
 
 
 if __name__ == "__main__":

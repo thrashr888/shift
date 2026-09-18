@@ -51,6 +51,11 @@
 (test-equal "search matches descriptions across every server it connected" '("fake__ping" "mine__ping")
   (map car (mcp-search "harmless")))
 (test-equal "search caps at eight" 8 (length (mcp-search "")))
+(test-equal "a server name finds every tool it serves" #t
+  (let ((names (map car (mcp-search "mine"))))
+    (and (pair? names) (every (lambda (n) (string-prefix? "mine__" n)) names))))
+(test-equal "search ranks by query words, not the whole phrase" "fake__ping"
+  (car (map car (mcp-search "ping something harmless please"))))
 (test-equal "select: names tools exactly" '("fake__echo") (map car (mcp-search "select:fake__echo,fake__nothing")))
 (test-assert "search connects idle servers and records failures instead of raising"
   (begin (mcp-search "")

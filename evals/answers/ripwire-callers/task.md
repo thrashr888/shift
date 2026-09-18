@@ -1,0 +1,1 @@
+In this repository, which function in scripts/evals.py calls `session_review`, and which test in test/evals_driver_test.py exercises it? Use the ripwire tools (find them with tool_search) rather than reading files, and answer with the two names.

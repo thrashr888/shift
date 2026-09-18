@@ -9,6 +9,7 @@
   #:use-module (live-agent redact)
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-14)
   #:use-module (srfi srfi-9)
   #:use-module (live-agent json)
   #:export (mcp-init! mcp-servers mcp-servers-json mcp-connect! mcp-disconnect! mcp-stop-all!
@@ -409,12 +410,33 @@
           (if (string-prefix? "select:" query)
               (let ((wanted (map string-trim-both (string-split (substring query 7) #\,))))
                 (filter (lambda (t) (member (car t) wanted)) tools))
-              (let ((needle (string-downcase query)))
-                (filter (lambda (t) (or (string-null? needle)
-                                        (string-contains (string-downcase (car t)) needle)
-                                        (string-contains (string-downcase (description t)) needle)))
-                        tools)))))
+              (search-ranked query tools description))))
     (if (> (length matches) search-limit) (take matches search-limit) matches)))
+;; Ranked by query words, not by the whole phrase: a server name matches all
+;; of its tools, a word in the tool's own name counts double, a word in the
+;; description once, and the whole phrase as a substring counts as well.
+(define (search-tokens text)
+  (filter (lambda (w) (>= (string-length w) 3))
+          (string-tokenize (string-downcase text) char-set:letter+digit)))
+(define (search-ranked query tools description)
+  (let ((needle (string-downcase query)) (words (search-tokens query)))
+    (if (string-null? needle) tools
+        (let* ((scored
+                (filter-map
+                 (lambda (t)
+                   (let* ((full (string-downcase (car t)))
+                          (server (let ((at (string-contains full "__"))) (if at (substring full 0 at) "")))
+                          (bare (let ((at (string-contains full "__"))) (if at (substring full (+ at 2)) full)))
+                          (text (string-downcase (description t)))
+                          (score (+ (if (or (string-contains full needle) (string-contains text needle)) 2 0)
+                                    (apply + (map (lambda (w)
+                                                    (+ (if (string=? w server) 3 0)
+                                                       (if (string-contains bare w) 2 0)
+                                                       (if (string-contains text w) 1 0)))
+                                                  words)))))
+                     (and (> score 0) (cons score t))))
+                 tools)))
+          (map cdr (sort scored (lambda (a b) (> (car a) (car b)))))))))
 
 ;; tools/call → (values ok? text). Text items join; other content is named
 ;; with its type and size rather than inlined.

@@ -38,6 +38,9 @@
   (string-contains (skill-load! "release") "Run make release."))
 (test-assert "loaded state is tracked" (skill-loaded? "release"))
 (test-error "user-only skills refuse model loads" #t (skill-load! "review"))
+(test-assert "a missing skill names the ones that exist"
+  (catch #t (lambda () (skill-load! "relaese") #f)
+    (lambda (key . args) (let ((text (format #f "~s" args))) (and (string-contains text "no skill named") (string-contains text "release"))))))
 (test-assert "the user can load a user-only skill" (string-contains (skill-load! "review" #:by-model #f) "Body"))
 (test-error "invalid skills cannot load" #t (skill-load! "renamed"))
 (test-equal "valid directories are the read roots" 3 (length (skill-directories)))

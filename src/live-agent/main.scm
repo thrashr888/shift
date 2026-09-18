@@ -601,8 +601,10 @@
         (if (null? matches)
             (string-append "No MCP tools match. Servers: "
                            (string-join (map (lambda (o) (string-append (json-object-ref o "name") " (" (json-object-ref o "state")
+                                                                        (let ((n (json-object-ref o "tools" #f))) (if (integer? n) (format #f ", ~a tools" n) ""))
                                                                         (let ((r (json-object-ref o "reason" #f))) (if (string? r) (string-append ": " r) "")) ")"))
-                                             (json-array-items (mcp-servers-json))) ", "))
+                                             (json-array-items (mcp-servers-json))) ", ")
+                           ". Search with a few words, or a server name to see its tools.")
             (string-append "Enabled for this turn: " (string-join (map car matches) ", ") "\n"
                            (string-join (map (lambda (m) (json-write (cadr m))) matches) "\n")))))))
 (define (execute-mcp-call name arguments)

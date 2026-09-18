@@ -247,6 +247,25 @@ class LiveRepair(unittest.TestCase):
             self.assertIn("live: resolved 1/1", report);self.assertIn("reload: resolved 1/1", report)
             self.assertTrue((root / "results/trial/results.jsonl").exists())
 
+class AnswerTasks(unittest.TestCase):
+    def test_answer_and_method_are_checked_separately(self):
+        with tempfile.TemporaryDirectory(prefix="shift-answers-") as tmp:
+            root = Path(tmp)
+            task = root / "evals/answers/who-calls";task.mkdir(parents=True)
+            (task / "task.md").write_text("Who calls session_review?")
+            (task / "expect.json").write_text(json.dumps({"answer_contains": ["session"], "mcp_tools_prefix": "ripwire__", "plugins": "on"}))
+            plans = iter([("session() calls it", ["ripwire__find_referencing_symbols"]), ("session() calls it", []), ("no idea", ["ripwire__grep"])])
+            def fake_model(command, repo, env, timeout, prefix):
+                assert env["SHIFT_PLUGINS"] == "on"
+                text, tools = next(plans)
+                Path(str(prefix) + ".stdout.log").write_text(text + "\n")
+                Path(command[command.index("--receipt") + 1]).write_text(json.dumps({"status": "ok", "rounds": 2, "tool_calls": {}, "tokens": {}, "changed": [], "runs": [], "mcp_tools": tools}))
+                return 0
+            with patch.multiple(evals, EVALS=root / "evals", WORK=root / "work", RESULTS=root / "results"), \
+                 patch.object(evals, "logged_run", side_effect=fake_model), patch.object(evals, "environment", return_value={}):
+                outcomes = [evals.answers(argparse.Namespace(tasks="who-calls", model="fake", rounds=4, timeout=10, run_id=f"trial-{i}"))[0] for i in range(3)]
+        self.assertEqual([(r["answer_ok"], r["method_ok"], r["resolved"]) for r in outcomes], [(True, True, True), (True, False, False), (False, True, False)])
+
 
 if __name__ == "__main__":
     unittest.main()

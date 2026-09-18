@@ -1,4 +1,4 @@
-(use-modules (srfi srfi-64) (srfi srfi-1) (ice-9 textual-ports) (live-agent plugins) (live-agent json))
+(use-modules (srfi srfi-64) (srfi srfi-1) (ice-9 textual-ports) (ice-9 ftw) (live-agent plugins) (live-agent json))
 (test-begin "plugins")
 (define root (string-append "/tmp/shift-plugins-" (number->string (getpid))))
 (define (write-file path text)
@@ -40,4 +40,15 @@
     (and (json-object-ref o "enabled") (member "skills" (json-array-items (json-object-ref o "contributes")))
          (member "1 mcp" (json-array-items (json-object-ref o "contributes"))))))
 (system* "rm" "-rf" root)
+;; Every plugin shipped in plugins/ must parse; a missing command is fine (it
+;; shows as unavailable), a broken manifest is not.
+(let ((bundled (string-append (dirname (dirname (current-filename))) "/plugins")))
+  (for-each
+   (lambda (name)
+     (let ((outcome (check-plugin-dir (string-append bundled "/" name))))
+       (test-assert (string-append "bundled plugin manifests parse: " name) (not (string? outcome)))))
+   (filter (lambda (n) (and (not (member n '("." ".." "README.md")))
+                            (file-exists? (string-append bundled "/" n "/plugin.scm"))))
+           (scandir bundled))))
+
 (test-end "plugins")
