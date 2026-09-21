@@ -146,6 +146,28 @@ lived in a scratch worktree that the desktop app cleaned up before grading,
 so it has no graded result and is not counted. Lesson recorded in the driver's
 docs: run evals from a durable checkout, never a scratch one.
 
+## Candidate benchmarks, September 21, 2026
+
+Eight were considered. Two would tell us something the current evals do not.
+
+| Benchmark | What it measures | Fit for Shift |
+| --- | --- | --- |
+| **DeepSWE v1.1** (Datacurve, open source) | 113 original long-horizon engineering tasks in 91 live repos across Python, TypeScript, Go, JavaScript and Rust; the committed patch is graded by a program verifier in a clean container, so test tampering shows as failure. | **Yes, first.** It is SWE-bench's shape with contamination resistance and four more languages, which is exactly where the tolerance fixes (argv shapes, loose edits, hunk counts) and the diagnostics parsers are untested. The driver's `run` needs a second dataset source and a per-task verifier step; the receipt and the review tool apply unchanged. |
+| **Terminal-Bench 4.0** (66 tasks, `tb` harness, Daytona sandboxes, pass@1) | Operating a real terminal on software, science, ML and operations tasks, eight hours each. | **Yes, second.** It exercises `run`, background jobs and the sandbox path rather than patching, which nothing here measures. Needs a Terminus-style adapter that runs print mode inside the task container; agentkernel is the natural host. Tasks are long; a slice of the software category is the honest start. |
+| ALE-CLI (Agents' Last Exam, 105 Linux CLI tasks) | Command-line task completion across occupations. | Maybe, as a cheaper stand-in for Terminal-Bench if the adapter proves heavy. |
+| ProgramBench | Rebuilding whole programs from scratch. | Later. Interesting for subagent fan-out and workflows, but long tasks on frontier models only. |
+| StepCodeBench | StepFun's internal 553-repo suite. | No: not public. |
+| GDPval-AA v2 | Documents, slides and spreadsheets for 44 occupations, judged by a model panel. | No: not code, and the judge panel is the score. |
+| FrontierFinance | 220 investment-research queries against expert rubrics. | No: a finance-research agent's benchmark. |
+| DRACO | 100 deep-research reports graded on accuracy, completeness, citation. | No: research report writing. |
+
+Order: a DeepSWE slice (ten tasks, two per language) on the local model first,
+because it needs no key; the same slice on Sonnet 5 when the key's limit
+resets on October 1; then the Terminal-Bench software slice once the adapter
+exists. Sources: the DeepSWE paper and repository, the Terminal-Bench 4.0
+release notes, the Agents' Last Exam paper, and the leaderboard pages for the
+rest.
+
 ## Dogfood assessment, September 10, 2026
 
 Two tasks were attempted with `ollama/qwen3.8:27b-mlx` against clean commit
