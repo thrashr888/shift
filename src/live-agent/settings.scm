@@ -161,6 +161,7 @@
     ((judge) (memq value '(off shadow on)))
     ;; trace-content: full, bounded (content clipped to 200 chars), off (names and timings only).
     ((trace-content) (memq value '(full bounded off)))
+    ;; judge-model: PROVIDER/MODEL; typesafe/jev-1.13.0 is the typed judge (docs/jev-rfc.md).
     ((judge-model) (or (not value) (and (string? value) (string-index value #\/))))
     ((run-backend) (memq value '(local agentkernel)))
     ((run-sandbox) (or (not value) (and (string? value) (not (string-null? value)))))

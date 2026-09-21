@@ -589,7 +589,7 @@ def judge_report(records):
                      "expected": expected, "replay": verdict, "rule": replay.get("rule", ""), "reason": replay.get("reason", ""),
                      "agree": verdict == expected, "false_block": verdict == "deny" and expected == "allow",
                      "false_allow": verdict == "allow" and expected == "deny", "ms": replay.get("ms", 0),
-                     "model": replay.get("model", "")})
+                     "confidence": replay.get("confidence"), "model": replay.get("model", "")})
     return rows
 
 
@@ -617,7 +617,8 @@ def judge(args):
     for r in rows:
         if not r["agree"]:
             print(f"  {r['tool']} {r['summary'][:80]}")
-            print(f"    expected {r['expected']}, judge said {r['replay']} [{r['rule']}]: {r['reason'][:160]}")
+            confidence = f" (confidence {r['confidence']:.2f})" if isinstance(r.get("confidence"), (int, float)) else ""
+            print(f"    expected {r['expected']}, judge said {r['replay']} [{r['rule']}]{confidence}: {r['reason'][:160]}")
     if args.output:
         Path(args.output).write_text("".join(json.dumps(r) + "\n" for r in rows))
     if args.cases and agree < len(rows):

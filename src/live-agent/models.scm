@@ -51,6 +51,8 @@
   (case provider
     ((claude) (cons "https://api.anthropic.com/v1" "CLAUDE_API_KEY"))
     ((openai) (cons "https://api.openai.com/v1" "OPENAI_API_KEY"))
+    ;; A judge-only provider: TypeSafe's typed API, never a session model.
+    ((typesafe) (cons "https://api.typesafe.ai/v1" "TYPESAFE_API_KEY"))
     (else (cons "http://127.0.0.1:11434" #f))))
 (define* (model-list! generation #:optional (display? #t))
   (let* ((provider (setting-ref generation 'agent-provider))

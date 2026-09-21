@@ -126,7 +126,18 @@ name and a sentence; a block reaches the model as
 fails or does not answer is a block. Three consecutive blocks, or twenty in a
 turn, pause the judge and manual prompting takes over for the rest of the
 turn. `judge-model` picks the judge as `PROVIDER/MODEL`; unset, the session's
-own provider and model judge. The `judge` setting is `shadow` by default: the
+own provider and model judge. `judge-model typesafe/jev-1.13.0` uses TypeSafe's
+Jev instead: a typed request (one allow-or-block choice plus one yes/no per
+block category) that answers in about a quarter of a second with calibrated
+probabilities, no text to parse, and a fixed category description as the
+reason. It sends the judge the same evidence and nothing more, reads its key
+from `TYPESAFE_API_KEY` or `~/.config/typesafe/api-key`, is never selected on
+its own, and records `confidence` in every `judge.jsonl` line
+([the RFC](jev-rfc.md) has the numbers). When Jev cannot answer, the session
+model judges that action instead and the log line says so in `fallback`; a
+rejected key, an empty balance, a missing key or a malformed request turns Jev
+off for the rest of the session after one notice, and `/judge` shows why. The
+`judge` setting is `shadow` by default: the
 judge decides in autopilot, and in manual mode it also runs beside every
 prompt, its verdict shows in the approval preview, and both answers go to the
 session's `judge.jsonl`; `/judge report` prints agreement and the cases that

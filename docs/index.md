@@ -22,6 +22,7 @@ One line per document, then the open work those documents still describe.
 | [quality-rfc.md](quality-rfc.md) | RFC: judge evals, session review, compaction scoring, diagnostics, hardening, the runtime handoff and the live-repair proof, in that order. |
 | [context-notes-rfc.md](context-notes-rfc.md) | Notes-first compaction after Codex's context management: one `notes` tool, `/compact` and the budget guard do the loop on the backend, summary as fallback; implemented. |
 | [workflows-rfc.md](workflows-rfc.md) | RFC: workflows as durable procedures with checks, and the self-improvement loop (reflection, distillation, field notes) gated by generation-pinned comparison; three open questions. |
+| [jev-rfc.md](jev-rfc.md) | RFC: TypeSafe Jev as a typed judge backend behind `judge-model`, then `tool_search` and skill selection; never on by default. Phase 1 (the judge) implemented. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
 Pane packs have a published reference at

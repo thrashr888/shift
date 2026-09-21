@@ -1144,7 +1144,9 @@
     (unless (member cli-mode '("manual" "plan" "autopilot"))
       (error "--mode must be manual, plan, or autopilot" cli-mode))
     (setting-set! 'mode (string->symbol cli-mode)))
-  (when cli-model (model-select! cli-model))
+  ;; On a judge replay --model names the judge (any provider, typesafe included);
+  ;; otherwise it is the session model.
+  (when cli-model (if cli-judge-replay (setting-set! 'judge-model cli-model) (model-select! cli-model)))
   (for-each (lambda (entry) (setting-set-json! (car entry) (cdr entry))) cli-settings)
   (unless (null? cli-allow-runs)
     ;; run-allow has a process default, so no generation is consulted.
@@ -1553,7 +1555,9 @@
     'continue)
    ((string=? line "/judge")
     (let ((generation (runtime-current runtime)) (endpoint (judge-endpoint (runtime-current runtime))))
-      (format #t "judge ~a · model ~a/~a · this session: ~a judged, ~a blocked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint) turn-judged turn-blocked))
+      (format #t "judge ~a · model ~a/~a · this session: ~a judged, ~a blocked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint) turn-judged turn-blocked)
+      (when judge-typed-disabled
+        (format #t "  ~a is off for this session: ~a~%" (setting-ref generation 'judge-model) judge-typed-disabled)))
     'continue)
    ((string=? line "/judge report") (display (judge-report (or (judge-log-path) ""))) (newline) 'continue)
    ((string-prefix? "/judge " line)
@@ -2120,10 +2124,18 @@
       (let ((result ((builtin-ref 'coding 'run-argv) '("git" "status" "--porcelain"))))
         (and (eqv? (car result) 0) (not (string-null? (string-trim-both (cdr result)))))))
     (lambda _ 'unknown)))
+(define (session-judge-endpoint generation)
+  (list (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model)
+        (setting-ref generation 'agent-base-url) (setting-ref generation 'agent-api-key-environment)))
+;; Set once a typed judge fails for a reason retrying cannot fix (no key, a
+;; rejected key, no credits, a malformed request); the session model judges
+;; for the rest of the session and /judge says why.
+(define judge-typed-disabled #f)
+(define judge-fallbacks-announced '())
 (define (judge-endpoint generation)
   ;; judge-model PROVIDER/MODEL, or the session's own provider and model.
   (let ((setting (setting-ref generation 'judge-model)))
-    (if (string? setting)
+    (if (and (string? setting) (not (and judge-typed-disabled (string-prefix? "typesafe/" setting))))
         (let* ((slash (string-index setting #\/))
                (provider (string->symbol (substring setting 0 slash)))
                (model (substring setting (+ slash 1))))
@@ -2142,6 +2154,8 @@
                (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
                (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
                (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
+               (cons "confidence" (or (assq-ref verdict 'confidence) json-null))
+               (cons "fallback" (or (assq-ref verdict 'fallback) json-null))
                (cons "human" human)
                (cons "arguments" (if (json-object? arguments) arguments (json-object)))
                (cons "preview" (or preview ""))
@@ -2173,10 +2187,29 @@
                                   (list (cons "replay"
                                               (json-object (cons "verdict" (symbol->string (assq-ref verdict 'verdict)))
                                                            (cons "rule" (assq-ref verdict 'rule)) (cons "reason" (assq-ref verdict 'reason))
-                                                           (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms)))))))))
+                                                           (cons "model" (assq-ref verdict 'model)) (cons "ms" (assq-ref verdict 'ms))
+                                                           (cons "confidence" (or (assq-ref verdict 'confidence) json-null)))))))))
          (newline) (force-output)))
      lines)
     0))
+(define (judge-fallback! generation endpoint context verdict)
+  ;; A typed judge that could not answer hands the decision to the session
+  ;; model, which is the judge the session would have had without the setting.
+  (let ((class (assq-ref verdict 'failure)))
+    (if (and class (eq? (car endpoint) 'typesafe))
+        (let* ((permanent? (assq-ref verdict 'permanent))
+               (why (assq-ref verdict 'reason))
+               (session (session-judge-endpoint generation))
+               (session-key (cadddr session)))
+          (when permanent? (set! judge-typed-disabled why))
+          (unless (memq class judge-fallbacks-announced)
+            (set! judge-fallbacks-announced (cons class judge-fallbacks-announced))
+            (format (tool-echo-port) "shift> judge: ~a; ~a/~a judges ~a~%" why (car session) (cadr session)
+                    (if permanent? "for the rest of this session" "this action"))
+            (force-output (tool-echo-port)))
+          (append (judge-decide! (car session) (cadr session) (caddr session) (and session-key (getenv session-key)) context)
+                  `((fallback . ,(format #f "~a" class)))))
+        verdict)))
 (define (consult-judge! runtime generation name arguments preview human)
   ;; Returns the verdict alist; records the span, the counters, the log and the UI event.
   (let* ((endpoint (judge-endpoint generation))
@@ -2185,13 +2218,16 @@
                     (preview . ,(or preview "")) (root . ,(getcwd)) (remotes . ,session-remotes)
                     (dirty . ,(if (member name '("run" "shell")) (git-dirty?) 'unknown))
                     (mode . ,(setting-ref generation 'mode)) (run-allow . ,(setting-ref generation 'run-allow))))
-         (verdict (judge-decide! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) context)))
+         (verdict (judge-fallback! generation endpoint context
+                                   (judge-decide! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) context))))
     (set! turn-judged (+ turn-judged 1))
     (set! turn-judge-ms (+ turn-judge-ms (or (assq-ref verdict 'ms) 0)))
     (when (eq? (assq-ref verdict 'verdict) 'block) (set! turn-blocked (+ turn-blocked 1)))
     (runtime-record! runtime 'judge
       `((tool . ,name) (verdict . ,(assq-ref verdict 'verdict)) (rule . ,(assq-ref verdict 'rule))
-        (reason . ,(assq-ref verdict 'reason)) (ms . ,(assq-ref verdict 'ms)) (human . ,human)))
+        (reason . ,(assq-ref verdict 'reason)) (ms . ,(assq-ref verdict 'ms)) (human . ,human)
+        (model . ,(assq-ref verdict 'model)) (confidence . ,(assq-ref verdict 'confidence)) (tokens . ,(assq-ref verdict 'tokens))
+        (fallback . ,(assq-ref verdict 'fallback))))
     ;; Shadow decisions are logged by the caller once the human has answered.
     (let ((path (judge-log-path)))
       (when (and path (not (string=? human "pending")))
