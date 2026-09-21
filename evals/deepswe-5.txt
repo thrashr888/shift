@@ -1,0 +1,10 @@
+# Five DeepSWE v1.1 Python tasks with the smallest reference patches whose
+# verifier grades the reference solution as 1 on this machine (scripts/evals.py
+# deepswe --oracle). The Go, TypeScript, JavaScript and Rust images pulled here
+# have zero-byte toolchain binaries and cannot grade anything; see
+# docs/evals-rfc.md.
+psd-tools-blend-range-api
+httpx-streaming-json-iteration
+tomlkit-toml-table-converters
+ipython-session-bundle-replay
+gql-incremental-graphql-delivery

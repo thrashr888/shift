@@ -35,7 +35,7 @@ hot-reloaded presentation packs; see [the TUI guide](docs/daily-driver.md#termin
 
 ## Try the live loop
 
-Requirements: Guile 3.0, Python 3 with curses, [ripgrep](https://github.com/BurntSushi/ripgrep), and
+Requirements: Guile 3.0.9 or newer, Python 3 with curses, [ripgrep](https://github.com/BurntSushi/ripgrep), and
 [Ollama](https://docs.ollama.com/). The checked-in image defaults to the locally
 installed, tool-capable `qwen3.8:27b-mlx` model at Ollama's native
 `http://127.0.0.1:11434/api/chat` endpoint.

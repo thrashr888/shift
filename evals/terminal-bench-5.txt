@@ -1,0 +1,7 @@
+# Five Terminal-Bench 4.0 tasks with the lowest expert-time estimates across
+# five categories, so a local model can finish a full pass in an evening.
+html-js-filter
+photonic-waveguide-routing
+music-harmony
+foodstuff-beta-activity
+medical-claims-processing

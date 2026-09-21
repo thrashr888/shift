@@ -19,6 +19,14 @@
 (test-eq "plan denies patches" 'deny (tool-decision 'plan "apply_patch" (json-object)))
 (test-eq "autopilot judges patches" 'judge (tool-decision 'autopilot "apply_patch" (json-object)))
 (test-eq "autopilot judges unlisted runs" 'judge (tool-decision 'autopilot "run" (json-object)))
+(test-eq "a * prefix allows every run in autopilot" 'allow
+ (tool-decision 'autopilot "run" (json-object (cons "argv" (json-array "rm" "-rf" "build"))) '(("*"))))
+(test-eq "a * prefix allows every run in manual" 'allow
+ (tool-decision 'manual "run" (json-object (cons "argv" (json-array "make"))) '(("*"))))
+(test-eq "a * prefix never touches plan mode" 'deny
+ (tool-decision 'plan "run" (json-object (cons "argv" (json-array "make"))) '(("*"))))
+(test-eq "a * prefix does not allow other tools" 'judge
+ (tool-decision 'autopilot "edit" (json-object) '(("*"))))
 (test-eq "autopilot allows reads" 'allow (tool-decision 'autopilot "read" (json-object)))
 (test-eq "manual asks before an unlisted run" 'ask (tool-decision 'manual "run" (json-object)))
 (test-eq "manual lets a sandboxed run go" 'allow (tool-decision 'manual "run" (json-object) '() '() #t))

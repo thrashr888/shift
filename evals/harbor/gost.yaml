@@ -1,0 +1,29 @@
+# Harbor 0.23's egress sidecar configuration with one addition (readTimeout).
+# scripts/evals.py mounts it over the sidecar's own copy for no-network tasks.
+# addr, so_mark, and file.path must stay in sync with the constants in
+# bin/network-policy (GOST_PORT, GOST_MARK, ALLOWLIST); the `reload` interval
+# must stay below RELOAD_WAIT there.
+services:
+  - name: transparent-egress
+    addr: ":12345"
+    bypass: allowlist
+    metadata:
+      so_mark: 114514
+    handler:
+      type: red
+      metadata:
+        # Harbor's copy leaves gost's 15-second wait for upstream response
+        # headers; a local model's prefill alone can take longer than that.
+        readTimeout: 3600s
+        sniffing: true
+        sniffing.timeout: 5s
+        sniffing.fallback: true
+    listener:
+      type: red
+
+bypasses:
+  - name: allowlist
+    whitelist: true
+    reload: 1s
+    file:
+      path: /opt/egress-sidecar/allowlist.txt

@@ -55,6 +55,14 @@ if command -v make >/dev/null 2>&1; then
     || echo "shift: build cache refresh failed; running from source" >&2
 fi
 
+# The run tool spawns with #:environment, which Guile grew in 3.0.9.
+guile_version=$(guile --version 2>/dev/null | sed -n '1s/.* //p')
+case "$guile_version" in
+  ""|1.*|2.*|3.0|3.0.[0-8]|3.0.[0-8].*)
+    echo "shift: Guile 3.0.9 or newer is needed; found '${guile_version:-none}'" >&2
+    exit 2 ;;
+esac
+
 exec guile \
   --no-auto-compile \
   -L "$project_root/src" \

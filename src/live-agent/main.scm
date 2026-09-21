@@ -101,12 +101,17 @@
 (define (cancelled? key)
   (eq? key 'turn-cancelled))
 
+;; SIGTERM cancels the same way, so a bounded unattended run (timeout N
+;; shift-agent --print ...) still ends its turn and writes its receipt.
 (define (install-cancellation-handler!)
-  (sigaction
-   SIGINT
-   (lambda _
-     (when turn-thread
-       (system-async-mark (lambda () (throw 'turn-cancelled "cancelled by user")) turn-thread)))))
+  (for-each
+   (lambda (signal reason)
+     (sigaction
+      signal
+      (lambda _
+        (when turn-thread
+          (system-async-mark (lambda () (throw 'turn-cancelled reason)) turn-thread)))))
+   (list SIGINT SIGTERM) '("cancelled by user" "terminated")))
 
 ;; Unattended runs: --print answers one prompt and exits, and the other flags
 ;; seed session settings that the REPL would otherwise take as slash commands.
@@ -2464,7 +2469,9 @@
     (let ((patch (field "patch")))
       (if patch (format #f "~a lines" (length (string-split patch #\newline))) "")))
    ((string=? name "rg") (or (field "query") ""))
-   ((string=? name "run") (string-join (run-argv-of arguments) " "))
+   ;; A multi-line argument (python -c SCRIPT) still shows on the one line.
+   ((string=? name "run") (string-map (lambda (c) (if (char=? c #\newline) #\space c))
+                                      (string-join (run-argv-of arguments) " ")))
    ((string=? name "diff") (or (field "scope") "turn"))
    ((string=? name "status") "")
    ((string=? name "spawn")
@@ -3419,8 +3426,8 @@
                    (turn . ,turn-count)))
                 (set! operation-status "cancelled")
                 (display "turn cancelled; conversation state is unchanged.\n")
-                (finish! "cancelled" "cancelled by user"
-                         '((error.message . "cancelled by user")))
+                (let ((reason (if (and (pair? arguments) (string? (car arguments))) (car arguments) "cancelled by user")))
+                  (finish! "cancelled" reason `((error.message . ,reason))))
                 #f)
               ((eq? key 'turn-limit)
                 (let* ((kept (car arguments)) (limit (cadr arguments))

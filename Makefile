@@ -60,6 +60,7 @@ test: build
 	python3 test/claude_test.py
 	python3 test/coding_workflow_test.py
 	python3 test/evals_driver_test.py
+	python3 test/bench_agent_test.py
 	python3 test/tui_test.py
 	python3 test/tui_scroll_test.py
 	python3 test/provider_metadata_test.py

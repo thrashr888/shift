@@ -25,12 +25,14 @@
     (string-tokenize value))
    (else '())))
 ;; Exact leading-element match: ("cargo" "test") allows ("cargo" "test" "--" "x")
-;; and never ("cargo" "publish").
+;; and never ("cargo" "publish"). The prefix ("*") allows every command; it is
+;; for environments that are their own boundary, such as a benchmark container.
 (define (run-allowed? argv prefixes)
   (and (pair? argv)
        (any (lambda (prefix)
-              (and (<= (length prefix) (length argv))
-                   (equal? prefix (take argv (length prefix)))))
+              (or (equal? prefix '("*"))
+                  (and (<= (length prefix) (length argv))
+                       (equal? prefix (take argv (length prefix))))))
             prefixes)))
 ;; MCP tools carry the server's own hints; the runtime installs a lookup
 ;; returning ((read-only . bool) (destructive . bool) (open-world . bool)) or #f.

@@ -146,6 +146,17 @@ lived in a scratch worktree that the desktop app cleaned up before grading,
 so it has no graded result and is not counted. Lesson recorded in the driver's
 docs: run evals from a durable checkout, never a scratch one.
 
+### Tolerance rerun, September 21, 2026
+
+The five instances still missing after the September 17 grading ran again from
+the real checkout with the tolerance fixes, and this one was graded: 1/5
+resolved (sympy-15875), two unresolved, two empty patches. Every instance hit
+the 40-round ceiling; wall time ran 27 to 64 minutes per instance because the
+Harbor probes below shared the same Ollama for most of the run. It does not
+improve on September 17's 3/7, and a run under that much contention cannot
+separate the tolerance fixes from the model's variance; the honest next
+measurement is the same slice on an uncontended model.
+
 ## Candidate benchmarks, September 21, 2026
 
 Eight were considered. Two would tell us something the current evals do not.
@@ -167,6 +178,115 @@ resets on October 1; then the Terminal-Bench software slice once the adapter
 exists. Sources: the DeepSWE paper and repository, the Terminal-Bench 4.0
 release notes, the Agents' Last Exam paper, and the leaderboard pages for the
 rest.
+
+## Terminal-Bench and DeepSWE through Harbor, September 21, 2026
+
+Both benchmarks ship in the Harbor task format (a `task.toml`, an
+`instruction.md`, a container image, a verifier), and Harbor runs any agent
+that can be installed into the task container. So the integration is one
+adapter, `scripts/bench_agent.py`, and two driver subcommands that build the
+`harbor run` line and summarize the job:
+
+```bash
+python3 scripts/evals.py terminal-bench            # evals/terminal-bench-5.txt
+python3 scripts/evals.py deepswe --tasks NAME,NAME # evals/deepswe-5.txt by default
+```
+
+What the adapter does, per task: uploads the runtime (`bin`, `src`,
+`extensions`, `agent`, `Makefile`; no host build cache), installs a pinned
+conda-forge Guile 3.0.11 with ripgrep, make and git through micromamba
+(task images ship Debian 12's Guile 3.0.8 as often as not, and Shift's `run`
+tool needs the `spawn` that 3.0.9 added; the launcher now says so instead of
+failing on the first command), compiles the modules once, then runs one
+print-mode turn in `/app`:
+
+```
+shift-agent --print "$(cat instruction.md)" --mode autopilot --model M \
+  --allow-run '*' --state-dir /installed-agent/state --no-mcp --receipt receipt.json \
+  --set agent-max-tool-rounds=40 [--set agent-base-url="http://host.docker.internal:11434"]
+```
+
+The turn is bounded inside the container (`timeout`, 3600 seconds by default,
+`--timeout` on the driver) so a slow model still leaves a receipt, a commit
+and a gradable tree; Harbor's own agent timeout is the task's, hours.
+
+`--allow-run '*'` is new: a prefix of `*` allows every command, for
+environments that are their own boundary. Plan mode still denies runs, and
+the wildcard never touches other tools; the judge still sees edits. After the
+turn the adapter commits whatever changed (DeepSWE grades `git diff BASE
+HEAD`, so uncommitted work scores zero) and copies the session folder next to
+the receipt, so `scripts/evals.py session` can review a benchmark turn like
+any other. Harbor's context gets the receipt's token and round counts.
+
+Network: Terminal-Bench tasks run with a public network, and DeepSWE's agent
+phase runs with none. Harbor turns `--allow-agent-host` entries into an
+allowlist for the latter, enforced by a gost sidecar that every TCP
+connection is redirected through. Three things had to be true for a local
+Ollama on the host to stay reachable, and the driver arranges all of them
+for `ollama/` models:
+
+1. The host is allowed by name **and** by address (`host.docker.internal`
+   and what it resolves to, asked of a container). The sidecar matches the
+   name when it can read the HTTP Host header and the address when it cannot.
+2. The sidecar's copy of the gost configuration is replaced (an extra compose
+   file mounts `evals/harbor/gost.yaml` over it) because gost drops a
+   connection whose response headers take more than 15 seconds to arrive,
+   and a local model's prefill routinely does. Every model call in the first
+   DeepSWE run died at exactly 15.0 seconds; with the mount, a probe held a
+   connection through a 71-second wait.
+3. Terminal-Bench, whose network is public, gets neither, since the sidecar
+   is not started and a dangling service definition would break compose.
+
+Pier, Datacurve's Harbor fork that produced the DeepSWE leaderboard, was the
+first plan but its egress proxy admits only ports 80 and 443, so a local
+model on 11434 cannot be reached through it at all. Harbor 0.23 reads the
+same tasks, including the separate verifier and the `[[verifier.collect]]`
+hook.
+
+Results land in `evals/results/RUN_ID/`: `harbor/` is Harbor's job (one trial
+directory per task with `verifier/reward.json`, `agent/receipt.json`,
+`agent/shift.stdout`, `agent/sessions/`), `results.jsonl` is the per-task
+summary, `harbor.log` the run's output. The slices are five tasks each: the
+Terminal-Bench five are the lowest expert-time estimates across five
+categories, the DeepSWE five are one task per language with the smallest
+reference patch.
+
+Costs to know before a full pass: the images are amd64, so on Apple silicon
+the container runs under emulation and installing plus compiling the runtime
+takes about ten minutes per task; the model calls dominate after that. The
+tasks themselves are sized for hours on frontier models, so the local model's
+score is a harness check, not a comparable number; the comparable run is the
+same slice on Sonnet 5.
+
+### What the first runs showed, September 21, 2026
+
+Both pipelines complete end to end with the local model: install, turn,
+in-container timeout, commit, artifact collection, verifier, receipt. Neither
+probe task was solved.
+
+- **Terminal-Bench `html-js-filter`** (write an XSS filter in Python): 40
+  rounds and then 12 rounds with a 15-minute bound, both graded 0. The model
+  spent its rounds probing BeautifulSoup's API and never wrote `/app/filter.py`;
+  the verifier's two tests failed on the missing file. One harness finding:
+  the model kept passing shell syntax (`a && b`, `x | head`) to `run`, which
+  takes an argv and refuses it. Each refusal costs a round; whether `run`
+  should hand such strings to `sh -c` is an open question, since the fixed
+  judge rules read argv and would need to read inside the script too.
+- **DeepSWE `anko-default-function-arguments`** (Go): the turn ran 50 tool
+  calls to the bound, committed a stray `out.txt`, and the verifier returned
+  -1 (could not grade). Harbor's oracle agent, which applies the reference
+  solution, also got -1: the task's image has a zero-byte Go toolchain
+  (`/usr/local/go` is 5 MB of empty files), and so do the other Go,
+  TypeScript, JavaScript and Rust images pulled here (`node` is zero bytes;
+  their verifiers report every test as "did not run"). Python images are
+  intact and their verifiers grade the oracle as 1. The host runs Docker
+  Desktop with the containerd image store, which is the first suspect; until
+  that is understood the DeepSWE slice is five Python tasks, each validated
+  with `scripts/evals.py deepswe --oracle`. A verifier under emulation can
+  also exceed Harbor's 30-minute verifier timeout (mashumaro did), so a
+  validated task is one whose oracle run graded, not merely ran.
+- The `--oracle` flag exists for exactly this: it proves a slice grades on
+  the machine before any model time is spent on it.
 
 ## Dogfood assessment, September 10, 2026
 

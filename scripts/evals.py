@@ -11,6 +11,8 @@
     scripts/evals.py compaction [--replay]       score compaction summaries by durable-fact coverage
     scripts/evals.py live-repair [--tasks A,B]   fix behavior defects with live_eval and with edit-plus-reload; compare
     scripts/evals.py answers [--tasks A,B]       repo questions with a checkable answer and method (did it use the plugin?)
+    scripts/evals.py terminal-bench [--tasks ..] Terminal-Bench 4 tasks through Harbor with Shift installed in the container
+    scripts/evals.py deepswe [--tasks A,B]       DeepSWE tasks the same way; the verifier grades the commits Shift leaves
 
 Every instance gets its own checkout, virtualenv, and Shift session. Results
 land in evals/results/RUN_ID/ as predictions.jsonl (what the harness grades)
@@ -39,6 +41,20 @@ CACHE = EVALS / "cache" / "swebench-verified.jsonl"
 WORK = EVALS / "work"
 RESULTS = EVALS / "results"
 SLICE = EVALS / "swebench-verified-25.txt"
+BENCH = EVALS / "cache" / "bench"
+# Harbor benchmarks: where the tasks come from, the fixed small slice, and the
+# hosts the agent phase must reach when the task itself runs without a network.
+BENCHMARKS = {
+    "terminal-bench": {"dataset": "terminal-bench/terminal-bench@4.0.0", "tasks": BENCH / "terminal-bench",
+                       "slice": EVALS / "terminal-bench-5.txt"},
+    "deepswe": {"git": "https://github.com/datacurve-ai/deep-swe", "tasks": BENCH / "deep-swe" / "tasks",
+                "slice": EVALS / "deepswe-5.txt", "egress": True},
+}
+# Harbor's egress sidecar (gost) drops an HTTP connection whose response
+# headers take over 15 seconds, and a local model's prefill often does. For
+# tasks that run through the sidecar the driver mounts its own copy of the
+# sidecar's configuration with a longer wait.
+GOST_CONFIG = EVALS / "harbor" / "gost.yaml"
 # The SWE-bench org copy carries the per-instance image names the 5.x harness needs.
 DATASET = "SWE-bench/SWE-bench_Verified"
 GRADE_DATASET = DATASET
@@ -1021,6 +1037,122 @@ def session(args):
             print(f"  compaction {path.stem}: summary covers {len(covered)}/{len(checklist)} durable facts" + (" · lossy" if lossy else ""))
 
 
+def ensure_benchmark(name):
+    """Download the benchmark's tasks once, under evals/cache/bench."""
+    spec = BENCHMARKS[name]
+    if not spec["tasks"].exists():
+        BENCH.mkdir(parents=True, exist_ok=True)
+        if "git" in spec:
+            log(f"cloning {spec['git']}")
+            sh(["git", "clone", "--depth", "1", "-q", spec["git"], str(spec["tasks"].parent)], timeout=1800)
+        else:
+            log(f"downloading {spec['dataset']}")
+            sh(["harbor", "datasets", "download", spec["dataset"], "-o", str(BENCH)], timeout=1800)
+    return spec["tasks"]
+
+
+def host_gateway():
+    """The address host.docker.internal has inside containers (Docker Desktop's
+    192.168.65.254), asked of a container so the driver never guesses."""
+    try:
+        text = sh(["docker", "run", "--rm", "alpine", "getent", "hosts", "host.docker.internal"], timeout=120).stdout
+        return text.split()[0]
+    except (RuntimeError, IndexError, OSError, subprocess.SubprocessError):
+        return "192.168.65.0/24"
+
+
+def model_hosts(model):
+    """What a no-network task (DeepSWE) must still reach for a local model. The
+    egress proxy matches a name when it can read the HTTP Host header and the
+    address when it cannot, so both go on the list; public tasks
+    (Terminal-Bench) reach the host anyway and Harbor ignores the entries."""
+    return ("host.docker.internal", host_gateway()) if model.startswith("ollama/") else ()
+
+
+def egress_override(out):
+    """A compose file that mounts GOST_CONFIG over the sidecar's; written
+    beside the run because compose resolves volume paths absolutely."""
+    path = out / "egress-compose.yaml"
+    path.write_text("services:\n  harbor-docker-egress-control-sidecar:\n    volumes:\n"
+                    f"      - {GOST_CONFIG}:/opt/egress-sidecar/gost.yaml:ro\n")
+    return path
+
+
+def harbor_command(name, tasks, model, out, rounds, timeout, concurrency, tasks_dir, hosts=(), egress=None, oracle=False):
+    """The harbor run line: Shift as the imported agent, one -i per task. With
+    ORACLE, Harbor's own oracle agent applies each task's reference solution
+    instead, which proves the task's verifier grades on this machine."""
+    command = ["harbor", "run", "-p", str(tasks_dir), "-n", str(concurrency), "-o", str(out), "--job-name", "harbor", "-y", "-q"]
+    if oracle:
+        command += ["--agent", "oracle"]
+    else:
+        command += ["--agent", "bench_agent:Shift", "-m", model, "--ak", f"rounds={rounds}", "--ak", f"timeout={timeout}",
+                    # Compiling the runtime under amd64 emulation outruns Harbor's six-minute setup default.
+                    "--agent-setup-timeout-multiplier", "5"]
+    for task in tasks:
+        command += ["-i", task]
+    for host in hosts:
+        command += ["--allow-agent-host", host]
+    if egress:
+        command += ["--extra-docker-compose", str(egress)]
+    return command
+
+
+def harbor_results(job_dir):
+    """One record per trial from Harbor's job directory: reward, Shift's receipt facts, errors."""
+    records = []
+    for trial in sorted(path for path in job_dir.iterdir() if (path / "result.json").exists()):
+        result = json.loads((trial / "result.json").read_text())
+        reward_file = trial / "verifier" / "reward.json"
+        if reward_file.exists():
+            reward = json.loads(reward_file.read_text()).get("reward")
+        else:  # verifiers that write reward.txt only reach the record through Harbor's result
+            reward = ((result.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+        agent = result.get("agent_result") or {}
+        exception = result.get("exception_info") or {}
+        exit_file = trial / "agent" / "exit"
+        records.append({"task": result.get("task_name") or trial.name.rsplit("__", 1)[0], "reward": reward,
+                        "status": (agent.get("metadata") or {}).get("status"),
+                        "rounds": (agent.get("metadata") or {}).get("rounds"),
+                        "tokens": {"prompt": agent.get("n_input_tokens"), "completion": agent.get("n_output_tokens")},
+                        "exit_code": int(exit_file.read_text().strip()) if exit_file.exists() and exit_file.read_text().strip() else None,
+                        "error": exception.get("exception_message") or exception.get("exception_type"),
+                        "trial": trial.name})
+    return records
+
+
+def bench(args):
+    tasks_dir = ensure_benchmark(args.command)
+    spec = BENCHMARKS[args.command]
+    tasks = args.tasks.split(",") if args.tasks else [line.strip() for line in spec["slice"].read_text().splitlines()
+                                                      if line.strip() and not line.startswith("#")]
+    if args.limit:
+        tasks = tasks[:args.limit]
+    missing = [task for task in tasks if not (tasks_dir / task / "task.toml").exists()]
+    if missing:
+        raise SystemExit(f"unknown {args.command} task(s): {', '.join(missing)}")
+    run_id = args.run_id or f"{args.command}-{'oracle-' if args.oracle else ''}{time.strftime('%Y%m%d-%H%M')}"
+    out = RESULTS / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    command = harbor_command(args.command, tasks, args.model, out, args.rounds, args.timeout, args.concurrency, tasks_dir,
+                             () if args.oracle else model_hosts(args.model),
+                             egress_override(out) if spec.get("egress") and not args.oracle else None, args.oracle)
+    log(f"{args.command}: {len(tasks)} task(s) with {'the oracle' if args.oracle else args.model} -> {out}")
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "scripts")}
+    with open(out / "harbor.log", "w") as handle:
+        completed = subprocess.run(command, cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
+    records = harbor_results(out / "harbor") if (out / "harbor").exists() else []
+    with open(out / "results.jsonl", "w") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+    solved = sum(1 for record in records if (record["reward"] or 0) > 0)  # -1 is a verifier that could not grade
+    print(f"{args.command} {run_id}: {solved}/{len(records)} solved (harbor exit {completed.returncode})")
+    for record in records:
+        print(f"  {record['task']:<44} reward {record['reward']!s:<5} {record['status'] or '-':<12} "
+              f"rounds {record['rounds'] or '-':<3} {record['error'] or ''}"[:160])
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1080,9 +1212,21 @@ def main():
     reviewer = commands.add_parser("session", help="per-turn review of a session's receipts, events and judge log")
     reviewer.add_argument("name", nargs="?", help="session name, default 'default' (subagents: PARENT/agents/CHILD)")
     reviewer.add_argument("--all", action="store_true", help="every session in the project, subagents included")
+    for name in BENCHMARKS:
+        bencher = commands.add_parser(name, help=f"{name} tasks through Harbor; the slice in {BENCHMARKS[name]['slice'].name} by default")
+        bencher.add_argument("--tasks", help="comma-separated task names instead of the slice")
+        bencher.add_argument("--limit", type=int, default=0)
+        bencher.add_argument("--model", default="ollama/qwen3.8:27b-mlx")
+        bencher.add_argument("--rounds", type=int, default=40)
+        bencher.add_argument("--timeout", type=int, default=3600, help="seconds per task for the Shift turn")
+        bencher.add_argument("--concurrency", type=int, default=1)
+        bencher.add_argument("--run-id")
+        bencher.add_argument("--oracle", action="store_true",
+                             help="apply each task's reference solution with Harbor's oracle agent: does the verifier grade here?")
     args = parser.parse_args()
     {"fetch": lambda a: fetch(), "slice": lambda a: make_slice(), "run": run, "grade": grade,
-     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction, "live-repair": live_repair, "answers": answers}[args.command](args)
+     "dogfood": dogfood, "judge": judge, "session": session, "compaction": compaction, "live-repair": live_repair, "answers": answers,
+     "terminal-bench": bench, "deepswe": bench}[args.command](args)
 
 
 if __name__ == "__main__":
