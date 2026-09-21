@@ -134,6 +134,18 @@ effect of any single change. The Sonnet 5 comparison over the full 25-instance
 slice could not run: the Anthropic key had reached its monthly usage limit
 until October 1.
 
+### Ungraded rerun, September 17, 2026
+
+The same seven instances ran once more from a snapshot of `326b8c9`, after the
+tolerance fixes (argv shapes, loose `edit` matching, advisory hunk counts,
+`/workspace` paths, serialized `rg`). Every instance ended at a limit: six at
+the 40-round ceiling, one at the token budget, against two completions the
+night before. Wall time per instance was two to four times longer because a
+second model shared the GPU for the whole run. The run's patches and receipts
+lived in a scratch worktree that the desktop app cleaned up before grading,
+so it has no graded result and is not counted. Lesson recorded in the driver's
+docs: run evals from a durable checkout, never a scratch one.
+
 ## Dogfood assessment, September 10, 2026
 
 Two tasks were attempted with `ollama/qwen3.8:27b-mlx` against clean commit
