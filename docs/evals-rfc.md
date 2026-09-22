@@ -285,6 +285,14 @@ probe task was solved.
   with `scripts/evals.py deepswe --oracle`. A verifier under emulation can
   also exceed Harbor's 30-minute verifier timeout (mashumaro did), so a
   validated task is one whose oracle run graded, not merely ran.
+- **DeepSWE `psd-tools-blend-range-api`** (Python, validated): the first
+  graded Shift result on this benchmark. The 60-minute bound ended the turn
+  at 21 rounds (37 tool calls: 23 reads, 8 runs, 4 searches, 2 edits) with a
+  receipt that says so (`cancelled · terminated`), one file changed, and a
+  45-line patch that the verifier graded 0: all 979 pass-to-pass tests still
+  pass, none of the 45 fail-to-pass tests do. The model read the codebase for
+  most of the hour and edited once. That is the baseline for the local model,
+  and the honest shape of the gap to the leaderboard's frontier-model agents.
 - The `--oracle` flag exists for exactly this: it proves a slice grades on
   the machine before any model time is spent on it.
 
