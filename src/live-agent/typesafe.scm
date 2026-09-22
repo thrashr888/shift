@@ -17,11 +17,28 @@
 ;;   transient network malformed  this call only
 (define (fail class status detail) (throw 'typesafe-error class status detail))
 (define (typesafe-failure-permanent? class) (and (memq class '(no-key auth credits request)) #t))
-(define (status-class status)
-  (cond ((eqv? status 401) 'auth)
-        ((memv status '(402 403)) 'credits)   ; TypeSafe's docs list neither; a balance or plan refusal lands here
-        ((eqv? status 422) 'request)
-        (else 'transient)))
+;; The body's error_type, when the reply is JSON with one (TypeSafe's 401 body
+;; is {"detail":{"error_type":"authentication_error",...}}), wins over the
+;; status: a balance refusal is credits whatever code it arrives with.
+(define (body-error-type text)
+  (catch #t
+    (lambda ()
+      (let* ((reply (json-read text))
+             (detail (and (json-object? reply) (json-object-ref reply "detail" #f)))
+             (type (or (and (json-object? detail) (json-object-ref detail "error_type" #f))
+                       (and (json-object? reply) (json-object-ref reply "error_type" #f))
+                       (let ((e (and (json-object? reply) (json-object-ref reply "error" #f))))
+                         (and (json-object? e) (json-object-ref e "type" #f))))))
+        (and (string? type) (string-downcase type))))
+    (lambda _ #f)))
+(define (status-class status text)
+  (let ((type (or (body-error-type text) "")))
+    (cond ((any (lambda (w) (string-contains type w)) '("credit" "billing" "quota" "payment" "balance" "plan")) 'credits)
+          ((string-contains type "authentication") 'auth)
+          ((eqv? status 401) 'auth)
+          ((memv status '(402 403)) 'credits)   ; TypeSafe's docs list neither; a balance or plan refusal lands here
+          ((eqv? status 422) 'request)
+          (else 'transient))))
 
 ;; Pinned: jev-latest moves, and thresholds tuned against one version should
 ;; not drift with it. The response's own model field is logged beside it.
@@ -89,7 +106,7 @@
           (cond
            ((and (memv status '(429 529)) (< tries 1)) (usleep 500000) (attempt (+ tries 1)))
            ((not (and (>= status 200) (< status 300)))
-            (fail (status-class status) status
+            (fail (status-class status text) status
                   (format #f "HTTP ~a: ~a" status
                           (let ((t (string-trim-both text))) (if (> (string-length t) 200) (substring t 0 200) t)))))
            (else

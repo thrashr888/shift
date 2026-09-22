@@ -118,7 +118,7 @@
                    ;; toolchains, signing, and git with the user's own keys.
                    (run-host . (("git") ("cargo" "tauri") ("codesign") ("xcodebuild") ("xcrun") ("notarytool")
                                 ("open") ("swift") ("swiftc") ("brew")))
-                   (judge . shadow) (judge-model . #f) (trace-content . full)
+                   (judge . shadow) (judge-model . #f) (judge-ask-below . 0.5) (trace-content . full)
                    (turn-token-budget . #f) (show-work . #t)
                    (provider-retries . ,default-provider-retries)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
@@ -163,6 +163,9 @@
     ((trace-content) (memq value '(full bounded off)))
     ;; judge-model: PROVIDER/MODEL; typesafe/jev-1.13.0 is the typed judge (docs/jev-rfc.md).
     ((judge-model) (or (not value) (and (string? value) (string-index value #\/))))
+    ;; judge-ask-below: in autopilot, an allow whose confidence is under this asks
+    ;; you instead (blocks in print mode); #f never asks. Only typed judges report confidence.
+    ((judge-ask-below) (or (not value) (and (real? value) (>= value 0) (<= value 1))))
     ((run-backend) (memq value '(local agentkernel)))
     ((run-sandbox) (or (not value) (and (string? value) (not (string-null? value)))))
     (else #f)))

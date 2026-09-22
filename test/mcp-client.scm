@@ -57,6 +57,14 @@
 (test-equal "search ranks by query words, not the whole phrase" "fake__ping"
   (car (map car (mcp-search "ping something harmless please"))))
 (test-equal "select: names tools exactly" '("fake__echo") (map car (mcp-search "select:fake__echo,fake__nothing")))
+(define reranked-with '())
+(test-equal "a rerank sees the word-ranked candidates and decides the order and the cut" '("mine__ping")
+  (map car (mcp-search "ping something harmless please"
+                       #:rerank (lambda (query candidates) (set! reranked-with (map car candidates)) '("mine__ping")))))
+(test-assert "the rerank saw name and description pairs for every word match"
+  (and (member "fake__ping" reranked-with) (member "mine__ping" reranked-with)))
+(test-equal "select: queries never go through the rerank" '("fake__echo")
+  (map car (mcp-search "select:fake__echo" #:rerank (lambda _ (error "must not be called")))))
 (test-assert "search connects idle servers and records failures instead of raising"
   (begin (mcp-search "")
          (equal? "failed" (json-object-ref (cadr (json-array-items (mcp-servers-json))) "state"))))

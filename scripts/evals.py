@@ -708,6 +708,36 @@ def compaction_coverage(summary, checklist):
     return covered, missing
 
 
+def jev_key():
+    return os.environ.get("TYPESAFE_API_KEY") or (Path.home() / ".config/typesafe/api-key").read_text().strip()
+
+
+def jev_ask(state, questions, model="jev-1.13.0"):
+    """One TypeSafe request; answers keyed like `questions`. Used only under --judge."""
+    import urllib.request
+    body = json.dumps({"model": model, "state": state, "questions": questions}).encode()
+    request = urllib.request.Request("https://api.typesafe.ai/v1/systemone", data=body,
+                                     headers={"Authorization": f"Bearer {jev_key()}", "Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(request, timeout=30))["answers"]
+
+
+def compaction_recoverable(summary, checklist, model):
+    """A second column beside substring coverage: one noul per durable fact, asking whether a
+    reader of the summary could recover it. Returns (recoverable, lost) with probabilities."""
+    if not checklist:
+        return [], []
+    state = {"summary": summary, "facts": [item["text"] for item in checklist]}
+    questions = {f"fact_{i}": {"type": "noul",
+                               "instructions": f"Could a reader who sees only `summary` recover the fact `facts[{i}]`: that it happened, "
+                                               "and what it names (the file, the command, the constraint)? Paraphrase counts; a fact "
+                                               "the summary never touches does not.",
+                               "criteria": {"true": "The fact is recoverable from the summary.", "false": "It is not."}}
+                 for i in range(len(checklist))}
+    answers = jev_ask(state, questions, model)
+    scored = [dict(item, p=answers[f"fact_{i}"]["noul"]) for i, item in enumerate(checklist)]
+    return [x for x in scored if x["p"] >= 0.5], [x for x in scored if x["p"] < 0.5]
+
+
 def compaction_records(directory):
     folder = Path(directory) / "compactions"
     if not folder.exists():
@@ -742,9 +772,14 @@ def compaction(args):
                 c_covered, c_missing = compaction_coverage(candidate.get("summary", ""), checklist)
                 line += f" · {candidate.get('model', 'candidate')} covers {len(c_covered)}/{len(checklist)}"
                 missing = c_missing if args.replay else missing
+            if args.judge:
+                judged_text = candidate.get("summary", "") if args.replay else compaction_text(record)
+                recoverable, lost = compaction_recoverable(judged_text, checklist, args.judge.split("/", 1)[-1])
+                line += f" · {args.judge} recoverable {len(recoverable)}/{len(checklist)}"
+                missing = lost
             print(line)
             for item in missing:
-                print(f"    missing: {item['text']}")
+                print(f"    missing: {item['text']}" + (f" (p={item['p']:.2f})" if "p" in item else ""))
 
 
 # --- the live-repair proof (docs/quality-rfc.md §7) --------------------------------
@@ -1191,11 +1226,12 @@ def main():
     judger.add_argument("--cases", action="store_true", help="the fixed regression set in evals/judge/cases.jsonl; exits 1 on any disagreement")
     judger.add_argument("--model", help="PROVIDER/MODEL for the judge; defaults to the agent's judge-model or its own model")
     judger.add_argument("--output", help="write the per-case rows as JSON lines")
-    compactor = commands.add_parser("compaction", help="score stored compaction summaries by durable-fact coverage; --replay re-summarizes")
+    compactor = commands.add_parser("compaction", help="score stored compaction summaries by durable-fact coverage; --replay re-summarizes; --judge typesafe/jev-1.13.0 adds a recoverability column")
     compactor.add_argument("--session", help="session name (default: default)")
     compactor.add_argument("--all", action="store_true")
     compactor.add_argument("--replay", action="store_true", help="summarize each stored prefix again with the current or --model model")
     compactor.add_argument("--model")
+    compactor.add_argument("--judge", help="PROVIDER/MODEL, e.g. typesafe/jev-1.13.0: ask Jev whether each durable fact is recoverable from the summary")
     repairer = commands.add_parser("live-repair", help="fix each behavior defect with live_eval and with edit-plus-reload; compare")
     repairer.add_argument("--tasks", help="comma-separated task names under evals/live-repair")
     repairer.add_argument("--mode", choices=["live", "reload"], help="only one of the two ways")

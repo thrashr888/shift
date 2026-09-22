@@ -31,6 +31,8 @@
   #:use-module (live-agent skills)
   #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
   #:use-module (live-agent judge)
+  #:use-module (live-agent typesafe)
+  #:use-module (live-agent typed)
   #:use-module (live-agent plugins)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
@@ -174,7 +176,7 @@
 (define (reset-turn-usage!)
   (set! turn-skills '())
   (set! turn-mcp-tools '())
-  (set! turn-judged 0) (set! turn-blocked 0) (set! turn-judge-ms 0) (set! judge-consecutive-blocks 0) (set! judge-paused? #f)
+  (set! turn-judged 0) (set! turn-blocked 0) (set! turn-judge-ms 0) (set! turn-judge-asked 0) (set! judge-consecutive-blocks 0) (set! judge-paused? #f)
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
@@ -596,10 +598,18 @@
 ;; calls go to the server under the same policy as any other tool.
 (define turn-mcp-tools '())
 (define (emit-servers!) (when (ui-connected?) (ui-emit! "servers" (mcp-servers-json))))
-(define (execute-tool-search arguments)
+(define (typed-rerank generation)
+  ;; The word ranking's candidates, kept and ordered by Jev; any failure keeps the word order.
+  (let ((endpoint (typed-endpoint generation)))
+    (and endpoint
+         (lambda (query candidates)
+           (catch #t
+             (lambda () (typed-rank-tools (car endpoint) (cdr endpoint) query candidates))
+             (lambda _ (map car candidates)))))))
+(define (execute-tool-search generation arguments)
   (let ((query (json-object-ref arguments "query" #f)))
     (unless (string? query) (error "query must be a string"))
-    (let ((matches (mcp-search query)))
+    (let ((matches (mcp-search query #:rerank (typed-rerank generation))))
       (emit-servers!)
       (for-each (lambda (m) (unless (member (car m) turn-mcp-tools) (set! turn-mcp-tools (append turn-mcp-tools (list (car m)))))) matches)
       (make-tool-result #t
@@ -1560,7 +1570,8 @@
     'continue)
    ((string=? line "/judge")
     (let ((generation (runtime-current runtime)) (endpoint (judge-endpoint (runtime-current runtime))))
-      (format #t "judge ~a · model ~a/~a · this session: ~a judged, ~a blocked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint) turn-judged turn-blocked)
+      (format #t "judge ~a · model ~a/~a · ask below ~a · this session: ~a judged, ~a blocked, ~a asked~%" (setting-ref generation 'judge) (car endpoint) (cadr endpoint)
+              (or (setting-ref generation 'judge-ask-below) "never") turn-judged turn-blocked turn-judge-asked)
       (when judge-typed-disabled
         (format #t "  ~a is off for this session: ~a~%" (setting-ref generation 'judge-model) judge-typed-disabled)))
     'continue)
@@ -2116,7 +2127,7 @@
 ;; the model the rule. Shadow: manual still asks, the judge also runs and
 ;; both answers are logged. Three consecutive blocks, or twenty in a turn,
 ;; pause the judge and manual prompting takes over for the rest of the turn.
-(define turn-judged 0) (define turn-blocked 0) (define turn-judge-ms 0)
+(define turn-judged 0) (define turn-blocked 0) (define turn-judge-ms 0) (define turn-judge-asked 0)
 (define judge-consecutive-blocks 0) (define judge-paused? #f)
 (define recent-user-messages '())
 (define session-remotes "")
@@ -2149,6 +2160,13 @@
               (list provider model (car (provider-defaults provider)) (cdr (provider-defaults provider)))))
         (list (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model)
               (setting-ref generation 'agent-base-url) (setting-ref generation 'agent-api-key-environment)))))
+;; (base-url . key) when the session's judge is Jev and it has not been switched
+;; off; the other typed judgments (tool_search rank, skill hint) follow the judge.
+(define (typed-endpoint generation)
+  (let ((setting (setting-ref generation 'judge-model)))
+    (and (string? setting) (string-prefix? "typesafe/" setting) (not judge-typed-disabled)
+         (let ((key (typesafe-api-key (getenv "TYPESAFE_API_KEY"))))
+           (and key (cons (car (provider-defaults 'typesafe)) key))))))
 (define (judge-log-path)
   (and runtime-state-directory-for-judge (string-append runtime-state-directory-for-judge "/judge.jsonl")))
 (define runtime-state-directory-for-judge #f)
@@ -2284,7 +2302,22 @@
             ((judge)
              (let ((verdict (consult-judge! runtime generation name arguments preview "none")))
                (cond
-                ((eq? (assq-ref verdict 'verdict) 'allow) (set! judge-consecutive-blocks 0) (set! last-judge-block #f) #t)
+                ((eq? (assq-ref verdict 'verdict) 'allow)
+                 (set! judge-consecutive-blocks 0) (set! last-judge-block #f)
+                 ;; An allow the typed judge is not sure of asks you instead of going
+                 ;; through silently; print mode has nobody to ask, so it blocks there.
+                 (let ((confidence (assq-ref verdict 'confidence)) (floor (setting-ref generation 'judge-ask-below)))
+                   (if (and (number? confidence) (number? floor) (< confidence floor))
+                       (begin
+                         (set! turn-judge-asked (+ turn-judge-asked 1))
+                         (if (interactive-approval?)
+                             (ask-human (format #f "\njudge allows at confidence ~,2f, under judge-ask-below ~a\n" confidence floor))
+                             (begin
+                               (set! last-judge-block `((rule . "judge-uncertain")
+                                                        (reason . ,(format #f "the judge allowed at confidence ~,2f, under judge-ask-below ~a, and there is nobody to ask" confidence floor))))
+                               (set! turn-blocked (+ turn-blocked 1))
+                               #f)))
+                       #t)))
                 (else
                  (set! last-judge-block verdict)
                  (set! judge-consecutive-blocks (+ judge-consecutive-blocks 1))
@@ -2693,7 +2726,7 @@
                              ((string=? name "skill")
                               (execute-skill (tool-call-arguments call)))
                              ((string=? name "tool_search")
-                              (execute-tool-search (tool-call-arguments call)))
+                              (execute-tool-search generation (tool-call-arguments call)))
                              ((mcp-tool-name? name)
                               (execute-mcp-call name (tool-call-arguments call)))
                              ((string=? name "traces")
@@ -2882,6 +2915,20 @@
                       ,@(retry-attributes)))
         (apply throw key arguments)))))
 
+;; One typed request per user turn names the skill that fits, if one does; the
+;; list itself is unchanged and the model may still ignore the hint.
+(define (skill-hint-block runtime generation line)
+  (let ((endpoint (typed-endpoint generation))
+        (skills (filter-map (lambda (s) (and (json-object-ref s "valid" #f) (json-object-ref s "model" #f)
+                                             (cons (json-object-ref s "name" "") (json-object-ref s "description" ""))))
+                            (json-array-items (skills-json)))))
+    (if (and endpoint (pair? skills) (string? line) (not (string-prefix? "Note from the harness" line)))
+        (let* ((started (get-internal-real-time))
+               (name (catch #t (lambda () (typed-skill-hint (car endpoint) (cdr endpoint) (clip line 2000) skills)) (lambda _ #f)))
+               (ms (quotient (* 1000 (- (get-internal-real-time) started)) internal-time-units-per-second)))
+          (runtime-record! runtime 'skill-hint `((skill . ,(or name "none")) (candidates . ,(length skills)) (ms . ,ms)))
+          (if name (skill-hint-line name) ""))
+        "")))
 (define (provider-turn! runtime tracer parent generation history line turn-count)
   (let* ((provider (setting-ref generation 'agent-provider))
          (model (setting-ref generation 'agent-model))
@@ -2906,7 +2953,8 @@
          (keep-alive (setting-ref generation 'agent-keep-alive))
          (system
           (make-message
-           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block) (mcp-prompt-block))))
+           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block)
+                                   (skill-hint-block runtime generation line) (mcp-prompt-block))))
          (transformed-line
           (generation-call generation 'agent-transform-user line))
          (selected
@@ -3335,7 +3383,7 @@
    #:ledger ledger
    #:skills (reverse turn-skills)
    #:mcp-tools turn-mcp-tools
-   #:judge `((judged . ,turn-judged) (blocked . ,turn-blocked) (ms . ,turn-judge-ms))
+   #:judge `((judged . ,turn-judged) (blocked . ,turn-blocked) (ms . ,turn-judge-ms) (asked . ,turn-judge-asked))
    #:trace-id (trace-trace-id span) #:span-id (trace-span-id span)
    #:session-name (tracer-session-name tracer)
    #:session-id (and (tracer-session-name tracer) (tracer-session-id tracer))))

@@ -400,7 +400,9 @@
 
 ;; tool_search: connect every idle server, then match SERVER__TOOL and the
 ;; description case-insensitively; "select:a,b" names tools exactly.
-(define (mcp-search query)
+;; rerank, when given, sees the word-ranked candidates as ((name . description) ...)
+;; before the cap and returns the names to keep, in order; it never sees select: queries.
+(define* (mcp-search query #:key (rerank #f))
   (for-each (lambda (s) (when (eq? (server-state s) 'idle) (catch #t (lambda () (mcp-connect! (server-name s))) (lambda _ #f))))
             servers)
   (let* ((query (string-trim-both query))
@@ -410,7 +412,11 @@
           (if (string-prefix? "select:" query)
               (let ((wanted (map string-trim-both (string-split (substring query 7) #\,))))
                 (filter (lambda (t) (member (car t) wanted)) tools))
-              (search-ranked query tools description))))
+              (let ((ranked (search-ranked query tools description)))
+                (if (and rerank (pair? ranked))
+                    (let ((kept (rerank query (map (lambda (t) (cons (car t) (description t))) ranked))))
+                      (filter-map (lambda (name) (assoc name ranked)) kept))
+                    ranked)))))
     (if (> (length matches) search-limit) (take matches search-limit) matches)))
 ;; Ranked by query words, not by the whole phrase: a server name matches all
 ;; of its tools, a word in the tool's own name counts double, a word in the

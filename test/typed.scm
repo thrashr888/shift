@@ -1,0 +1,45 @@
+(use-modules (srfi srfi-64) (srfi srfi-1) (live-agent typed) (live-agent typesafe) (live-agent json))
+(test-begin "typed")
+(define tools '(("fake__ping" . "Reply with pong; harmless.") ("mine__ping" . "Ping the mine server.") ("fake__echo" . "Echo the input back.")))
+(define (noul-answers . pairs)
+  (apply json-object (map (lambda (p) (cons (car p) (json-object (cons "type" "noul") (cons "noul" (cdr p))))) pairs)))
+(test-equal "one noul per candidate, named by the tool" '("fake__ping" "mine__ping" "fake__echo") (map car (rank-questions tools)))
+(test-assert "the state carries the query and each tool's name and description"
+  (let ((state (rank-state "something harmless" tools)))
+    (and (equal? (json-object-ref state "query") "something harmless")
+         (= 3 (length (json-array-items (json-object-ref state "tools")))))))
+(test-equal "kept tools come back in probability order, under-threshold ones dropped" '("fake__echo" "fake__ping")
+  (rank-from-answers (noul-answers '("fake__ping" . 0.7) '("mine__ping" . 0.2) '("fake__echo" . 0.95)) (map car tools)))
+(test-equal "nothing clearing the threshold is an empty list, so the caller keeps the word order" '()
+  (rank-from-answers (noul-answers '("fake__ping" . 0.3) '("mine__ping" . 0.1) '("fake__echo" . 0.4)) (map car tools)))
+(define ranked
+  (parameterize ((typesafe-transport
+                  (lambda (base-url key body timeout)
+                    (values 200 (json-write (json-object (cons "model" "jev-1.13.0") (cons "usage" (json-object))
+                                                         (cons "answers" (noul-answers '("fake__ping" . 0.9) '("mine__ping" . 0.6) '("fake__echo" . 0.1)))))))))
+    (typed-rank-tools "https://api.typesafe.ai/v1" "sk-test" "ping" tools)))
+(test-equal "the typed order through the client" '("fake__ping" "mine__ping") ranked)
+(define unsure
+  (parameterize ((typesafe-transport
+                  (lambda _ (values 200 (json-write (json-object (cons "model" "jev-1.13.0") (cons "usage" (json-object))
+                                                                 (cons "answers" (noul-answers '("fake__ping" . 0.2) '("mine__ping" . 0.1) '("fake__echo" . 0.1)))))))))
+    (typed-rank-tools "https://api.typesafe.ai/v1" "sk-test" "ping" tools)))
+(test-equal "no confident tool keeps the candidates as they came" (map car tools) unsure)
+
+(define skills '(("release" . "Cut a release: bump, changelog, tag.") ("review" . "Review a pull request against the style guide.")))
+(define questions (skill-hint-questions skills))
+(test-equal "a choice over the skills and a noul for whether any procedure is wanted" '("skill" "procedure") (map car questions))
+(test-assert "the choice offers none beside every skill"
+  (equal? '("release" "review" "none") (map car (json-object-entries (json-object-ref (assoc-ref questions "skill") "criteria")))))
+(define (skill-answers name confidence procedure)
+  (json-object (cons "skill" (json-object (cons "type" "choice") (cons "choice" name) (cons "confidence" confidence)
+                                          (cons "probabilities" (json-object (cons name confidence)))))
+               (cons "procedure" (json-object (cons "type" "noul") (cons "noul" procedure)))))
+(test-equal "a confident pick that wants a procedure is the hint" "release" (skill-hint-from-answers (skill-answers "release" 0.9 0.8)))
+(test-eq "none is no hint" #f (skill-hint-from-answers (skill-answers "none" 0.95 0.1)))
+(test-eq "an unsure pick is no hint" #f (skill-hint-from-answers (skill-answers "release" 0.4 0.8)))
+(test-eq "a pick when no procedure is wanted is no hint" #f (skill-hint-from-answers (skill-answers "release" 0.9 0.3)))
+(test-assert "the hint line names the skill and lets the model ignore it"
+  (let ((line (skill-hint-line "release")))
+    (and (string-contains line "Relevant to this request: release") (string-contains line "ignore this if it does not"))))
+(test-end "typed")

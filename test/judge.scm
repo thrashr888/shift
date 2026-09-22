@@ -105,6 +105,14 @@
   (parameterize ((typesafe-transport (lambda _ (values 402 "{\"error\":\"insufficient credits\"}"))))
     (judge-decide! 'typesafe "jev-1.13.0" "https://api.typesafe.ai/v1" "sk-test" typed-context)))
 (test-eq "an empty balance is a credits failure" 'credits (assq-ref broke 'failure))
+(define typed-body
+  (parameterize ((typesafe-transport (lambda _ (values 400 "{\"detail\":{\"error_type\":\"insufficient_credits\",\"message\":\"top up\"}}"))))
+    (judge-decide! 'typesafe "jev-1.13.0" "https://api.typesafe.ai/v1" "sk-test" typed-context)))
+(test-eq "the body's error_type outranks the status" 'credits (assq-ref typed-body 'failure))
+(define typed-auth
+  (parameterize ((typesafe-transport (lambda _ (values 403 "{\"detail\":{\"error_type\":\"authentication_error\"}}"))))
+    (judge-decide! 'typesafe "jev-1.13.0" "https://api.typesafe.ai/v1" "sk-test" typed-context)))
+(test-eq "an authentication error_type is auth whatever the code" 'auth (assq-ref typed-auth 'failure))
 (test-assert "which is permanent" (assq-ref broke 'permanent))
 (test-eq "a malformed answer is a transient failure" 'malformed (assq-ref malformed 'failure))
 (test-assert "not a permanent one" (not (assq-ref malformed 'permanent)))

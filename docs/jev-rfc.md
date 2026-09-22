@@ -1,9 +1,10 @@
 # RFC: Jev for the decisions Shift already makes
 
-Status: phase 1 implemented September 21, 2026: the `(live-agent typesafe)`
-client, `judge-model typesafe/jev-1.13.0`, confidence in the judge log and
-report, and `scripts/evals.py judge --model typesafe/jev-1.13.0`. Phases 2 to
-5 are open.
+Status: implemented September 21, 2026, all five phases: the
+`(live-agent typesafe)` client and `judge-model typesafe/jev-1.13.0` with
+fallback to the session model; `judge-ask-below`; the `tool_search` rerank;
+the skill hint; and `evals.py compaction --judge`. What remains is the
+measurement each phase is gated on, which needs sessions to accumulate.
 Builds on: [autopilot-judge-rfc.md](autopilot-judge-rfc.md),
 [mcp-client-rfc.md](mcp-client-rfc.md), [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md),
 [quality-rfc.md](quality-rfc.md). The Alchemy RFC on the
@@ -238,12 +239,31 @@ Each phase is shippable alone and gated by a number.
    `evals.py judge --model`. Gate: 9 of 9 on `cases.jsonl` (met, below), then
    a week of dogfood shadow with agreement at or above the chat judge's.
    Done.
-2. `judge-ask-below` and the receipt's `judge_confidence`. Gate: the shadow
+2. `judge-ask-below` and the receipt's `judge_asked`. Done. Gate: the shadow
    log shows the uncertain band catches disagreements rather than noise.
-3. `tool_search` rerank. Gate: the MCP plugin sessions in `evals/dogfood`
-   reach the right tool in fewer `tool_search` calls.
-4. Skill relevance hint. Gate: fewer unfollowed skill loads in session review.
-5. Compaction fact recovery, on request.
+3. `tool_search` rerank, after main's word ranking, on its candidates. Done.
+   Gate: the MCP plugin sessions in `evals/dogfood` reach the right tool in
+   fewer `tool_search` calls than the word ranking alone.
+4. Skill relevance hint. Done. Gate: fewer unfollowed skill loads in session
+   review, which needs a `skill-hint` column there first.
+5. Compaction fact recovery, `evals.py compaction --judge`. Done, on request.
+
+One scripted autopilot session on September 21 exercised phases 2 and 4
+together, with `judge-ask-below` forced to 0.99 so every allow landed in the
+band. The skill hint picked `allbeads` from the 34 skills the bundled plugins
+offer, in 863 ms, and the model loaded it unprompted. The three judged runs
+were all allows, at confidence 0.77 for `which bd ab`, 0.25 for `bd where`
+and 0.75 for `ls .beads`: benign commands the request never named read as
+uncertain, so the default 0.5 would have asked once in that turn. Whether
+that is the band catching something or noise is exactly the phase 2 gate,
+and the log now has the columns to answer it. In a piped session the ask
+reads its answer from the next input line, as manual-mode approvals already
+do, so scripted runs that want the block behavior should use print mode.
+
+Phases 3 and 4 follow the judge setting: they run only when `judge-model`
+is Jev and it has not been switched off by a failure, so one setting is the
+whole answer to "is anything going to TypeSafe from this session". Both keep
+the untyped behavior on any failure.
 
 ## Open questions
 

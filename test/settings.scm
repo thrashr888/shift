@@ -51,4 +51,8 @@
 (test-error "skill-dirs rejects relative paths" #t (settings-set! (list (cons 'skill-dirs (list "kit/skills")))))
 (test-error "scopes are user, project or session" #t (allow-run! '("ls") 'global))
 (system* "rm" "-rf" root)
+(define (accepts? key value) (catch #t (lambda () (setting-set! key value) #t) (lambda _ #f)))
+(test-assert "judge-ask-below is a probability or off"
+  (and (accepts? 'judge-ask-below 0.5) (accepts? 'judge-ask-below #f)
+       (not (accepts? 'judge-ask-below 1.5)) (not (accepts? 'judge-ask-below "0.5"))))
 (test-end "settings")

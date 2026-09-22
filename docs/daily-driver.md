@@ -136,7 +136,18 @@ its own, and records `confidence` in every `judge.jsonl` line
 ([the RFC](jev-rfc.md) has the numbers). When Jev cannot answer, the session
 model judges that action instead and the log line says so in `fallback`; a
 rejected key, an empty balance, a missing key or a malformed request turns Jev
-off for the rest of the session after one notice, and `/judge` shows why. The
+off for the rest of the session after one notice, and `/judge` shows why. In
+autopilot an allow the typed judge is not sure of asks you instead of going
+through: `judge-ask-below` (default 0.5) is the confidence under which that
+happens, `#f` never asks, and in print mode such an allow blocks with the rule
+`judge-uncertain` since there is nobody to ask; the receipt counts them as
+`judge_asked`. With the typed judge on, two more decisions use it: `tool_search`
+sends the word-ranked candidates (names and descriptions only) to Jev and keeps
+those it is at least half sure do what the query asks, in that order, falling
+back to the word order when none clears the bar; and each user turn asks Jev
+once which offered skill, if any, is the procedure for the request, adding one
+`<skill_relevance>` line to the prompt when it is confident (the trace records
+`skill-hint`). The
 `judge` setting is `shadow` by default: the
 judge decides in autopilot, and in manual mode it also runs beside every
 prompt, its verdict shows in the approval preview, and both answers go to the
