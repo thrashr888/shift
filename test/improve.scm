@@ -75,6 +75,28 @@
 (test-equal "none reports its reason" "reflection: no durable fix (the task was hard)"
   (reflection-apply! project '((kind . none) (why . "the task was hard")) "p"))
 
+;; Distillation.
+(define ok-read '("read" "{\"path\":\"a\"}" #t "contents"))
+(define (reads n) (map (lambda (i) (list "read" (format #f "{\"path\":\"f~a\"}" i) #t "x")) (iota n)))
+(test-assert "eight clean calls on an ok turn are worth distilling" (clean-tool-heavy? "ok" (reads 8)))
+(test-assert "seven are not, nor a failed turn, nor a turn with a rejection"
+  (and (not (clean-tool-heavy? "ok" (reads 7)))
+       (not (clean-tool-heavy? "failed" (reads 8)))
+       (not (clean-tool-heavy? "ok" (cons '("run" "{}" #f "tool error: shape") (reads 8))))))
+(test-assert "the distillation prompt carries the task, the calls and the answer"
+  (let ((text (message-content (cadr (distillation-messages "add a flag" (reads 3) "Added --verbose.")))))
+    (and (string-contains text "add a flag") (string-contains text "- read {\"path\":\"f2\"} → x") (string-contains text "Added --verbose."))))
+(test-equal "a distillation is a skill or nothing, never a note" '(skill none #f)
+  (list (assq-ref (distillation-parse "{\"kind\":\"skill\",\"name\":\"add-a-flag\",\"body\":\"steps\"}") 'kind)
+        (assq-ref (distillation-parse "{\"kind\":\"none\",\"why\":\"one-off\"}") 'kind)
+        (distillation-parse "{\"kind\":\"note\",\"note\":\"x\"}")))
+(test-assert "a distilled skill names its origin"
+  (let ((line (reflection-apply! project '((kind . skill) (name . "add-a-flag") (description . "Add a CLI flag") (body . "1. edit") (why . "repeats")) "session s, turn 4" "distillation")))
+    (and (string-contains line "distillation: proposed skill add-a-flag (disabled)")
+         (string-contains (call-with-input-file (string-append project "/.shift/skills/add-a-flag/SKILL.md") get-string-all) "Proposed by distillation (session s, turn 4)"))))
+(test-equal "nothing worth keeping says so" "distillation: nothing worth keeping (one-off)"
+  (reflection-apply! project '((kind . none) (why . "one-off")) "p" "distillation"))
+
 ;; Improvement.
 (define (mkdirs path) (unless (file-exists? path) (mkdirs (dirname path)) (mkdir path)))
 (mkdirs (string-append project "/.shift/workflows/site-check"))

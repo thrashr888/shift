@@ -413,7 +413,10 @@ at a limit, repeated the same call twice over, or took three rejections,
 gets one reflection exchange that may propose a field note or a skill; a
 proposed skill is written disabled (`disable-model-invocation: true`, listed
 by `/skills`) and nothing is ever overwritten; `reflection false` turns it
-off. `/workflow improve NAME` asks for one change to a workflow that has run
+off. The good turns count too: one that ended clean with eight or more tool
+calls, or a workflow run that resolved, gets one distillation exchange that
+may write the procedure as a disabled skill (`distillation false` turns it
+off). `/workflow improve NAME` asks for one change to a workflow that has run
 before, runs the current and the changed file in two subagents, and keeps
 the change only when it resolves in no more rounds, with every attempt,
 kept or not, recorded under the workflow's `versions/`.

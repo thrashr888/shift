@@ -15,6 +15,7 @@
   #:export (field-notes-file field-note-candidates field-notes-append! field-notes-block field-notes-lines
             turn-flags hard-turn?
             reflection-messages reflection-parse reflection-apply!
+            clean-tool-heavy? distillation-messages distillation-parse
             improve-messages improve-parse candidate-text compare-runs
             promote-candidate! reject-candidate! improve-log! improve-log
             runs-summary skill-folder))
@@ -23,6 +24,7 @@
 (define max-note-chars 160)
 (define max-block-bytes (* 8 1024))
 (define rejections-for-hard 3)
+(define calls-for-distillation 8)
 (define repeats-for-hard 2)   ; extra identical calls: two identical reads are routine, three are not
 
 ;; --- field notes ----------------------------------------------------------------
@@ -113,6 +115,39 @@
 
 (define (hard-turn? flags) (pair? flags))
 
+;; --- distillation ---------------------------------------------------------------
+;; The other half of the loop: a turn that used many tools and ended clean, or
+;; a workflow run that resolved, holds a procedure worth keeping. One exchange
+;; asks the model to write it as a skill, proposed disabled like everything else.
+(define (clean-tool-heavy? status events)
+  (and (equal? status "ok")
+       (>= (length events) calls-for-distillation)
+       (not (any (lambda (e) (and (not (caddr e)) (rejection? (cadddr e)))) events))))
+(define distillation-system
+  (string-append
+   "You are reviewing a piece of your own coding work that went well, to decide whether the procedure is worth keeping as a "
+   "skill: a short SKILL.md another session of this project could follow to do the same kind of task again without "
+   "rediscovering the commands, the files and the order. Keep only what generalizes: the steps, the commands that worked, "
+   "what to verify, the pitfalls. Leave out anything specific to this one request. Propose none when the work was a one-off "
+   "or the steps are obvious. Reply with one JSON object: {\"kind\": \"skill\" | \"none\", \"name\": \"lowercase-hyphenated\", "
+   "\"description\": \"one line saying what it does and when to use it\", \"body\": \"markdown steps\", \"why\": \"one sentence\"}."))
+(define (distillation-messages request events answer)
+  (list
+   (make-message "system" distillation-system)
+   (make-message "user"
+     (string-append
+      "THE TASK:\n" (clip request 800)
+      "\n\nTHE TOOL CALLS, IN ORDER (name, arguments, outcome):\n"
+      (string-join
+       (map (lambda (e) (string-append "- " (car e) " " (clip (cadr e) 160) " → " (if (caddr e) (clip (first-line (cadddr e)) 80) "failed")))
+            (let ((n (length events))) (if (> n 60) (list-tail events (- n 60)) events)))
+       "\n")
+      "\n\nTHE FINAL ANSWER:\n" (clip answer 1200)))))
+;; Skill or none; a note is not a distillation.
+(define (distillation-parse text)
+  (let ((p (reflection-parse text)))
+    (and p (memq (assq-ref p 'kind) '(skill none)) p)))
+
 ;; --- reflection -------------------------------------------------------------------
 (define reflection-system
   (string-append
@@ -168,27 +203,28 @@
 
 ;; Writes the proposal as a disabled artifact and returns one line for the
 ;; transcript. A skill folder that exists is never overwritten.
-(define (reflection-apply! project proposal provenance)
+(define* (reflection-apply! project proposal provenance #:optional (label "reflection"))
   (case (assq-ref proposal 'kind)
     ((note)
-     (let ((added (field-notes-append! project (list (assq-ref proposal 'note)) (string-append "reflection, " provenance))))
+     (let ((added (field-notes-append! project (list (assq-ref proposal 'note)) (string-append label ", " provenance))))
        (if (> added 0)
-           (string-append "reflection: noted \"" (assq-ref proposal 'note) "\" in .shift/skills/field-notes")
-           "reflection: proposed a note that was already there")))
+           (string-append label ": noted \"" (assq-ref proposal 'note) "\" in .shift/skills/field-notes")
+           (string-append label ": proposed a note that was already there"))))
     ((skill)
      (let* ((name (assq-ref proposal 'name)) (folder (skill-folder project name)))
        (if (file-exists? folder)
-           (string-append "reflection: proposed skill " name ", which exists; nothing written")
+           (string-append label ": proposed skill " name ", which exists; nothing written")
            (begin
              (unless (file-exists? (dirname folder)) (mkdir (dirname folder)))
              (mkdir folder)
              (call-with-output-file (string-append folder "/SKILL.md")
                (lambda (p)
                  (format p "---\nname: ~a\ndescription: ~a\ndisable-model-invocation: true\n---\n" name (assq-ref proposal 'description))
-                 (format p "<!-- Proposed by reflection (~a): ~a. Remove disable-model-invocation to offer it. -->\n\n" provenance (assq-ref proposal 'why))
+                 (format p "<!-- Proposed by ~a (~a): ~a. Remove disable-model-invocation to offer it. -->\n\n" label provenance (assq-ref proposal 'why))
                  (display (assq-ref proposal 'body) p) (newline p)))
-             (string-append "reflection: proposed skill " name " (disabled) in .shift/skills/" name "; /skills lists it")))))
-    (else (string-append "reflection: no durable fix" (let ((w (assq-ref proposal 'why))) (if (and (string? w) (not (string-null? w))) (string-append " (" w ")") ""))))))
+             (string-append label ": proposed skill " name " (disabled) in .shift/skills/" name "; /skills lists it")))))
+    (else (string-append label ": " (if (string=? label "reflection") "no durable fix" "nothing worth keeping")
+                         (let ((w (assq-ref proposal 'why))) (if (and (string? w) (not (string-null? w))) (string-append " (" w ")") ""))))))
 
 ;; --- workflow improvement -----------------------------------------------------------
 (define improve-system

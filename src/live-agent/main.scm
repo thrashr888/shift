@@ -1115,6 +1115,7 @@
               (notes-exists? . ,(lambda (n) (file-exists? (notes-path tracer n))))
               (judge . ,(workflow-judge runtime))))))
     (format echo "workflow ~a v~a · ~a step~a · budget ~a rounds~%" name (workflow-version w) total (if (= total 1) "" "s") budget)
+    (set! workflow-run-events '())
     (let loop ((remaining steps) (index 1) (rounds 0) (records '()) (status 'resolved))
       (cond
        ((null? remaining)
@@ -1128,6 +1129,17 @@
                   rounds (let ((rel (string-append ".shift/workflows/" name "/runs/"))) (string-append rel (basename path))))
           (emit-workflow-run! name total total "" (symbol->string status) rounds)
           (when (ui-connected?) (emit-workflows!))
+          (let ((events workflow-run-events))
+            (set! workflow-run-events #f)
+            (when (and (eq? status 'resolved) (setting-ref (runtime-current runtime) 'distillation) (pair? events))
+              (catch #t
+                (lambda ()
+                  (distill! runtime (runtime-current runtime)
+                            (string-append "Workflow " name ": " (workflow-description w) "\n"
+                                           (string-join (map (lambda (s) (string-append "- " (step-name s) ": " (step-prompt s))) steps) "\n"))
+                            events last-answer
+                            (format #f "workflow ~a run, session ~a" name (or (tracer-session-name tracer) "default"))))
+                (lambda (key . args) (format echo "distillation skipped: ~a~%" (caught-message key args))))))
           status))
        ((not (eq? status 'resolved))
         (loop (cdr remaining) (+ index 1) rounds
@@ -1167,15 +1179,33 @@
             (when (> added 0)
               (runtime-record! runtime 'field-notes `((added . ,added)))
               (format (tool-echo-port) "field notes: ~a new line~a in .shift/skills/field-notes~%" added (if (= added 1) "" "s")))))
-        (when (setting-ref generation 'reflection)
-          (let ((flags (turn-flags (if (string? status) status "") (and (string? error) error) turn-tool-events)))
-            (when (hard-turn? flags) (reflect! runtime generation request flags provenance)))))
+        (let ((flags (turn-flags (if (string? status) status "") (and (string? error) error) turn-tool-events)))
+          (cond
+           ((and (setting-ref generation 'reflection) (hard-turn? flags))
+            (reflect! runtime generation request flags provenance))
+           ;; A workflow run distills once at its end, from every step, not per step.
+           ((and (setting-ref generation 'distillation) (not workflow-run-events)
+                 (clean-tool-heavy? (if (string? status) status "") turn-tool-events))
+            (distill! runtime generation request turn-tool-events (last-assistant-text-of receipt) provenance)))))
       (lambda (key . args) (format (tool-echo-port) "improvement loop skipped: ~a~%" (caught-message key args))))))
 (define (ask-model! generation messages output-reserve)
   (let* ((endpoint (session-judge-endpoint generation)) (key-env (cadddr endpoint))
          (completion (provider-complete (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env))
                                         messages '() #t #f "10m" #f (lambda _ #f) (lambda _ #f) 'default #f output-reserve)))
     (completion-content completion)))
+;; The answer for a distillation comes from the receipt's turn, which the
+;; caller has as the last assistant message; the receipt itself has no text.
+(define last-answer "")
+(define (last-assistant-text-of receipt) last-answer)
+(define (distill! runtime generation request events answer provenance)
+  (let* ((reply (ask-model! generation (distillation-messages request events answer) 2048))
+         (proposal (distillation-parse reply))
+         (line (if proposal (reflection-apply! (getcwd) proposal provenance "distillation")
+                   (string-append "distillation: the model did not return a proposal (" (clip (if (string? reply) reply "") 120) ")"))))
+    (runtime-record! runtime 'distillation `((calls . ,(length events)) (proposal . ,(if proposal (symbol->string (assq-ref proposal 'kind)) "unparsed")) (outcome . ,line)))
+    (format (tool-echo-port) "~a~%" line)))
+;; While a workflow runs, every step's tool events accumulate here; #f otherwise.
+(define workflow-run-events #f)
 (define (reflect! runtime generation request flags provenance)
   (let* ((reply (ask-model! generation (reflection-messages request flags turn-tool-events) 1024))
          (proposal (reflection-parse reply))
@@ -3891,6 +3921,8 @@
         (when result
           (set! history (compact-history! runtime tracer (cadr result) #f))
           (set! turn-count (+ turn-count 1)))
+        (set! last-answer (last-assistant-text history))
+        (when workflow-run-events (set! workflow-run-events (append workflow-run-events turn-tool-events)))
         (after-turn! runtime tracer prompt)
         result))
     (define (process! line)

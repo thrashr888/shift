@@ -179,7 +179,7 @@ class CodingWorkflow(unittest.TestCase):
     # Reflection is off in the shared fixture so a hard turn never consumes
     # another test's planned reply; the loop's own tests switch it on.
     def command(self, session="w"):
-        return [BIN, "--agent", str(self.agent), "--no-watch", "--no-mcp", "--session", session, "--set", "reflection=false"]
+        return [BIN, "--agent", str(self.agent), "--no-watch", "--no-mcp", "--session", session, "--set", "reflection=false", "--set", "distillation=false"]
 
     def shift(self, stdin, plan=(), session="w"):
         Provider.plan = list(plan)
@@ -310,6 +310,42 @@ class CodingWorkflow(unittest.TestCase):
         self.assertTrue((self.project / ".shift/workflows/gate/versions/2-rejected.scm").exists())
         self.assertFalse((self.project / ".shift/workflows/gate/versions/1.scm").exists())
 
+    def test_a_clean_tool_heavy_turn_is_distilled_into_a_disabled_skill(self):
+        reads = [tool_call("read", {"path": "notes.txt"}) for _ in range(8)]
+        proposal = json.dumps({"kind": "skill", "name": "survey-notes", "description": "Survey the notes file before answering",
+                               "body": "1. read notes.txt\n2. answer from it", "why": "eight reads that worked"})
+        code, out, err = self.print_mode("survey the notes", reads + [answer("alpha on 8080"), answer(proposal)],
+                                         "--mode", "autopilot", "--set", "distillation=true", "--set", "agent-max-tool-rounds=12")
+        self.assertEqual(code, 0, err)
+        self.assertIn("distillation: proposed skill survey-notes (disabled)", err)
+        self.assertEqual(Provider.plan, [], "one distillation call after the turn")
+        request = Provider.last_messages[-1]["content"]
+        self.assertIn("THE TASK:\nsurvey the notes", request); self.assertIn("THE FINAL ANSWER:\nalpha on 8080", request)
+        skill = (self.project / ".shift/skills/survey-notes/SKILL.md").read_text()
+        self.assertIn("disable-model-invocation: true", skill); self.assertIn("Proposed by distillation (session p, turn 1)", skill)
+        # A short turn is not worth a call.
+        code, out, err = self.print_mode("hi", [answer("hello")], "--mode", "autopilot", "--set", "distillation=true", session="q")
+        self.assertEqual(Provider.plan, []); self.assertNotIn("distillation:", err)
+
+    def test_a_resolved_workflow_run_is_distilled_once_from_every_step(self):
+        self.write_workflow("survey", """((workflow "survey" 1)
+ (description "Read the notes twice")
+ (step "first" "Read notes.txt and say the port." (check (contains "8080")))
+ (step "second" "Read it again and confirm." (check (contains "8080"))))""")
+        proposal = json.dumps({"kind": "skill", "name": "survey-by-workflow", "description": "d", "body": "steps", "why": "resolved"})
+        code, out, err = self.print_mode("/workflow run survey", [
+            tool_call("read", {"path": "notes.txt"}), answer("port 8080"),
+            tool_call("read", {"path": "notes.txt"}), answer("still 8080"),
+            answer(proposal),
+        ], "--mode", "autopilot", "--set", "distillation=true")
+        self.assertEqual(code, 0, err)
+        self.assertIn("workflow survey: resolved", out)
+        self.assertIn("distillation: proposed skill survey-by-workflow (disabled)", err)
+        self.assertEqual(Provider.plan, [], "one call for the whole run, none per step")
+        request = Provider.last_messages[-1]["content"]
+        self.assertIn("Workflow survey: Read the notes twice", request); self.assertEqual(request.count("- read {"), 2)
+        self.assertIn("Proposed by distillation (workflow survey run, session p)", (self.project / ".shift/skills/survey-by-workflow/SKILL.md").read_text())
+
     def test_the_workflow_tool_lists_and_shows(self):
         self.write_workflow("gate", """((workflow "gate" 1) (description "A gate") (step "first" "Say hello." (check (contains "hi"))))""")
         image = self.agent.read_text().replace("tool_search recall notes))", "tool_search recall notes workflow))")
@@ -329,7 +365,7 @@ class CodingWorkflow(unittest.TestCase):
         """Unattended run; returns (exit code, stdout, stderr)."""
         Provider.plan = list(plan)
         result = subprocess.run(
-            [BIN, "--agent", str(self.agent), "--session", session, "--set", "reflection=false", "--print", task, *flags],
+            [BIN, "--agent", str(self.agent), "--session", session, "--set", "reflection=false", "--set", "distillation=false", "--print", task, *flags],
             text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60,
             stdin=subprocess.DEVNULL,
         )

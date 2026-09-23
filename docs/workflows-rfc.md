@@ -1,10 +1,10 @@
 # Workflows RFC: durable procedures that Shift runs, measures and improves itself
 
-Status: implemented as of September 22, 2026, both the workflow (definition,
+Status: implemented as of September 22, 2026: the workflow (definition,
 `/workflow`, the `workflow` tool, the five checks, run records, the sidebar
-tab) and the loop (field notes, reflection, `/workflow improve`); see "What
-is implemented" at the end for what differs from the draft. Distillation
-after a good run (source 2) is the one part not built.
+tab) and the whole loop (field notes, reflection, distillation, `/workflow
+improve`). "What is implemented" at the end says where it differs from the
+draft below.
 
 ## Why
 
@@ -176,6 +176,15 @@ in `versions/`. Nothing promotes without a comparison; nothing is deleted.
   reported with its reason. One line in the transcript and a `reflection`
   event say what happened. Setting `reflection false` turns it off; the
   end-to-end fixtures do, so a hard turn never eats another test's reply.
+- **Distillation** (source 2): a turn that ended `ok` with eight or more
+  tool calls and no rejection, or a workflow run that resolved, gets one
+  exchange asking whether the procedure is worth keeping as a skill: the
+  task, the calls in order with their outcomes, and the final answer. A run
+  distills once at its end from every step's calls, never per step. The
+  proposal is a skill or none; a skill is written disabled exactly as
+  reflection writes one, with `Proposed by distillation` and the session or
+  run it came from. Setting `distillation false` turns it off; the
+  end-to-end fixtures do.
 - **`/workflow improve NAME`**: reads the workflow and its last five run
   records, asks the model for one change to the file (reword a prompt,
   adjust a check, split or merge steps, change the budget) and a new
