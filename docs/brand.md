@@ -161,6 +161,73 @@ ownership), "Own your agent" (a slogan, not a sentence).
 The theme and display-name controls that today sit above the hero move
 into section seven. The first screen shows Shift, not a control panel.
 
+## Visual explorations, September 23, 2026
+
+Ten mocks in `docs/assets/brand/`, generated against the palette above and
+reviewed for what they say, not how pretty they are. Generated text is never
+site material: the desk mock invented a `--model gpt-4o` flag, which is the
+whole argument for real captures and set type.
+
+![Videotape label hero: the wordmark in a rounded geometric sans over a three-stripe band, a GEN 1 badge, katakana, and a receipt printed as a torn sticker](assets/brand/label-hero.webp)
+
+**1. The videotape label** (`label-sleeve.webp`, `label-hero.webp`).
+The 1980s Japanese blank-cassette language, modernized: rounded geometric
+sans wordmark with cyan and magenta offset shadows, a diagonal three-stripe
+band in the palette, katakana `シフト` as a small secondary mark, a round
+grade badge that reads `GEN 1` (generations are the product's own word for
+versions of itself), and the receipt printed as a torn paper sticker. This is
+the recommended primary system. It carries the retro vibe the way the
+reference does, it is flat and printable so it survives at every size, and
+the sticker gives the receipt, the brand's proof element, a physical form
+that repeats across the site. The `GEN N` badge and the sticker are the two
+motifs to keep even if the stripes go.
+
+**2. Vector wireframe** (`wireframe-title.webp`, `wireframe-workflow.webp`).
+The early-1980s vector-display look from the reference frame: thin glowing
+lines, no fills, faint scanlines. It is the right language for anything
+structural: a workflow as boxes and arrows with its checks beneath, sessions
+as folders, a generation switch, the wireframe globe. The recommendation is
+to build these as real SVG, drawn on scroll (stroke-dashoffset), with the
+globe as the one continuous motion beside the `///` mark. Secondary system,
+for diagrams only; the wordmark stays the label sans.
+
+**3. Dither** (`dither-desk-generated.webp`, `dither-real-composite.webp`,
+`dither-capture-lesson.webp`). Ordered (Bayer) dither in two colors, lime on
+purple, is the texture that ties photography to the palette. The real
+composite proves the pipeline: a photograph dithered by a 4x4 Bayer matrix
+at 3-pixel cells, with the wordmark, tagline and receipt composited crisp on
+top. The lesson image is the TUI capture itself dithered: the interface
+becomes unreadable. Rule: dither imagery, never type or UI. On the site this
+is a canvas or WebGL shader over photographs and over captures' backgrounds,
+with cell size tied to device pixel ratio so it never looks like JPEG noise.
+
+**4. Gaussian splat** (`splat-still.webp`). A scanned desk with a slow
+pointer parallax would be the one photographic moment on the site, with the
+tagline set over it. Pipeline: a thirty-second phone video of a real desk
+running Shift, reconstructed with Luma or Polycam (or nerfstudio's gsplat
+locally), exported as `.splat` or `.ply`, rendered with gsplat.js or
+three.js GaussianSplats3D. Budget: a scene under 8 MB, loaded after first
+paint, the dithered still as the fallback and for reduced motion. It needs a
+real scan, which means a real desk; the mock is a placeholder for the
+decision, not the asset.
+
+**5. Outrun** (`outrun-dropped.webp`). The neon grid reads as every other
+synthwave page. Dropped; the label and the wireframe already carry the era
+without the cliché.
+
+**Wordmark** (`wordmark-sheet.webp`). Of six treatments, two survive:
+the rounded label sans for the brand, and monospace with a block cursor
+after the slashes for the terminal and the receipt. The dither and wireframe
+treatments are textures the wordmark can wear inside their own sections, not
+alternate marks.
+
+What this settles for the site plan above: the hero is the label system
+over a dithered photograph or splat; sections two through five use
+wireframe SVG diagrams; every capture is real; the receipt sticker appears
+in the hero, the accountability section and the install section. Motion is
+three things and no more: the `///` mark while work runs, wireframes drawing
+themselves once, and splat parallax on pointer.
+
 ## Open questions
 
 1. Tagline: the recommendation above, or "Change the agent while it runs"?
