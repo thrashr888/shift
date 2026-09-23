@@ -391,6 +391,21 @@ resolved. The `workflow` tool gives the model the same list and show, and its
 `run` starts the workflow in a subagent so a long procedure does not fill the
 parent's window.
 
+Three things run beside workflows and make sessions improve on their own.
+After every turn, each tool rejection becomes one line in
+`.shift/skills/field-notes/SKILL.md`, a skill the skill tool never offers
+because every turn's system prompt already carries it, so a quirk hit once
+(an argv shape, a path rule) is known in the next session; edit or delete
+lines as you like, or set `field-notes false`. A hard turn, one that ended
+at a limit, repeated the same call twice over, or took three rejections,
+gets one reflection exchange that may propose a field note or a skill; a
+proposed skill is written disabled (`disable-model-invocation: true`, listed
+by `/skills`) and nothing is ever overwritten; `reflection false` turns it
+off. `/workflow improve NAME` asks for one change to a workflow that has run
+before, runs the current and the changed file in two subagents, and keeps
+the change only when it resolves in no more rounds, with every attempt,
+kept or not, recorded under the workflow's `versions/`.
+
 ## Trace recall
 
 `recall` and `/recall QUERY` search the traces of every session in the

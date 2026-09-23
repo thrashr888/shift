@@ -29,6 +29,7 @@
   #:use-module (live-agent runtime)
   #:use-module (live-agent session)
   #:use-module (live-agent workflow)
+  #:use-module (live-agent improve)
   #:use-module (live-agent skills)
   #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
   #:use-module (live-agent judge)
@@ -171,6 +172,8 @@
 (define turn-completion-tokens 0)
 (define turn-rounds 0)
 (define turn-tool-calls '())
+;; (tool arguments-json ok? output) per call this turn, for field notes and reflection.
+(define turn-tool-events '())
 (define turn-nudged? #f)
 (define last-receipt #f)
 
@@ -185,7 +188,8 @@
   (set! turn-completion-tokens 0)
   (set! turn-rounds 0)
   (set! turn-nudged? #f)
-  (set! turn-tool-calls '()))
+  (set! turn-tool-calls '())
+  (set! turn-tool-events '()))
 
 (define (count-turn-tool-call! name)
   (let ((current (or (assoc-ref turn-tool-calls name) 0)))
@@ -370,6 +374,7 @@
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
     "  /workflow [NAME]  list workflows (.shift/workflows/NAME/workflow.scm) or show one's steps and runs\n"
     "  /workflow run NAME  run its steps as turns of this session; checks decide, the record lands in runs/\n"
+    "  /workflow improve NAME  propose one change, run baseline and candidate in two subagents, keep the winner\n"
     "  /judge [off|shadow|on|report]  the autopilot judge: setting, model, counts, or shadow agreement\n"
     "  /sandbox [NAME|off]  run commands in an agentkernel sandbox; run-host prefixes stay on the host\n"
     "  /mcp [connect|disconnect|tools NAME]  MCP servers from .shift/mcp.scm and the user config\n"
@@ -1064,18 +1069,18 @@
 ;; session model) whether the step's answer establishes the criterion; a typed
 ;; judge that cannot answer falls back to the session model like the tool judge.
 (define (workflow-judge runtime)
-  (define (ask endpoint criterion answer)
+  (define (ask endpoint criterion answer task)
     ;; An endpoint names the key's environment variable; the request wants its value.
     (let ((key-env (cadddr endpoint)))
-      (judge-claim! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) criterion answer)))
-  (lambda (criterion answer)
+      (judge-claim! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) criterion answer #:task task)))
+  (lambda* (criterion answer #:optional (task #f))
     (let* ((generation (runtime-current runtime))
            (endpoint (judge-endpoint generation))
-           (verdict (ask endpoint criterion answer)))
+           (verdict (ask endpoint criterion answer task)))
       (if (and (assq-ref verdict 'failure) (eq? (car endpoint) 'typesafe))
           (begin
             (when (assq-ref verdict 'permanent) (set! judge-typed-disabled #t))
-            (append (ask (session-judge-endpoint generation) criterion answer)
+            (append (ask (session-judge-endpoint generation) criterion answer task)
                     `((fallback . ,(assq-ref verdict 'reason)))))
           verdict))))
 ;; run-step!: PROMPT → (turn-status answer receipt). Stops at the first step
@@ -1087,8 +1092,8 @@
          (started (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
          (echo (tool-echo-port))
          (context-for
-          (lambda (answer)
-            `((answer . ,answer) (root . ,project)
+          (lambda (answer task)
+            `((answer . ,answer) (task . ,task) (root . ,project)
               (run . ,(lambda (argv)
                         (unless (builtin-enabled? 'coding) (error "run checks need the coding built-in"))
                         ((builtin-ref 'coding 'run-argv) argv)))
@@ -1121,7 +1126,7 @@
                  ;; The receipt is the alist deliver-receipt! stored, not its JSON.
                  (step-rounds (or (and (pair? receipt) (assq-ref receipt 'rounds)) 0))
                  (rounds (+ rounds (if (number? step-rounds) step-rounds 0)))
-                 (checks (map (lambda (c) (evaluate-check c (context-for answer))) (step-checks step)))
+                 (checks (map (lambda (c) (evaluate-check c (context-for answer (step-prompt step)))) (step-checks step)))
                  (ok? (and (eq? turn-status 'ok) (every (lambda (c) (assq-ref c 'ok)) checks)))
                  (over? (> rounds budget))
                  (step-status (cond (ok? 'ok) ((eq? turn-status 'limited) 'limited) (else 'failed))))
@@ -1130,6 +1135,121 @@
             (loop (cdr remaining) (+ index 1) rounds
                   (cons `((name . ,(step-name step)) (status . ,step-status) (rounds . ,step-rounds) (checks . ,checks)) records)
                   (cond ((and ok? (not over?)) 'resolved) (over? 'budget) (else 'failed))))))))))
+;; --- the self-improvement loop --------------------------------------------------------
+;; After every turn: harness rejections become field notes, and a hard turn
+;; (a limit, a repeated call, three rejections) gets one reflection exchange
+;; whose proposal is written as a disabled artifact. Never more than one
+;; model call, never on an easy turn, and either half can be switched off.
+(define (after-turn! runtime tracer request)
+  (let* ((generation (runtime-current runtime)) (project (getcwd)) (receipt last-receipt)
+         (status (and (pair? receipt) (assq-ref receipt 'status))) (error (and (pair? receipt) (assq-ref receipt 'error)))
+         (provenance (format #f "session ~a, turn ~a" (or (tracer-session-name tracer) "default")
+                             (or (and (pair? receipt) (assq-ref receipt 'turn)) "?"))))
+    (catch #t
+      (lambda ()
+        (when (setting-ref generation 'field-notes)
+          (let ((added (field-notes-append! project (field-note-candidates turn-tool-events) provenance)))
+            (when (> added 0)
+              (runtime-record! runtime 'field-notes `((added . ,added)))
+              (format (tool-echo-port) "field notes: ~a new line~a in .shift/skills/field-notes~%" added (if (= added 1) "" "s")))))
+        (when (setting-ref generation 'reflection)
+          (let ((flags (turn-flags (if (string? status) status "") (and (string? error) error) turn-tool-events)))
+            (when (hard-turn? flags) (reflect! runtime generation request flags provenance)))))
+      (lambda (key . args) (format (tool-echo-port) "improvement loop skipped: ~a~%" (caught-message key args))))))
+(define (ask-model! generation messages output-reserve)
+  (let* ((endpoint (session-judge-endpoint generation)) (key-env (cadddr endpoint))
+         (completion (provider-complete (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env))
+                                        messages '() #t #f "10m" #f (lambda _ #f) (lambda _ #f) 'default #f output-reserve)))
+    (completion-content completion)))
+(define (reflect! runtime generation request flags provenance)
+  (let* ((reply (ask-model! generation (reflection-messages request flags turn-tool-events) 1024))
+         (proposal (reflection-parse reply))
+         (line (if proposal (reflection-apply! (getcwd) proposal provenance)
+                   (string-append "reflection: the model did not return a proposal (" (clip (if (string? reply) reply "") 120) ")"))))
+    (runtime-record! runtime 'reflection `((flags . ,(string-join flags "; ")) (proposal . ,(if proposal (symbol->string (assq-ref proposal 'kind)) "unparsed")) (outcome . ,line)))
+    (format (tool-echo-port) "~a~%" line)))
+;; /workflow improve NAME: one proposed change, measured. Baseline and candidate
+;; run in two children pinned to this generation; the candidate stays only when
+;; it resolves in no more rounds. Every outcome goes to versions/log.jsonl.
+(define (improve-workflow! runtime tracer name)
+  (let* ((project (getcwd)) (w (workflow-read project name)) (runs (workflow-runs project name)))
+    (when (null? runs) (error "run the workflow first; improvement compares against its runs"))
+    (unless (and spawn-session (builtin-enabled? 'coding)) (error "improvement runs two subagents; start shift-agent with --session"))
+    (let* ((text (call-with-input-file (workflow-file project name) get-string-all))
+           (generation (runtime-current runtime))
+           (proposal (improve-parse (ask-model! generation (improve-messages text (if (> (length runs) 5) (take runs 5) runs)) 4096))))
+      (cond
+       ((not proposal) (display "improve: the model did not return a proposal\n"))
+       ((equal? (assq-ref proposal 'change) "none") (display "improve: the model proposes no change\n"))
+       (else
+        (let* ((candidate-name (string-append name "-candidate"))
+               (candidate (candidate-text (assq-ref proposal 'workflow) name candidate-name))
+               (folder (string-append (workflow-root project) "/" candidate-name))
+               (tag (number->string (+ 1 (length (improve-log project name))))))
+          (when (file-exists? folder) (error "a candidate folder is already there; remove it first" folder))
+          (mkdir folder)
+          (call-with-output-file (workflow-file project candidate-name) (lambda (p) (display candidate p)))
+          (catch #t
+            (lambda () (workflow-read project candidate-name))
+            (lambda (key . args)
+              (remove-tree! folder)
+              (error (string-append "the proposal does not parse: " (caught-message key args)))))
+          (format #t "improve ~a: ~a~%  baseline and candidate run in two subagents; this waits for both~%" name (assq-ref proposal 'change))
+          (dynamic-wind
+           (lambda () #t)
+           (lambda ()
+          (let* ((jobs (list (spawn-workflow-run! runtime generation tracer name (string-append "improve-" tag "-baseline"))
+                             (spawn-workflow-run! runtime generation tracer candidate-name (string-append "improve-" tag "-candidate"))))
+                 (finished? (wait-for-jobs! jobs 3600))
+                 (baseline (newest-run-for project name (string-append "improve-" tag "-baseline")))
+                 (result (newest-run-for project candidate-name (string-append "improve-" tag "-candidate")))
+                 (verdict (cond ((not finished?) (cons 'discard "the runs did not finish within an hour"))
+                                ((not (and baseline result)) (cons 'discard "a run left no record"))
+                                (else (compare-runs baseline result))))
+                 (kept? (eq? (car verdict) 'keep))
+                 (version (workflow-version w)))
+            (when result
+              (let ((dir (string-append (workflow-root project) "/" name "/versions")))
+                (unless (file-exists? dir) (mkdir dir))
+                (call-with-output-file (string-append dir "/" (number->string (+ version 1)) "-candidate-run.json")
+                  (lambda (p) (display (json-write result) p) (newline p)))))
+            ;; Both take the candidate-named text and put the workflow's own name back.
+            (if kept? (promote-candidate! project name version candidate)
+                (reject-candidate! project name version candidate))
+            (improve-log! project name
+                          (json-object (cons "at" (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
+                                       (cons "change" (assq-ref proposal 'change)) (cons "kept" kept?) (cons "reason" (cdr verdict))
+                                       (cons "baseline" (or baseline json-null)) (cons "candidate" (or result json-null))))
+            (format #t "improve ~a: ~a · ~a~%" name (if kept? (format #f "kept as v~a" (+ version 1)) "discarded") (cdr verdict))
+            (when (ui-connected?) (emit-workflows!))))
+           ;; The candidate folder is scaffolding; the record of it lives under versions/.
+           (lambda () (remove-tree! folder)))))))))
+(define (spawn-workflow-run! runtime generation tracer workflow child)
+  (let ((result (execute-spawn runtime generation tracer
+                               (json-object (cons "task" (string-append "/workflow run " workflow)) (cons "name" child)
+                                            (cons "timeout_seconds" 3600))
+                               #f)))
+    (unless (tool-result-success? result) (error (tool-result-output result)))
+    (let ((all ((builtin-ref 'coding 'job-list)))) (car (last-pair all)))))
+(define (wait-for-jobs! jobs seconds)
+  (let ((deadline (+ (get-internal-real-time) (* seconds internal-time-units-per-second))))
+    (let loop ()
+      (cond ((every (lambda (j) (not (eq? ((builtin-ref 'coding 'job-state) j) 'running))) jobs) #t)
+            ((> (get-internal-real-time) deadline) #f)
+            (else (usleep 1000000) (loop))))))
+(define (newest-run-for project workflow child)
+  (find (lambda (run) (string-suffix? (string-append "/agents/" child) (json-object-ref run "session" "")))
+        (catch #t (lambda () (workflow-runs project workflow)) (lambda _ '()))))
+;; Only ever pointed at a candidate folder under .shift/workflows.
+(define (remove-tree! path)
+  (unless (string-contains path "/.shift/workflows/") (error "refusing to remove" path))
+  (when (file-exists? path)
+    (if (eq? (stat:type (stat path)) 'directory)
+        (begin (for-each (lambda (n) (remove-tree! (string-append path "/" n)))
+                         (scandir path (lambda (n) (not (member n '("." ".."))))))
+               (rmdir path))
+        (delete-file path))))
+
 (define (execute-workflow runtime generation tracer arguments span)
   (catch #t
     (lambda ()
@@ -1465,7 +1585,7 @@
   (catch #t
     (lambda ()
       (estimate-input-tokens
-        (cons (make-message "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block))) history)
+        (cons (make-message "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block) (field-notes-block (getcwd)))) history)
         (filter within-process-tool-ceiling?
                 (map tool-name (generation-ref generation 'agent-tools)))))
     (lambda _ #f)))
@@ -1705,6 +1825,8 @@
    ((string-prefix? "/learn " line)
     (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
    ((string=? line "/workflow") (display (workflow-listing-text)) (newline) (emit-workflows!) 'continue)
+   ((string-prefix? "/workflow improve " line)
+    (improve-workflow! runtime tracer (trimmed-command-argument line "/workflow improve ")) 'continue)
    ((string-prefix? "/workflow run " line)
     (let ((name (trimmed-command-argument line "/workflow run ")))
       (workflow-read (getcwd) name)
@@ -2929,6 +3051,7 @@
                  (ok? (tool-result-success? outcome))
                  (output (tool-result-output outcome)))
             (when ok? (record-observations! outcome))
+            (set! turn-tool-events (append turn-tool-events (list (list name (json-write (tool-call-arguments call)) ok? output))))
             (echo-tool-result! generation ui-id name ok? output)
             (when (and ok? (member name mutation-tool-names))
               (emit-ui-diff! (current-turn)))
@@ -3112,7 +3235,7 @@
          (keep-alive (setting-ref generation 'agent-keep-alive))
          (system
           (make-message
-           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block)
+           "system" (string-append (generation-ref generation 'agent-system-prompt) (skills-prompt-block) (field-notes-block (getcwd))
                                    (skill-hint-block runtime generation line) (mcp-prompt-block))))
          (transformed-line
           (generation-call generation 'agent-transform-user line))
@@ -3747,6 +3870,14 @@
                     (publish-session!)
                     (string-trim-both (get-output-string out))))))
             (lambda () (unlock-mutex lock))))))
+    ;; One turn: the model, the receipt, then the improvement loop's look at it.
+    (define (turn! prompt)
+      (let ((result (perform-turn! runtime tracer history prompt turn-count)))
+        (when result
+          (set! history (compact-history! runtime tracer (cadr result) #f))
+          (set! turn-count (+ turn-count 1)))
+        (after-turn! runtime tracer prompt)
+        result))
     (define (process! line)
       (publish-session!)
       (set! operation-status "ok") (set! operation-error #f) (set! operation-span #f)
@@ -3761,24 +3892,15 @@
                 (handle-command runtime tracer session line))
                (else
                  (remember-user-message! line)
-                 (let ((result (perform-turn! runtime tracer history line turn-count)))
-                   (when result
-                     (set! history (compact-history! runtime tracer (cadr result) #f))
-                     (set! turn-count (+ turn-count 1)))) 'continue))))
+                 (turn! line) 'continue))))
         ;; A command may hand back a prompt to run as a turn (/learn does).
         (when (and (pair? action) (eq? (car action) 'prompt))
-          (let ((result (perform-turn! runtime tracer history (cadr action) turn-count)))
-            (when result
-              (set! history (compact-history! runtime tracer (cadr result) #f))
-              (set! turn-count (+ turn-count 1)))))
+          (turn! (cadr action)))
         ;; /workflow run hands back a name; each step is one ordinary turn here.
         (when (and (pair? action) (eq? (car action) 'workflow))
           (run-workflow! runtime tracer (cadr action)
             (lambda (prompt)
-              (let ((result (perform-turn! runtime tracer history prompt turn-count)))
-                (when result
-                  (set! history (compact-history! runtime tracer (cadr result) #f))
-                  (set! turn-count (+ turn-count 1)))
+              (let ((result (turn! prompt)))
                 (list (if result (car result) 'failed) (last-assistant-text history) last-receipt)))))
         (case (if (pair? action) 'continue action)
           ((reset) (set! history '()) (set! turn-count 1)

@@ -1,9 +1,10 @@
 # Workflows RFC: durable procedures that Shift runs, measures and improves itself
 
-Status: the workflow itself (definition, `/workflow`, the `workflow` tool,
-the five checks, run records, the sidebar tab) is implemented as of
-September 22, 2026; see "What is implemented" at the end. The
-self-improvement loop is still the proposal below.
+Status: implemented as of September 22, 2026, both the workflow (definition,
+`/workflow`, the `workflow` tool, the five checks, run records, the sidebar
+tab) and the loop (field notes, reflection, `/workflow improve`); see "What
+is implemented" at the end for what differs from the draft. Distillation
+after a good run (source 2) is the one part not built.
 
 ## Why
 
@@ -155,8 +156,47 @@ in `versions/`. Nothing promotes without a comparison; nothing is deleted.
 - The WORKFLOWS sidebar tab lists workflows with their last run, marks an
   unreadable file with its error, and follows a run step by step from the
   `workflow-run` events.
-- Not yet: reflection, distillation, field notes and `/workflow improve`.
-  The comparison gate now has what it needs, a run record per workflow per
-  session, so the next step is the reflection prompt and the A/B run in two
-  pinned children.
+- **Field notes** (`src/live-agent/improve.scm`): after every turn the
+  harness turns each tool rejection (an output starting `tool error`, `tool
+  failed`, `tool unavailable` or an invalid-arguments complaint; never a
+  command that merely exited non-zero) into one line of
+  `.shift/skills/field-notes/SKILL.md`, deduplicated by text, newest forty
+  kept, each with its session and turn. The file is a skill with
+  `disable-model-invocation: true`, so the skill tool never offers it; every
+  turn's system prompt carries the lines instead, in a `<field-notes>` block.
+  People edit or delete lines freely. Setting `field-notes false` turns it
+  off.
+- **Reflection**: a hard turn is one that ended at a limit, repeated an
+  identical call twice over (two identical reads are routine), or took three
+  rejections. It gets one extra model exchange with the request, the flags
+  and the turn's calls, asking for one durable fix as JSON: a note, a skill,
+  or none. A note is appended to field notes marked `reflection`; a skill is
+  written under `.shift/skills/NAME/` with `disable-model-invocation: true`
+  and a comment naming the turn, never over an existing folder; none is
+  reported with its reason. One line in the transcript and a `reflection`
+  event say what happened. Setting `reflection false` turns it off; the
+  end-to-end fixtures do, so a hard turn never eats another test's reply.
+- **`/workflow improve NAME`**: reads the workflow and its last five run
+  records, asks the model for one change to the file (reword a prompt,
+  adjust a check, split or merge steps, change the budget) and a new
+  version, validates that the proposal parses, then runs baseline and
+  candidate in two subagents pinned to this generation and waits for both.
+  The candidate is kept only when it resolves in no more rounds than the
+  baseline; then the old file moves to `versions/V.scm` and the candidate
+  becomes the workflow at `V+1`. Otherwise it lands as
+  `versions/V+1-rejected.scm`. Either way `versions/log.jsonl` records the
+  change, the two runs and the reason, and the candidate's run record sits
+  beside it. Question 2 (what comparison counts for a skill or note) stays
+  open: this compares workflow files, which is what the run records measure.
+- **Dogfood, September 22**: `site-check` failed its `judge` check on a
+  correct answer at Jev confidence 0.40 because the typed question named the
+  evidence three ways; with the question rewritten around literal field
+  names (`step`, `answer`, `claim`) the same answer holds at 0.98.
+  `eval-review` resolved first time in six rounds. `/workflow improve` on
+  `eval-review` and on `site-check` after its runs resolved proposed no
+  change, which is the right answer; with the failed run on top of
+  `site-check`'s record it proposed rewording the step to state the verdict
+  outright, and the baseline and candidate children both resolved in two
+  rounds (Jev 0.97 and 0.96), the kept case. The end-to-end tests drive both
+  the kept and the discarded path through the fake model.
 

@@ -132,8 +132,8 @@
 (define (check-text c) (if (eq? (car c) 'run) (string-join (cadr c) " ") (cadr c)))
 
 ;; --- checks -----------------------------------------------------------------------
-;; context: ((answer . TEXT) (root . DIR) (run . (lambda (argv) (code . output)))
-;;           (notes-exists? . (lambda (name) bool)) (judge . (lambda (criterion answer) alist-or-#f)))
+;; context: ((answer . TEXT) (task . STEP-PROMPT) (root . DIR) (run . (lambda (argv) (code . output)))
+;;           (notes-exists? . (lambda (name) bool)) (judge . (lambda (criterion answer task) alist-or-#f)))
 ;; The judge answers ((holds . bool) (confidence . p) ...) or #f when no judge
 ;; could answer; that check then fails and says so, never passes by default.
 (define (evaluate-check check context)
@@ -160,7 +160,7 @@
              `((kind . notes) (text . ,(cadr check)) (ok . ,ok) (detail . ,(if ok "note exists" "no such note")))))
           ((judge)
            (let* ((judge (get 'judge))
-                  (verdict (and (procedure? judge) (judge (cadr check) (or (get 'answer) "")))))
+                  (verdict (and (procedure? judge) (judge (cadr check) (or (get 'answer) "") (get 'task)))))
              (if (and verdict (assq 'holds verdict))
                  `((kind . judge) (text . ,(cadr check)) (ok . ,(and (assq-ref verdict 'holds) #t))
                    (confidence . ,(assq-ref verdict 'confidence)) (model . ,(assq-ref verdict 'model))

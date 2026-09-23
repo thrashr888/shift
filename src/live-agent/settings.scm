@@ -120,6 +120,9 @@
                                 ("open") ("swift") ("swiftc") ("brew")))
                    (judge . shadow) (judge-model . #f) (judge-ask-below . 0.5) (trace-content . full)
                    (turn-token-budget . #f) (show-work . #t)
+                   ;; The self-improvement loop (docs/workflows-rfc.md): field notes the
+                   ;; harness appends after a turn, and reflection after a hard one.
+                   (field-notes . #t) (reflection . #t)
                    (provider-retries . ,default-provider-retries)))
 (define bindings '(agent-provider agent-model agent-base-url agent-api-key-environment
                   agent-stream? agent-thinking agent-keep-alive agent-max-tool-rounds))
@@ -167,6 +170,7 @@
     ;; you instead (blocks in print mode); #f never asks. Only typed judges report confidence.
     ((judge-ask-below) (or (not value) (and (real? value) (>= value 0) (<= value 1))))
     ((run-backend) (memq value '(local agentkernel)))
+    ((field-notes reflection) (boolean? value))
     ((run-sandbox) (or (not value) (and (string? value) (not (string-null? value)))))
     (else #f)))
 (define (decode key value)

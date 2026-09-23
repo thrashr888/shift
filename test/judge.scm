@@ -159,14 +159,15 @@
   (parameterize ((typesafe-transport (lambda (base-url key body timeout)
                                        (set! claim-requests (cons (json-read body) claim-requests))
                                        (values 200 "{\"model\":\"jev-1.13.0\",\"answers\":{\"holds\":{\"type\":\"noul\",\"noul\":0.87}},\"usage\":{\"input_tokens\":300}}"))))
-    (judge-claim! 'typesafe "jev-1.13.0" "https://api.typesafe.ai/v1" "sk-test" "the notes cover five commits" "Wrote notes/release.md covering the last five commits.")))
+    (judge-claim! 'typesafe "jev-1.13.0" "https://api.typesafe.ai/v1" "sk-test" "the notes cover five commits" "Wrote notes/release.md covering the last five commits." #:task "Write the release notes.")))
 (test-assert "a typed claim holds at 0.87" (assq-ref claim-typed 'holds))
 (test-equal "and the probability is the confidence" 0.87 (assq-ref claim-typed 'confidence))
 (test-equal "under the typesafe model name" "typesafe/jev-1.13.0" (assq-ref claim-typed 'model))
 (test-assert "the request carries the claim and the evidence as state, and one noul"
   (let* ((body (car claim-requests)) (state (json-object-ref body "state")))
     (and (equal? (json-object-ref state "claim") "the notes cover five commits")
-         (string-contains (json-object-ref state "evidence") "release.md")
+         (string-contains (json-object-ref state "answer") "release.md")
+         (equal? (json-object-ref state "step") "Write the release notes.")
          (equal? (json-object-ref (json-object-ref (json-object-ref body "questions") "holds") "type") "noul"))))
 (define claim-low
   (parameterize ((typesafe-transport (lambda _ (values 200 "{\"model\":\"jev-1.13.0\",\"answers\":{\"holds\":{\"type\":\"noul\",\"noul\":0.2}}}"))))

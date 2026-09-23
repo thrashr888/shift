@@ -176,8 +176,10 @@ class CodingWorkflow(unittest.TestCase):
         self.server.server_close()
         self.temp.cleanup()
 
+    # Reflection is off in the shared fixture so a hard turn never consumes
+    # another test's planned reply; the loop's own tests switch it on.
     def command(self, session="w"):
-        return [BIN, "--agent", str(self.agent), "--no-watch", "--no-mcp", "--session", session]
+        return [BIN, "--agent", str(self.agent), "--no-watch", "--no-mcp", "--session", session, "--set", "reflection=false"]
 
     def shift(self, stdin, plan=(), session="w"):
         Provider.plan = list(plan)
@@ -216,7 +218,8 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(record["steps"][1]["checks"][1]["confidence"], 0.9)
         # The judge saw the step's answer as evidence, not the user's prompt.
         judge_request = Provider.last_messages[-1]["content"]
-        self.assertIn("EVIDENCE", judge_request); self.assertIn("notes.txt", judge_request)
+        self.assertIn("ANSWER the agent gave", judge_request); self.assertIn("notes.txt", judge_request)
+        self.assertIn("STEP the agent was asked to do:\nWrite the release notes.", judge_request)
 
     def test_a_failed_check_stops_the_workflow_and_exits_non_zero(self):
         self.write_workflow("gate", """((workflow "gate" 1)
@@ -229,6 +232,83 @@ class CodingWorkflow(unittest.TestCase):
         record = json.loads((self.project / ".shift/workflows/gate/runs/1.json").read_text())
         self.assertEqual([s["status"] for s in record["steps"]], ["failed", "skipped"])
         self.assertEqual(Provider.plan, [], "the skipped step never reached the model")
+
+    def test_rejections_become_field_notes_that_the_next_session_reads(self):
+        code, out, err = self.print_mode("show the first line", [
+            tool_call("run", {"argv": "cat notes.txt | sed -n 1p"}),
+            answer("alpha port 8080"),
+        ], "--mode", "autopilot")
+        self.assertEqual(code, 0, err)
+        self.assertIn("field notes: 1 new line in .shift/skills/field-notes", err)
+        notes = (self.project / ".shift/skills/field-notes/SKILL.md").read_text()
+        self.assertIn("disable-model-invocation: true", notes)
+        self.assertIn("- run: tool error: argv must be", notes); self.assertIn("(session p, turn 1)", notes)
+        # The next session carries the note in its system prompt, not as an offered skill.
+        code, out, err = self.print_mode("again", [answer("ok")], "--mode", "autopilot", session="q")
+        system = Provider.last_messages[0]["content"]
+        self.assertIn("<field-notes>", system); self.assertIn("- run: tool error: argv must be", system); self.assertNotIn("(session p", system)
+        self.assertNotIn("field-notes:", system.split("<field-notes>")[0])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("field notes:", err, "nothing new to note")
+
+    def test_a_hard_turn_gets_one_reflection_whose_proposal_is_a_disabled_artifact(self):
+        rejected = [tool_call("run", {"argv": f"cat notes.txt | sed -n {n}p"}) for n in (1, 2, 3)]
+        code, out, err = self.print_mode("read three lines", rejected + [
+            answer("I could not read them."),
+            answer('{"kind": "skill", "name": "read-lines", "description": "Read lines without a shell", '
+                   '"body": "1. Call run with argv [\\"sed\\", \\"-n\\", \\"1p\\", \\"notes.txt\\"]", "why": "three rejections"}'),
+        ], "--mode", "autopilot", "--set", "reflection=true")
+        self.assertEqual(code, 0, err)
+        self.assertIn("reflection: proposed skill read-lines (disabled)", err)
+        skill = (self.project / ".shift/skills/read-lines/SKILL.md").read_text()
+        self.assertIn("disable-model-invocation: true", skill); self.assertIn("Proposed by reflection (session p, turn 1): three rejections", skill)
+        self.assertIn("WHAT WENT WRONG: 3 tool rejections", Provider.last_messages[-1]["content"])
+        self.assertEqual(Provider.plan, [], "exactly one reflection call")
+        events = (self.project / ".shift/sessions/p/events.scm-log").read_text()
+        self.assertIn("(kind . reflection)", events); self.assertIn("(kind . field-notes)", events)
+        # An easy turn asks nothing.
+        code, out, err = self.print_mode("thanks", [answer("welcome")], "--mode", "autopilot", "--set", "reflection=true", session="r")
+        self.assertEqual(Provider.plan, []); self.assertNotIn("reflection:", err)
+
+    def test_improve_keeps_a_candidate_that_wins_the_comparison(self):
+        self.write_workflow("gate", """((workflow "gate" 1)
+ (step "first" "Say hi." (check (contains "hi"))))""")
+        runs = self.project / ".shift/workflows/gate/runs"; runs.mkdir()
+        (runs / "1.json").write_text(json.dumps({"workflow": "gate", "version": 1, "session": "old", "started": "2026-09-22T00:00:00Z",
+                                                  "status": "failed", "rounds": 3, "error": None,
+                                                  "steps": [{"name": "first", "status": "failed", "rounds": 3,
+                                                             "checks": [{"kind": "contains", "text": "hi", "ok": False, "detail": "not in the answer"}]}]}))
+        proposal = json.dumps({"change": "Ask for the word hi outright",
+                               "workflow": '((workflow "gate" 2)\n (step "first" "Reply with the word hi." (check (contains "hi"))))'})
+        code, out, err = self.print_mode("/workflow improve gate", [answer(proposal), answer("hi there"), answer("hi again")],
+                                         "--mode", "autopilot")
+        self.assertEqual(code, 0, err)
+        self.assertIn("improve gate: Ask for the word hi outright", out)
+        self.assertIn("improve gate: kept as v2 · both resolved; 1 rounds against 1", out)
+        self.assertEqual(Provider.plan, [], "the proposal and one answer per child")
+        self.assertIn("(workflow \"gate\" 2)", (self.project / ".shift/workflows/gate/workflow.scm").read_text())
+        self.assertIn("(workflow \"gate\" 1)", (self.project / ".shift/workflows/gate/versions/1.scm").read_text())
+        log = json.loads((self.project / ".shift/workflows/gate/versions/log.jsonl").read_text().strip())
+        self.assertTrue(log["kept"]); self.assertEqual(log["baseline"]["status"], "resolved"); self.assertEqual(log["candidate"]["version"], 2)
+        self.assertTrue((self.project / ".shift/workflows/gate/versions/2-candidate-run.json").exists())
+        self.assertFalse((self.project / ".shift/workflows/gate-candidate").exists(), "the scaffolding is gone")
+        # The two runs were children of this session, one per workflow.
+        sessions = sorted(p.name for p in (self.project / ".shift/sessions/p/agents").iterdir())
+        self.assertEqual(sessions, ["improve-1-baseline", "improve-1-candidate"])
+
+    def test_improve_discards_a_candidate_that_does_not_resolve(self):
+        self.write_workflow("gate", """((workflow "gate" 1)
+ (step "first" "Say hi." (check (contains "hi"))))""")
+        runs = self.project / ".shift/workflows/gate/runs"; runs.mkdir()
+        (runs / "1.json").write_text(json.dumps({"workflow": "gate", "version": 1, "session": "old", "started": "2026-09-22T00:00:00Z",
+                                                  "status": "resolved", "rounds": 1, "error": None, "steps": []}))
+        proposal = json.dumps({"change": "Demand a bow", "workflow": '((workflow "gate" 2)\n (step "first" "Bow." (check (contains "bow"))))'})
+        code, out, err = self.print_mode("/workflow improve gate", [answer(proposal), answer("hi"), answer("hi")], "--mode", "autopilot")
+        self.assertEqual(code, 0, err)
+        self.assertIn("improve gate: discarded · the candidate did not resolve (failed)", out)
+        self.assertIn("(workflow \"gate\" 1)", (self.project / ".shift/workflows/gate/workflow.scm").read_text())
+        self.assertTrue((self.project / ".shift/workflows/gate/versions/2-rejected.scm").exists())
+        self.assertFalse((self.project / ".shift/workflows/gate/versions/1.scm").exists())
 
     def test_the_workflow_tool_lists_and_shows(self):
         self.write_workflow("gate", """((workflow "gate" 1) (description "A gate") (step "first" "Say hello." (check (contains "hi"))))""")
@@ -249,7 +329,7 @@ class CodingWorkflow(unittest.TestCase):
         """Unattended run; returns (exit code, stdout, stderr)."""
         Provider.plan = list(plan)
         result = subprocess.run(
-            [BIN, "--agent", str(self.agent), "--session", session, "--print", task, *flags],
+            [BIN, "--agent", str(self.agent), "--session", session, "--set", "reflection=false", "--print", task, *flags],
             text=True, capture_output=True, cwd=self.project, env=self.env, timeout=60,
             stdin=subprocess.DEVNULL,
         )

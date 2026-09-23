@@ -46,7 +46,8 @@
   `((answer . "The tree is clean.") (root . ,project)
     (run . ,(lambda (argv) (set! ran (cons argv ran)) (if (equal? argv '("true")) (cons 0 "") (cons 1 "boom"))))
     (notes-exists? . ,(lambda (name) (string=? name "release.md")))
-    (judge . ,(lambda (criterion answer) `((holds . ,(string-contains answer "clean")) (confidence . 0.91) (model . "typesafe/jev-1.13.0"))))))
+    (task . "Report on the tree.")
+    (judge . ,(lambda (criterion answer task) `((holds . ,(and (string-contains answer "clean") (equal? task "Report on the tree."))) (confidence . 0.91) (model . "typesafe/jev-1.13.0"))))))
 (define (result check) (evaluate-check check context))
 (test-equal "a run check passes on exit 0" #t (assq-ref (result '(run ("true"))) 'ok))
 (test-equal "a run check fails on exit 1 and says so" '(#f "exit 1")
@@ -60,12 +61,12 @@
   (test-equal "a judge check carries confidence and model" '(#t 0.91 "typesafe/jev-1.13.0")
     (list (assq-ref r 'ok) (assq-ref r 'confidence) (assq-ref r 'model))))
 (test-equal "a fallback verdict says what the typed judge could not do" "holds (confidence 0.70) · after the typed judge failed (auth): HTTP 401"
-  (assq-ref (evaluate-check '(judge "x") (cons (cons 'judge (lambda (c a) '((holds . #t) (confidence . 0.7) (fallback . "the typed judge failed (auth): HTTP 401")))) (alist-delete 'judge context))) 'detail))
+  (assq-ref (evaluate-check '(judge "x") (cons (cons 'judge (lambda (c a t) '((holds . #t) (confidence . 0.7) (fallback . "the typed judge failed (auth): HTTP 401")))) (alist-delete 'judge context))) 'detail))
 (test-equal "no judge means the check fails, never passes" '(#f "no judge could answer")
   (let ((r (evaluate-check '(judge "anything") (cons '(judge . #f) (alist-delete 'judge context)))))
     (list (assq-ref r 'ok) (assq-ref r 'detail))))
 (test-equal "a judge that names its failure is quoted" "Jev is off for this session"
-  (assq-ref (evaluate-check '(judge "x") (cons (cons 'judge (lambda (c a) '((reason . "Jev is off for this session")))) (alist-delete 'judge context))) 'detail))
+  (assq-ref (evaluate-check '(judge "x") (cons (cons 'judge (lambda (c a t) '((reason . "Jev is off for this session")))) (alist-delete 'judge context))) 'detail))
 (test-equal "a check that raises is a failed check" #f
   (assq-ref (evaluate-check '(run ("x")) (cons (cons 'run (lambda (argv) (error "no runner"))) (alist-delete 'run context))) 'ok))
 
