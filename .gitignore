@@ -4,6 +4,8 @@
 !.shift/skills/
 !.shift/settings.json
 !.shift/mcp.scm
+!.shift/workflows/
+.shift/workflows/*/runs/
 .env
 __pycache__/
 *.pyc

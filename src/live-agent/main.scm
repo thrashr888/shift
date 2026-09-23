@@ -28,6 +28,7 @@
   #:use-module (live-agent recovery)
   #:use-module (live-agent runtime)
   #:use-module (live-agent session)
+  #:use-module (live-agent workflow)
   #:use-module (live-agent skills)
   #:use-module ((live-agent mcp-client) #:hide (mcp-tool-hints))
   #:use-module (live-agent judge)
@@ -66,7 +67,7 @@
   (set! operation-error detail))
 
 (define supported-tool-names
-  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "recall" "notes" "spawn" "live_eval" "extension")
+  (append '("ui" "read" "rg" "skill" "tool_search" "write" "edit" "shell" "traces" "recall" "notes" "spawn" "workflow" "live_eval" "extension")
           coding-tool-names))
 
 ;; A process-level ceiling is intentionally outside the live image. A child can
@@ -367,6 +368,8 @@
     "  /plugins          installed plugins; /plugin enable|disable NAME [project|user] toggles one\n"
     "  /allow-run [\"ARGV PREFIX\" [project|user]]  list or persist run prefixes that never ask\n"
     "  /learn NAME [notes]  ask the model to write this conversation's procedure as a project skill\n"
+    "  /workflow [NAME]  list workflows (.shift/workflows/NAME/workflow.scm) or show one's steps and runs\n"
+    "  /workflow run NAME  run its steps as turns of this session; checks decide, the record lands in runs/\n"
     "  /judge [off|shadow|on|report]  the autopilot judge: setting, model, counts, or shadow agreement\n"
     "  /sandbox [NAME|off]  run commands in an agentkernel sandbox; run-host prefixes stay on the host\n"
     "  /mcp [connect|disconnect|tools NAME]  MCP servers from .shift/mcp.scm and the user config\n"
@@ -998,6 +1001,153 @@
       (if (file-exists? (string-append agents "/agent-" (number->string n))) (loop (+ n 1)) (format #f "agent-~a" n)))))
 ;; The child is a session folder under this one, forked from the live image
 ;; and run as a background job whose stdout is its answer.
+;; --- workflows ----------------------------------------------------------------------
+;; Durable procedures under .shift/workflows; the module parses and checks,
+;; this runs the steps as turns of the session and keeps the sidebar current.
+(define (emit-workflows!)
+  (let ((items (workflows-json (getcwd))))
+    (ui-emit! "workflows" (json-object (cons "items" items)))
+    (length (json-array-items items))))
+(define (emit-workflow-run! name index total step status rounds)
+  (ui-emit! "workflow-run" (json-object (cons "workflow" name) (cons "index" index) (cons "total" total)
+                                        (cons "step" step) (cons "status" status) (cons "rounds" rounds))))
+(define (workflow-listing-text)
+  (let ((items (json-array-items (workflows-json (getcwd)))))
+    (if (null? items)
+        "No workflows. Write .shift/workflows/NAME/workflow.scm: ((workflow \"NAME\" 1) (description \"...\") (budget (rounds 20)) (step \"first\" \"PROMPT\" (check (run \"make\" \"test\"))))"
+        (string-join
+         (map (lambda (w)
+                (let ((error (json-object-ref w "error" #f)))
+                  (if error
+                      (format #f "~a  (unreadable: ~a)" (json-object-ref w "name") error)
+                      (let ((last (json-object-ref w "last" #f)))
+                        (format #f "~a v~a  ~a step~a · ~a run~a~a~a"
+                                (json-object-ref w "name") (json-object-ref w "version")
+                                (length (json-array-items (json-object-ref w "steps"))) (if (= 1 (length (json-array-items (json-object-ref w "steps")))) "" "s")
+                                (json-object-ref w "runs") (if (= 1 (json-object-ref w "runs")) "" "s")
+                                (if (json-object? last) (format #f " · last ~a in ~a rounds" (json-object-ref last "status") (json-object-ref last "rounds")) "")
+                                (let ((d (json-object-ref w "description" ""))) (if (string-null? d) "" (string-append "\n    " d))))))))
+              items)
+         "\n"))))
+(define (workflow-show-text name)
+  (let* ((project (getcwd)) (w (workflow-read project name)) (runs (workflow-runs project name)))
+    (string-append
+     (format #f "~a v~a · budget ~a rounds~a~%" name (workflow-version w) (workflow-budget w)
+             (let ((d (workflow-description w))) (if (string-null? d) "" (string-append "\n  " d))))
+     (string-join
+      (map (lambda (step index)
+             (string-append
+              (format #f "  ~a. ~a: ~a" index (step-name step) (clip (step-prompt step) 100))
+              (if (null? (step-checks step)) ""
+                  (string-append "\n" (string-join (map (lambda (c) (format #f "       check ~a ~a" (check-kind c) (check-text c))) (step-checks step)) "\n")))))
+           (workflow-steps w) (iota (length (workflow-steps w)) 1))
+      "\n")
+     (if (null? runs) "\n  no runs yet"
+         (string-append "\n  runs:\n"
+                        (string-join
+                         (map (lambda (run)
+                                (format #f "    ~a ~a · ~a rounds · ~a"
+                                        (json-object-ref run "started" "") (json-object-ref run "status" "")
+                                        (json-object-ref run "rounds" 0)
+                                        (string-join (map (lambda (st) (format #f "~a:~a" (json-object-ref st "name") (json-object-ref st "status")))
+                                                          (json-array-items (json-object-ref run "steps" (json-array)))) " ")))
+                              (if (> (length runs) 5) (take runs 5) runs))
+                         "\n"))))))
+(define (last-assistant-text history)
+  (let loop ((rest (reverse history)))
+    (cond ((null? rest) "")
+          ((and (json-object? (car rest)) (equal? (json-object-ref (car rest) "role" "") "assistant")
+                (string? (json-object-ref (car rest) "content" #f)))
+           (json-object-ref (car rest) "content" ""))
+          (else (loop (cdr rest))))))
+;; A judge check asks the judge model (Jev when judge-model names it, else the
+;; session model) whether the step's answer establishes the criterion; a typed
+;; judge that cannot answer falls back to the session model like the tool judge.
+(define (workflow-judge runtime)
+  (define (ask endpoint criterion answer)
+    ;; An endpoint names the key's environment variable; the request wants its value.
+    (let ((key-env (cadddr endpoint)))
+      (judge-claim! (car endpoint) (cadr endpoint) (caddr endpoint) (and key-env (getenv key-env)) criterion answer)))
+  (lambda (criterion answer)
+    (let* ((generation (runtime-current runtime))
+           (endpoint (judge-endpoint generation))
+           (verdict (ask endpoint criterion answer)))
+      (if (and (assq-ref verdict 'failure) (eq? (car endpoint) 'typesafe))
+          (begin
+            (when (assq-ref verdict 'permanent) (set! judge-typed-disabled #t))
+            (append (ask (session-judge-endpoint generation) criterion answer)
+                    `((fallback . ,(assq-ref verdict 'reason)))))
+          verdict))))
+;; run-step!: PROMPT → (turn-status answer receipt). Stops at the first step
+;; whose turn or checks fail, or when the round budget is spent; the rest are
+;; skipped and the record says which.
+(define (run-workflow! runtime tracer name run-step!)
+  (let* ((project (getcwd)) (w (workflow-read project name))
+         (steps (workflow-steps w)) (total (length steps)) (budget (workflow-budget w))
+         (started (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
+         (echo (tool-echo-port))
+         (context-for
+          (lambda (answer)
+            `((answer . ,answer) (root . ,project)
+              (run . ,(lambda (argv)
+                        (unless (builtin-enabled? 'coding) (error "run checks need the coding built-in"))
+                        ((builtin-ref 'coding 'run-argv) argv)))
+              (notes-exists? . ,(lambda (n) (file-exists? (notes-path tracer n))))
+              (judge . ,(workflow-judge runtime))))))
+    (format echo "workflow ~a v~a · ~a step~a · budget ~a rounds~%" name (workflow-version w) total (if (= total 1) "" "s") budget)
+    (let loop ((remaining steps) (index 1) (rounds 0) (records '()) (status 'resolved))
+      (cond
+       ((null? remaining)
+        (let* ((record `((workflow . ,name) (version . ,(workflow-version w)) (session . ,(or (tracer-session-name tracer) ""))
+                         (started . ,started) (status . ,status) (rounds . ,rounds) (error . #f) (steps . ,(reverse records))))
+               (path (workflow-record-run! project name record))
+               (failed (find (lambda (r) (memq (assq-ref r 'status) '(failed limited))) (reverse records))))
+          (set! operation-status (if (eq? status 'resolved) "ok" "failed"))
+          (format #t "workflow ~a: ~a~a · ~a rounds · ~a~%" name status
+                  (if failed (format #f " at step ~a" (assq-ref failed 'name)) "")
+                  rounds (let ((rel (string-append ".shift/workflows/" name "/runs/"))) (string-append rel (basename path))))
+          (emit-workflow-run! name total total "" (symbol->string status) rounds)
+          (when (ui-connected?) (emit-workflows!))
+          status))
+       ((not (eq? status 'resolved))
+        (loop (cdr remaining) (+ index 1) rounds
+              (cons `((name . ,(step-name (car remaining))) (status . skipped) (rounds . 0) (checks . ())) records) status))
+       (else
+        (let ((step (car remaining)))
+          (emit-workflow-run! name index total (step-name step) "running" rounds)
+          (format echo "step ~a/~a ~a~%" index total (step-name step))
+          (let* ((outcome (run-step! (format #f "Workflow ~a, step ~a of ~a (~a): ~a" name index total (step-name step) (step-prompt step))))
+                 (turn-status (car outcome)) (answer (cadr outcome)) (receipt (caddr outcome))
+                 ;; The receipt is the alist deliver-receipt! stored, not its JSON.
+                 (step-rounds (or (and (pair? receipt) (assq-ref receipt 'rounds)) 0))
+                 (rounds (+ rounds (if (number? step-rounds) step-rounds 0)))
+                 (checks (map (lambda (c) (evaluate-check c (context-for answer))) (step-checks step)))
+                 (ok? (and (eq? turn-status 'ok) (every (lambda (c) (assq-ref c 'ok)) checks)))
+                 (over? (> rounds budget))
+                 (step-status (cond (ok? 'ok) ((eq? turn-status 'limited) 'limited) (else 'failed))))
+            (for-each (lambda (c) (format echo "      ~a ~a ~a · ~a~%" (if (assq-ref c 'ok) "✓" "✗") (assq-ref c 'kind) (assq-ref c 'text) (assq-ref c 'detail))) checks)
+            (when over? (format echo "      budget of ~a rounds spent (~a)~%" budget rounds))
+            (loop (cdr remaining) (+ index 1) rounds
+                  (cons `((name . ,(step-name step)) (status . ,step-status) (rounds . ,step-rounds) (checks . ,checks)) records)
+                  (cond ((and ok? (not over?)) 'resolved) (over? 'budget) (else 'failed))))))))))
+(define (execute-workflow runtime generation tracer arguments span)
+  (catch #t
+    (lambda ()
+      (let ((action (json-object-ref arguments "action" "list")) (name (json-object-ref arguments "name" #f)))
+        (cond
+         ((string=? action "list") (make-tool-result #t (workflow-listing-text)))
+         ((string=? action "show")
+          (unless (string? name) (error "name is required"))
+          (make-tool-result #t (workflow-show-text name)))
+         ((string=? action "run")
+          (unless (safe-workflow-name? name) (error "name is required: lowercase letters, digits and hyphens"))
+          (workflow-read (getcwd) name)
+          (execute-spawn runtime generation tracer
+                         (json-object (cons "task" (string-append "/workflow run " name)) (cons "name" (string-append "workflow-" name)))
+                         span))
+         (else (error "action must be list, show or run" action)))))
+    (lambda (key . args) (make-tool-result #f (caught-message key args)))))
+
 (define (execute-spawn runtime generation tracer arguments span)
   (catch #t
     (lambda ()
@@ -1426,7 +1576,7 @@
                   (loop (cdr rows) (+ index 1) (+ ran 1)))))))))
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
-    (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions"))
+    (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions" "/workflow"))
         (and (= (length parts) 3) (string=? (car parts) "/plugin") (member (cadr parts) '("enable" "disable"))
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts)))
         (and (= (length parts) 3) (string=? (car parts) "/mcp") (string=? (cadr parts) "connect")
@@ -1554,6 +1704,13 @@
     (display (allow-run-command! (trimmed-command-argument line "/allow-run "))) (newline) 'continue)
    ((string-prefix? "/learn " line)
     (learn-skill! runtime tracer session (trimmed-command-argument line "/learn ")))
+   ((string=? line "/workflow") (display (workflow-listing-text)) (newline) (emit-workflows!) 'continue)
+   ((string-prefix? "/workflow run " line)
+    (let ((name (trimmed-command-argument line "/workflow run ")))
+      (workflow-read (getcwd) name)
+      (list 'workflow name)))
+   ((string-prefix? "/workflow " line)
+    (display (workflow-show-text (trimmed-command-argument line "/workflow "))) (newline) 'continue)
    ((or (string=? line "/sandbox") (string-prefix? "/sandbox " line))
     (let ((generation (runtime-current runtime)) (value (if (string=? line "/sandbox") "" (trimmed-command-argument line "/sandbox "))))
       (cond
@@ -2737,6 +2894,8 @@
                               (execute-notes tracer (tool-call-arguments call)))
                              ((string=? name "spawn")
                               (execute-spawn runtime generation tracer (tool-call-arguments call) span))
+                             ((string=? name "workflow")
+                              (execute-workflow runtime generation tracer (tool-call-arguments call) span))
                              ((string=? name "job")
                               (execute-job-call tracer generation span (tool-call-arguments call)))
                              ((member name coding-tool-names)
@@ -3574,6 +3733,8 @@
                 ((string=? command "/sessions")
                  (unless session (error "session list needs a durable session"))
                  (format #f "~a durable sessions" (emit-sessions!)))
+                ((string=? command "/workflow")
+                 (format #f "~a workflows" (emit-workflows!)))
                 ((string=? command "/model list")
                   (let ((ids (model-list! (runtime-current runtime) #f)))
                     (emit-models! (runtime-current runtime) ids)
@@ -3610,6 +3771,15 @@
             (when result
               (set! history (compact-history! runtime tracer (cadr result) #f))
               (set! turn-count (+ turn-count 1)))))
+        ;; /workflow run hands back a name; each step is one ordinary turn here.
+        (when (and (pair? action) (eq? (car action) 'workflow))
+          (run-workflow! runtime tracer (cadr action)
+            (lambda (prompt)
+              (let ((result (perform-turn! runtime tracer history prompt turn-count)))
+                (when result
+                  (set! history (compact-history! runtime tracer (cadr result) #f))
+                  (set! turn-count (+ turn-count 1)))
+                (list (if result (car result) 'failed) (last-assistant-text history) last-receipt)))))
         (case (if (pair? action) 'continue action)
           ((reset) (set! history '()) (set! turn-count 1)
                    (set! last-ui-usage #f)
@@ -3689,6 +3859,7 @@
                   (when (and mcp-http? (builtin-enabled? 'mcp))
                     (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
                   (force-output))
+                (when (ui-connected?) (catch #t (lambda () (emit-workflows!)) (lambda _ #f)))
                 (when cli-judge-replay (exit (judge-replay! runtime cli-judge-replay)))
                 (when cli-compaction-replay (exit (compaction-replay! runtime cli-compaction-replay)))
                 (when initial-prompt

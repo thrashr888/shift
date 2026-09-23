@@ -28,6 +28,10 @@
 (test-eq "a * prefix does not allow other tools" 'judge
  (tool-decision 'autopilot "edit" (json-object) '(("*"))))
 (test-eq "autopilot allows reads" 'allow (tool-decision 'autopilot "read" (json-object)))
+(test-eq "autopilot lets the workflow tool list, show and spawn a run" 'allow
+ (tool-decision 'autopilot "workflow" (json-object (cons "action" "run") (cons "name" "release-check"))))
+(test-eq "plan mode too, since a run's steps answer to plan mode themselves" 'allow
+ (tool-decision 'plan "workflow" (json-object (cons "action" "list"))))
 (test-eq "manual asks before an unlisted run" 'ask (tool-decision 'manual "run" (json-object)))
 (test-eq "manual lets a sandboxed run go" 'allow (tool-decision 'manual "run" (json-object) '() '() #t))
 (test-eq "autopilot lets a sandboxed run go without the judge" 'allow (tool-decision 'autopilot "run" (json-object) '() '() #t))

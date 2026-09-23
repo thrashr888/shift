@@ -1,7 +1,9 @@
 # Workflows RFC: durable procedures that Shift runs, measures and improves itself
 
-Status: RFC. Nothing here is implemented; decisions are proposed, the open
-questions change the work.
+Status: the workflow itself (definition, `/workflow`, the `workflow` tool,
+the five checks, run records, the sidebar tab) is implemented as of
+September 22, 2026; see "What is implemented" at the end. The
+self-improvement loop is still the proposal below.
 
 ## Why
 
@@ -128,3 +130,33 @@ in `versions/`. Nothing promotes without a comparison; nothing is deleted.
 3. Is `/workflow run` a sequence of turns in the current session, or always
    a subagent so a long workflow does not fill the parent's window? The draft
    says the current session by default and `--spawn` for the child form.
+
+## What is implemented, September 22, 2026
+
+- `src/live-agent/workflow.scm` reads `.shift/workflows/NAME/workflow.scm`
+  as data (one form, 64 KiB, at most 32 steps, names as in the RFC),
+  evaluates the checks against a step's answer, and writes and lists run
+  records. Checks are `run`, `contains`, `file`, `notes` and `judge`; the
+  receipt-bound check from the draft is not there yet, the record carries
+  the rounds instead.
+- `/workflow run NAME` runs the steps as turns of the current session and
+  `--print "/workflow run NAME"` does the same unattended; the exit status is
+  the run's outcome. `/workflow` and `/workflow NAME` list and show. The
+  `workflow` tool lists and shows for the model, and its `run` spawns a child
+  session on `/workflow run NAME`, which answers question 3: the session by
+  default, a subagent when the model starts it.
+- The `judge` check is where Jev comes in: `judge-claim!` asks the judge
+  model (`judge-model`, Jev when it names TypeSafe, else the session model)
+  one typed Noul, "does the step's report establish this claim", and keeps
+  the probability as the check's confidence. The chat fallback returns a
+  JSON verdict; a judge that cannot answer fails the check and says why, and
+  a permanent Jev failure disables it for the session exactly as the tool
+  judge does.
+- The WORKFLOWS sidebar tab lists workflows with their last run, marks an
+  unreadable file with its error, and follows a run step by step from the
+  `workflow-run` events.
+- Not yet: reflection, distillation, field notes and `/workflow improve`.
+  The comparison gate now has what it needs, a run record per workflow per
+  session, so the next step is the reflection prompt and the A/B run in two
+  pinned children.
+

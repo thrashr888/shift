@@ -714,6 +714,18 @@
       (cons "path" (string-parameter "Notes-relative file name such as plan.md (read, write, append)"))
       (cons "text" (string-parameter "Content to write or append")))
      '("action")))
+   ((string=? name "workflow")
+    (function-tool
+     "workflow"
+     (string-append
+      "Durable multi-step procedures under .shift/workflows/NAME/workflow.scm, each step a prompt with checks. "
+      "Actions: list (names, descriptions, last run), show NAME (steps, checks, recent runs), "
+      "run NAME (starts the workflow in a subagent session and returns its job id; the run's record "
+      "lands under .shift/workflows/NAME/runs/).")
+     (json-object
+      (cons "action" (string-parameter "list, show, or run"))
+      (cons "name" (string-parameter "Workflow name (show, run)")))
+     '("action")))
    ((string=? name "recall")
     (function-tool
      "recall"

@@ -188,6 +188,63 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout + result.stderr
 
+    def write_workflow(self, name, text):
+        folder = self.project / ".shift/workflows" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "workflow.scm").write_text(text)
+
+    def test_a_workflow_runs_its_steps_as_turns_and_records_the_checks(self):
+        self.write_workflow("release-check", """((workflow "release-check" 2)
+ (description "Verify a checkout before tagging")
+ (budget (rounds 20))
+ (step "status" "Report whether the tree is clean." (check (contains "clean")) (check (run "true")))
+ (step "notes" "Write the release notes." (check (file "notes.txt")) (check (judge "the notes were written"))))""")
+        code, out, err = self.print_mode("/workflow run release-check", [
+            tool_call("read", {"path": "notes.txt"}),
+            answer("The tree is clean.", {"prompt_tokens": 10, "completion_tokens": 4}),
+            answer("Wrote the release notes to notes.txt.", {"prompt_tokens": 12, "completion_tokens": 5}),
+            answer('{"holds": true, "confidence": 0.9, "reason": "the answer says the notes were written"}'),
+        ])
+        self.assertEqual(code, 0, err)
+        self.assertIn("workflow release-check: resolved · 3 rounds · .shift/workflows/release-check/runs/1.json", out)
+        self.assertIn("step 1/2 status", err); self.assertIn("✓ contains clean", err); self.assertIn("✓ run true", err)
+        self.assertIn("✓ judge the notes were written · holds (confidence 0.90)", err)
+        record = json.loads((self.project / ".shift/workflows/release-check/runs/1.json").read_text())
+        self.assertEqual(record["status"], "resolved"); self.assertEqual(record["version"], 2); self.assertEqual(record["session"], "p")
+        self.assertEqual([s["status"] for s in record["steps"]], ["ok", "ok"])
+        self.assertEqual([s["rounds"] for s in record["steps"]], [2, 1]); self.assertEqual(record["rounds"], 3)
+        self.assertEqual(record["steps"][1]["checks"][1]["confidence"], 0.9)
+        # The judge saw the step's answer as evidence, not the user's prompt.
+        judge_request = Provider.last_messages[-1]["content"]
+        self.assertIn("EVIDENCE", judge_request); self.assertIn("notes.txt", judge_request)
+
+    def test_a_failed_check_stops_the_workflow_and_exits_non_zero(self):
+        self.write_workflow("gate", """((workflow "gate" 1)
+ (step "first" "Say hello." (check (contains "goodbye")))
+ (step "second" "Never reached." ))""")
+        code, out, err = self.print_mode("/workflow run gate", [answer("Hello.")])
+        self.assertEqual(code, 1)
+        self.assertIn("workflow gate: failed at step first · 1 rounds", out)
+        self.assertIn("✗ contains goodbye · not in the answer", err)
+        record = json.loads((self.project / ".shift/workflows/gate/runs/1.json").read_text())
+        self.assertEqual([s["status"] for s in record["steps"]], ["failed", "skipped"])
+        self.assertEqual(Provider.plan, [], "the skipped step never reached the model")
+
+    def test_the_workflow_tool_lists_and_shows(self):
+        self.write_workflow("gate", """((workflow "gate" 1) (description "A gate") (step "first" "Say hello." (check (contains "hi"))))""")
+        image = self.agent.read_text().replace("tool_search recall notes))", "tool_search recall notes workflow))")
+        self.agent.write_text(image)
+        code, out, err = self.print_mode("What workflows exist?", [
+            tool_call("workflow", {"action": "list"}),
+            tool_call("workflow", {"action": "show", "name": "gate"}),
+            answer("One workflow: gate."),
+        ], "--mode", "autopilot")
+        self.assertEqual(code, 0, err)
+        tool_replies = [m["content"] for m in Provider.last_messages if m.get("role") == "tool"]
+        listing, shown = tool_replies[-2], tool_replies[-1]
+        self.assertIn("gate v1  1 step · 0 runs", listing); self.assertIn("A gate", listing)
+        self.assertIn("1. first: Say hello.", shown); self.assertIn("check contains hi", shown); self.assertIn("no runs yet", shown)
+
     def print_mode(self, task, plan, *flags, session="p"):
         """Unattended run; returns (exit code, stdout, stderr)."""
         Provider.plan = list(plan)

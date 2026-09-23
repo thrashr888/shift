@@ -358,6 +358,39 @@ an autopilot child uses the judge. The parent's trace carries a `subagent.run`
 span per child and a `subagent.join` span per wait; the child's own spans nest
 under the parent's via `TRACEPARENT`.
 
+## Workflows
+
+A workflow is a durable multi-step procedure kept as data under
+`.shift/workflows/NAME/workflow.scm`, committable like panes and settings and
+never evaluated:
+
+```scheme
+((workflow "release-check" 1)
+ (description "Verify a checkout before tagging a release")
+ (budget (rounds 20))
+ (step "status" "Run git status --short and report whether the tree is clean." (check (contains "clean")))
+ (step "tests" "Run make test and report the outcome." (check (run "make" "test")))
+ (step "notes" "Write release notes for the last five commits to the note release.md."
+       (check (notes "release.md")) (check (judge "the notes name the last five commits"))))
+```
+
+`/workflow run NAME` runs the steps as ordinary turns of the session, so
+approvals, the judge, receipts and traces all apply. After each step its checks
+run: `run` must exit 0, `contains` looks in the step's answer, `file` and
+`notes` must exist, and `judge` asks the judge model whether the answer
+establishes the criterion. Jev answers a typed question with a probability
+that the record keeps as confidence; the session model answers a JSON verdict
+when Jev is not configured or cannot answer, and a check with no judge fails
+rather than passes. The first failed check, a failed or limited turn, or a
+spent round budget ends the run; later steps are skipped. One record per run
+lands under `runs/N.json`, the sidebar's WORKFLOWS tab shows every workflow
+with its last run and follows a run step by step, `/workflow` lists them and
+`/workflow NAME` shows steps, checks and recent runs. In print mode,
+`--print "/workflow run NAME"` runs one unattended and exits 0 only when it
+resolved. The `workflow` tool gives the model the same list and show, and its
+`run` starts the workflow in a subagent so a long procedure does not fill the
+parent's window.
+
 ## Trace recall
 
 `recall` and `/recall QUERY` search the traces of every session in the

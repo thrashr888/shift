@@ -353,6 +353,7 @@ class Model:
         self.models={'provider':None,'items':[],'error':None,'requested':False}
         self.runs=deque(maxlen=50)
         self.sessions={'items':[],'error':None,'requested':False}
+        self.workflows={'items':[],'error':None,'requested':False,'run':None}
         self.peers={}
         self.skills=[]
         self.servers=[]
@@ -452,8 +453,15 @@ class Model:
                     self.models.update(error=self.notice,requested=False)
                 if command=='/sessions' and not value.get('ok'):
                     self.sessions.update(error=self.notice,requested=False)
+                if command=='/workflow' and not value.get('ok'):
+                    self.workflows.update(error=self.notice,requested=False)
         elif kind == 'sessions':
             self.sessions={'items':[dict(item) for item in value.get('sessions',[])],'error':None,'requested':False}
+        elif kind == 'workflows':
+            self.workflows.update(items=[dict(item) for item in value.get('items',[]) if isinstance(item,dict)],error=None,requested=False)
+        elif kind == 'workflow-run':
+            # One event per step start and one at the end; the end shows until the next run.
+            self.workflows['run']=dict(value)
         elif kind == 'job':
             job_id=clean(str(value.get('id','')));argv=' '.join(clean(str(p)) for p in value.get('argv',[]))
             # A subagent job is named by its child session, not by the launcher argv.
@@ -745,6 +753,13 @@ class Terminal:
         if '/' not in name or any(ch.isspace() for ch in name):raise ValueError('use /model PROVIDER/MODEL')
         return self.request_command('/model '+name,'Selecting '+name,'model')
 
+    def request_workflows(self):
+        m=self.model
+        if m.workflows['requested'] or m.approval or not m.ready or m.command_pending is not None:
+            return False
+        m.workflows['requested']=True
+        return self.request_command('/workflow','Listing workflows','workflow')
+
     def request_sessions(self):
         m=self.model
         if m.sessions['requested'] or m.approval or not m.ready or m.command_pending is not None:
@@ -781,6 +796,8 @@ class Terminal:
         if m.panel_tab=='model':self.request_model_list()
         if m.panel_tab=='session' and not m.sessions['items'] and not m.sessions['requested'] and not m.sessions['error']:
             self.request_sessions()
+        if m.panel_tab=='workflows' and not m.workflows['items'] and not m.workflows['requested'] and not m.workflows['error']:
+            self.request_workflows()
 
     def copy_text(self,text,what):
         # OSC 52 reaches the terminal's clipboard, including over SSH; a local
@@ -1133,7 +1150,9 @@ class Terminal:
 
     def tabs(self):
         sections=self.model.config['sections']
-        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])+['model','log']+[
+        # The workflows tab appears once the session reports any, or a run starts.
+        flows=['workflows'] if self.model.workflows['items'] or self.model.workflows['run'] else []
+        return ['work']+(['diff'] if 'files' in sections else [])+(['session'] if 'session' in sections else [])+['model','log']+flows+[
             str(pane.get('name')) for pane in self.model.config.get('panes',[]) if isinstance(pane,dict)]
 
     def pane(self,name):
@@ -1530,6 +1549,39 @@ class Terminal:
                 if status=='idle':actions[len(rows)-1]=('session',name)
                 line('    '+'  '*depth+str(item.get('turns',0))+' turns'+(' · '+updated if updated else ''),4)
             if m.sessions['items']:line('Click an idle session or /session NAME to switch',4)
+        @section('workflows')
+        def _workflows():
+            title('WORKFLOWS')
+            plain=c.get('ascii') or not self.unicode
+            run=m.workflows['run']
+            if run:
+                status=str(run.get('status',''));step=str(run.get('step',''))
+                running=status=='running'
+                head=(('▶ ' if not plain else '> ') if running else ('✓ ' if not plain else '+ ') if status=='resolved' else ('✗ ' if not plain else 'x '))
+                rows.append([(head,3 if running else 2 if status=='resolved' else 11,True),(str(run.get('workflow','')),1,True),
+                             ((' step '+str(run.get('index',0))+'/'+str(run.get('total',0))+' '+step) if running else ' '+status,4,False)])
+                line('    '+str(run.get('rounds',0))+' rounds so far' if running else '    '+str(run.get('rounds',0))+' rounds',4)
+                line('')
+            if m.workflows['error']:
+                for part in wrap('Workflow list unavailable: '+m.workflows['error'],width,words=True):line(part,11)
+            elif not m.workflows['items']:
+                line('Listing workflows…' if m.workflows['requested'] else 'No workflows in .shift/workflows',4)
+            for item in m.workflows['items']:
+                name=str(item.get('name',''))
+                if item.get('error'):
+                    rows.append([(('! ' if plain else '⚠ '),11,True),(name,1,True)])
+                    for part in wrap('    '+str(item['error']),width,words=True):line(part,11)
+                    continue
+                last=item.get('last') if isinstance(item.get('last'),dict) else None
+                mark=('- ' if plain else '○ ') if not last else (('+ ' if plain else '● ') if last.get('status')=='resolved' else ('x ' if plain else '○ '))
+                rows.append([(mark,2 if last and last.get('status')=='resolved' else 4,True),(name,1,True),(' v'+str(item.get('version','')),4,False)])
+                for part in wrap('    '+str(item.get('description','')),width,words=True)[:2]:
+                    if part.strip():line(part,4)
+                steps=item.get('steps',[]) if isinstance(item.get('steps'),list) else []
+                summary='    '+str(len(steps))+' steps · '+str(item.get('runs',0))+' runs'
+                if last:summary+=' · last '+str(last.get('status',''))+' in '+str(last.get('rounds',0))+' rounds'
+                line(summary,4)
+            if m.workflows['items']:line('/workflow run NAME runs one here',4)
         @section('peers')
         def _peers():
             title('PEERS')
@@ -1665,6 +1717,7 @@ class Terminal:
                 for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
         elif m.panel_tab=='model':render(['models'])
         elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
+        elif m.panel_tab=='workflows':render(['workflows'])
         elif m.panel_tab=='session':
             render(['session','skills']+(['plugins'] if m.plugins else [])+['sessions','peers']+(['servers'] if m.servers else [])+['receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
         elif m.panel_tab=='diff':

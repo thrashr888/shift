@@ -53,7 +53,7 @@
 
 ;; Tool names are data owned by the live image. The stable runtime owns their
 ;; capability checks and implementations.
-(define agent-tools '(read rg skill write edit apply_patch status diff run job spawn tool_search shell traces recall notes live_eval extension ui))
+(define agent-tools '(read rg skill write edit apply_patch status diff run job spawn tool_search shell traces recall notes workflow live_eval extension ui))
 
 ;; The prototype deliberately supports only deny and ask. A live image cannot
 ;; silently broaden the stable runtime's authority.

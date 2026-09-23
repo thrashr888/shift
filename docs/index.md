@@ -21,7 +21,7 @@ One line per document, then the open work those documents still describe.
 | [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [quality-rfc.md](quality-rfc.md) | RFC: judge evals, session review, compaction scoring, diagnostics, hardening, the runtime handoff and the live-repair proof, in that order. |
 | [context-notes-rfc.md](context-notes-rfc.md) | Notes-first compaction after Codex's context management: one `notes` tool, `/compact` and the budget guard do the loop on the backend, summary as fallback; implemented. |
-| [workflows-rfc.md](workflows-rfc.md) | RFC: workflows as durable procedures with checks, and the self-improvement loop (reflection, distillation, field notes) gated by generation-pinned comparison; three open questions. |
+| [workflows-rfc.md](workflows-rfc.md) | Workflows as durable procedures with checks: implemented (`/workflow`, the `workflow` tool, Jev-backed `judge` checks, run records, the sidebar tab). The self-improvement loop (reflection, distillation, field notes, measured promotion) is still the proposal. |
 | [jev-rfc.md](jev-rfc.md) | RFC: TypeSafe Jev as a typed judge backend behind `judge-model`, then `tool_search` and skill selection; never on by default. All five phases implemented; the gates await session data. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
@@ -34,7 +34,7 @@ Collected from the documents above on September 16, 2026. Each item names the
 document that explains why it matters.
 
 Features:
-  - **Workflows and self-improvement.** Durable procedures with checks, reflection after hard turns, field notes, measured promotion ([workflows-rfc](workflows-rfc.md)), pending its three questions.
+  - **Self-improvement.** Reflection after hard turns, field notes, measured promotion through two pinned children ([workflows-rfc](workflows-rfc.md)); the workflow runs and records they gate on exist now.
   - **DeepSWE and Terminal-Bench slices.** The two benchmarks worth adding ([evals-rfc](evals-rfc.md)).
   - **Workspace forks for children.** Subagents share the working tree; a git worktree per mutating child is the follow-up ([subagents](subagents.md)).
 Packaging:
