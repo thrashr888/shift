@@ -691,6 +691,11 @@
     ;; skills, panes, themes
     (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
                   (append (setting-ref #f 'skill-dirs) (filter-map (lambda (p) (plugin-field p 'skills)) enabled)))
+    (workflows-init! (getcwd)
+                     (cons (cons "user" (user-workflows-directory))
+                           (filter-map (lambda (p) (let ((d (plugin-field p 'workflows)))
+                                                     (and d (cons (string-append "plugin:" (plugin-field p 'name)) d))))
+                                       enabled)))
     (extra-panes (append-map plugin-pane-objects enabled))
     (extra-theme-dirs (delete-duplicates (append-map (lambda (p) (map dirname (plugin-field p 'themes))) enabled)))
     (catch #t (lambda () (ui-action! (json-object (cons "action" "reload")))) (lambda _ #f))
@@ -1009,10 +1014,20 @@
 ;; --- workflows ----------------------------------------------------------------------
 ;; Durable procedures under .shift/workflows; the module parses and checks,
 ;; this runs the steps as turns of the session and keeps the sidebar current.
+(define (user-workflows-directory)
+  (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (or (getenv "HOME") "") "/.config")) "/shift/workflows"))
 (define (emit-workflows!)
   (let ((items (workflows-json (getcwd))))
+    (set! workflows-seen (workflows-signature))
     (ui-emit! "workflows" (json-object (cons "items" items)))
     (length (json-array-items items))))
+;; The sidebar follows the folders: a workflow added, edited or removed in any
+;; source shows within the watcher's half-second tick.
+(define workflows-seen #f)
+(define (watch-workflows!)
+  (ui-on-tick! (lambda ()
+                 (let ((now (workflows-signature)))
+                   (unless (equal? now workflows-seen) (emit-workflows!))))))
 (define (emit-workflow-run! name index total step status rounds)
   (ui-emit! "workflow-run" (json-object (cons "workflow" name) (cons "index" index) (cons "total" total)
                                         (cons "step" step) (cons "status" status) (cons "rounds" rounds))))
@@ -3981,7 +3996,7 @@
                   (when (and mcp-http? (builtin-enabled? 'mcp))
                     (format #t "MCP http://127.0.0.1:~a/mcp · live process ~a~%" mcp-port (getpid)))
                   (force-output))
-                (when (ui-connected?) (catch #t (lambda () (emit-workflows!)) (lambda _ #f)))
+                (when (ui-connected?) (catch #t (lambda () (emit-workflows!) (watch-workflows!)) (lambda _ #f)))
                 (when cli-judge-replay (exit (judge-replay! runtime cli-judge-replay)))
                 (when cli-compaction-replay (exit (compaction-replay! runtime cli-compaction-replay)))
                 (when initial-prompt
@@ -4089,6 +4104,7 @@
         (trace-runtime-version! runtime-version-label)
         (ui-init! state-directory (and session runtime-state-directory))
         (skills-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) (setting-ref #f 'skill-dirs))
+        (workflows-init! (getcwd) (list (cons "user" (user-workflows-directory))))
         (mcp-init! (or (getenv "SHIFT_PROJECT_ROOT") (getcwd))
                    (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
                    supported-tool-names

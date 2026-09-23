@@ -27,6 +27,7 @@ evaluated, plus the files it points at:
  (mcp (server "cortex" (command "cortex" "mcp")))
  (skills "skills")
  (panes "panes.scm")
+ (workflows "workflows")
  (theme "themes/cortex.scm")
  (agent "agent/memory.scm")
  (allow-run ("cortex" "recall") ("cortex" "stats"))
@@ -39,6 +40,7 @@ evaluated, plus the files it points at:
 | `mcp` | server forms, exactly as `.shift/mcp.scm` takes them | MCP packs, `tool_search`, `/allow-mcp` |
 | `skills` | a folder of `NAME/SKILL.md` or flat `NAME.md` skills | skill sources, the Session tab |
 | `panes` | a pane pack whose panes are appended after the project's own | `.shift/panes.scm` |
+| `workflows` | a folder of `NAME/workflow.scm` workflows, listed after the project's and the user's; runs and improvements stay in the project | `.shift/workflows`, the WORKFLOWS tab |
 | `theme` | presentation packs selectable by `/theme NAME` | `themes/` lookup |
 | `agent` | live-image artifacts under the restricted contract, loaded as a generation when the plugin is enabled and removed with it | `/extension-load`, generations, rollback |
 | `allow-run` | argv prefixes proposed for the run allowlist, applied only at enable time and only at the scope named, after being printed | scoped `run-allow` |

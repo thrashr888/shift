@@ -255,13 +255,19 @@
 
 (define (versions-dir project name) (string-append (workflow-root project) "/" name "/versions"))
 (define (ensure-versions! project name)
-  (let ((dir (versions-dir project name))) (unless (file-exists? dir) (mkdir dir)) dir))
+  (let ((dir (versions-dir project name)))
+    (let make ((path dir)) (unless (file-exists? path) (make (dirname path)) (mkdir path)))
+    dir))
 
 ;; The current file becomes versions/V.scm and the candidate (renamed back) the workflow.
+;; The promoted file always lands in the project folder: for a plugin's or the
+;; user's workflow that is a project override, and versions/V.scm keeps the text
+;; it replaced wherever it came from.
 (define (promote-candidate! project name version text)
   (let* ((dir (ensure-versions! project name)) (file (workflow-file project name))
          (promoted (candidate-text text (string-append name "-candidate") name))   ; fails before anything moves
-         (current (call-with-input-file file get-string-all)))
+         (located (or (workflow-locate name project) (error "no such workflow" name)))
+         (current (call-with-input-file (cdr located) get-string-all)))
     (call-with-output-file (string-append dir "/" (number->string version) ".scm") (lambda (p) (display current p)))
     (call-with-output-file file (lambda (p) (display promoted p)))
     file))

@@ -5,7 +5,7 @@
   #:use-module (ice-9 ftw)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
-  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler! panes-pack->json check-panes-file error-text
+  #:export (ui-init! ui-stop! ui-action! ui-state ui-emit! ui-connected? ui-host-handler! ui-on-tick! panes-pack->json check-panes-file error-text
             extra-panes extra-theme-dirs))
 
 ;; Presentation preferences are independent of agent generations and authority.
@@ -360,8 +360,14 @@
                     (activate! preferences (resolve-presentation preferences) #t))) #f)
               (lambda (key . args) (format #f "Theme reload rejected: ~s" args)))))
               (when (and failure (not (equal? failure last-failure))) (ui-emit! "ui-error" failure))
+              ;; Other watchers ride the same half-second tick; one failing never stops the rest.
+              (for-each (lambda (hook) (catch #t hook (lambda _ #f))) tick-hooks)
               (loop failure))))))))
   (ui-state))
+;; Registered thunks run every watcher tick while a UI is attached; the
+;; workflow list refreshes this way when a folder changes.
+(define tick-hooks '())
+(define (ui-on-tick! thunk) (set! tick-hooks (append tick-hooks (list thunk))))
 (define (ui-stop!)
   (set! running? #f)
   (set! host-handler #f)

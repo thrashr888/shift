@@ -11,8 +11,9 @@
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
   #:export (workflow-root workflow-names workflow-read workflow-file
+            workflows-init! workflow-sources workflow-locate workflows-signature
             workflow-name workflow-version workflow-description workflow-budget workflow-steps
-            step-name step-prompt step-checks
+            workflow-source step-name step-prompt step-checks
             check-kind check-text evaluate-check
             workflow-run-path workflow-record-run! workflow-runs workflow-last-run
             workflow-summary workflows-json run->json
@@ -23,8 +24,43 @@
 (define max-runs-listed 20)
 
 (define (workflow-root project) (string-append project "/.shift/workflows"))
+;; The project's own folder for a workflow: runs, versions and any promoted
+;; copy live here even when the definition came from a plugin or the user dir.
 (define (workflow-dir project name) (string-append (workflow-root project) "/" name))
 (define (workflow-file project name) (string-append (workflow-dir project name) "/workflow.scm"))
+
+;; --- sources ---------------------------------------------------------------------
+;; ((label . directory) ...) in precedence order: the project first, then the
+;; user's ~/.config/shift/workflows, then each plugin's folder. The first
+;; source that has NAME/workflow.scm defines the workflow, as skills do.
+(define sources '())
+(define (workflows-init! project extra)
+  (set! sources (cons (cons "project" (workflow-root project)) extra)))
+(define (workflow-sources) sources)
+(define (effective-sources project)
+  (if (null? sources) (list (cons "project" (workflow-root project))) sources))
+(define (source-names directory)
+  (if (file-exists? directory)
+      (filter (lambda (n) (and (safe-workflow-name? n) (file-exists? (string-append directory "/" n "/workflow.scm"))))
+              (scandir directory (lambda (n) (not (member n '("." ".."))))))
+      '()))
+;; → (label . file) for the source that defines NAME, or #f.
+(define* (workflow-locate name #:optional (project (getcwd)))
+  (and (safe-workflow-name? name)
+       (any (lambda (source)
+              (let ((file (string-append (cdr source) "/" name "/workflow.scm")))
+                (and (file-exists? file) (cons (car source) file))))
+            (effective-sources project))))
+;; Directory and file mtimes across every source, so a watcher can tell when
+;; a workflow was added, edited or removed without reading them all.
+(define (workflows-signature)
+  (map (lambda (source)
+         (let ((directory (cdr source)))
+           (cons directory
+                 (cons (catch #t (lambda () (stat:mtime (stat directory))) (lambda _ #f))
+                       (map (lambda (n) (cons n (catch #t (lambda () (stat:mtime (stat (string-append directory "/" n "/workflow.scm")))) (lambda _ #f))))
+                            (source-names directory))))))
+       (effective-sources (getcwd))))
 
 (define (safe-workflow-name? name)
   (and (string? name) (<= 1 (string-length name) 64)
@@ -32,12 +68,8 @@
        (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) name)))
 
 (define (workflow-names project)
-  (let ((root (workflow-root project)))
-    (if (file-exists? root)
-        (sort (filter (lambda (n) (and (safe-workflow-name? n) (file-exists? (workflow-file project n))))
-                      (scandir root (lambda (n) (not (member n '("." ".."))))))
-              string<?)
-        '())))
+  (sort (delete-duplicates (append-map (lambda (source) (source-names (cdr source))) (effective-sources project)) string=?)
+        string<?))
 
 ;; --- reading -------------------------------------------------------------------
 (define (bounded-read path)
@@ -116,11 +148,13 @@
 
 (define (workflow-read project name)
   (unless (safe-workflow-name? name) (error "workflow names are lowercase letters, digits and hyphens" name))
-  (let ((path (workflow-file project name)))
-    (unless (file-exists? path) (error "no such workflow" name))
-    (parse-workflow (data-form (bounded-read path) "a workflow") name)))
+  (let ((located (workflow-locate name project)))
+    (unless located (error "no such workflow" name))
+    (let ((w (parse-workflow (data-form (bounded-read (cdr located)) "a workflow") name)))
+      (cons (cons 'source (car located)) w))))
 
 (define (workflow-name w) (assq-ref w 'name))
+(define (workflow-source w) (or (assq-ref w 'source) "project"))
 (define (workflow-version w) (assq-ref w 'version))
 (define (workflow-description w) (assq-ref w 'description))
 (define (workflow-budget w) (assq-ref w 'budget))
@@ -188,10 +222,12 @@
         '())))
 (define (run-number file) (or (string->number (substring file 0 (- (string-length file) 5))) 0))
 
+(define (ensure-directory! path)
+  (unless (file-exists? path) (ensure-directory! (dirname path)) (mkdir path)))
 (define (workflow-run-path project name)
   (let* ((dir (runs-dir project name))
          (next (+ 1 (fold max 0 (map run-number (run-files project name))))))
-    (unless (file-exists? dir) (mkdir dir))
+    (ensure-directory! dir)
     (string-append dir "/" (number->string next) ".json")))
 
 ;; record: ((workflow . NAME) (version . N) (session . NAME) (started . ISO) (status . resolved|failed|budget|error)
@@ -237,7 +273,7 @@
   (catch #t
     (lambda ()
       (let ((w (workflow-read project name)) (last (workflow-last-run project name)))
-        (json-object (cons "name" name) (cons "version" (workflow-version w))
+        (json-object (cons "name" name) (cons "version" (workflow-version w)) (cons "source" (workflow-source w))
                      (cons "description" (workflow-description w))
                      (cons "budget" (workflow-budget w))
                      (cons "steps" (apply json-array (map step-name (workflow-steps w))))

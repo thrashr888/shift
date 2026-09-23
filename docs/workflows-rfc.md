@@ -188,6 +188,11 @@ in `versions/`. Nothing promotes without a comparison; nothing is deleted.
   change, the two runs and the reason, and the candidate's run record sits
   beside it. Question 2 (what comparison counts for a skill or note) stays
   open: this compares workflow files, which is what the run records measure.
+- **Sources and refresh** (September 22): workflows load from the project,
+  the user's `~/.config/shift/workflows` and any plugin's declared folder,
+  first one wins; the sidebar refreshes from a signature of those folders on
+  the UI watcher's tick, so a new or edited file needs no restart. Runs,
+  versions and promoted copies stay in the project.
 - **Dogfood, September 22**: `site-check` failed its `judge` check on a
   correct answer at Jev confidence 0.40 because the typed question named the
   evidence three ways; with the question rewritten around literal field

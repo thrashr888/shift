@@ -105,6 +105,15 @@
 (test-assert "a candidate under the wrong name changes nothing"
   (and (catch #t (lambda () (promote-candidate! project "site-check" 2 "((workflow \"other\" 3) (step \"a\" \"b\"))") #f) (lambda _ #t))
        (equal? (workflow-version (workflow-read project "site-check")) 2)))
+(test-assert "promoting a plugin's workflow writes a project override and keeps the plugin text as the version"
+  (let ((plugin-dir (string-append project "/plugin-workflows")))
+    (mkdirs (string-append plugin-dir "/callers"))
+    (call-with-output-file (string-append plugin-dir "/callers/workflow.scm") (lambda (p) (display "((workflow \"callers\" 1) (step \"a\" \"from the plugin\"))" p)))
+    (workflows-init! project (list (cons "plugin:demo" plugin-dir)))
+    (promote-candidate! project "callers" 1 "((workflow \"callers-candidate\" 2) (step \"a\" \"improved\"))")
+    (and (equal? (workflow-source (workflow-read project "callers")) "project")
+         (equal? (workflow-version (workflow-read project "callers")) 2)
+         (string-contains (call-with-input-file (string-append project "/.shift/workflows/callers/versions/1.scm") get-string-all) "from the plugin"))))
 (test-assert "rejection keeps the candidate beside the versions"
   (string-suffix? "/versions/3-rejected.scm" (reject-candidate! project "site-check" 2 candidate)))
 (improve-log! project "site-check" (json-object (cons "at" "2026-09-22T03:00:00Z") (cons "kept" #t) (cons "change" "Reword the claim")))

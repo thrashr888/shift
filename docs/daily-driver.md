@@ -391,6 +391,18 @@ resolved. The `workflow` tool gives the model the same list and show, and its
 `run` starts the workflow in a subagent so a long procedure does not fill the
 parent's window.
 
+Workflows come from three places, first one wins: the project's
+`.shift/workflows`, the user's `~/.config/shift/workflows`, and any enabled
+plugin that declares `(workflows "workflows")` in its manifest. The tab and
+`/workflow` name the source when it is not the project. Runs, versions and a
+promoted copy always land in the project folder, so improving a plugin's
+workflow leaves a project override and never touches the plugin. The list
+follows the folders: drop a new `NAME/workflow.scm` into any source, or edit
+one, and the WORKFLOWS tab shows it within the watcher's half-second tick,
+the same tick that reloads `panes.scm`. This repo ships four:
+`checkout-health`, `site-check`, `eval-review` and `pre-commit`, plus
+`bench-smoke` for the Harbor adapter.
+
 Three things run beside workflows and make sessions improve on their own.
 After every turn, each tool rejection becomes one line in
 `.shift/skills/field-notes/SKILL.md`, a skill the skill tool never offers

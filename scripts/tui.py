@@ -1574,7 +1574,9 @@ class Terminal:
                     continue
                 last=item.get('last') if isinstance(item.get('last'),dict) else None
                 mark=('- ' if plain else '○ ') if not last else (('+ ' if plain else '● ') if last.get('status')=='resolved' else ('x ' if plain else '○ '))
-                rows.append([(mark,2 if last and last.get('status')=='resolved' else 4,True),(name,1,True),(' v'+str(item.get('version','')),4,False)])
+                source=str(item.get('source','project'))
+                rows.append([(mark,2 if last and last.get('status')=='resolved' else 4,True),(name,1,True),
+                             (' v'+str(item.get('version',''))+('' if source=='project' else ' · '+source),4,False)])
                 for part in wrap('    '+str(item.get('description','')),width,words=True)[:2]:
                     if part.strip():line(part,4)
                 steps=item.get('steps',[]) if isinstance(item.get('steps'),list) else []

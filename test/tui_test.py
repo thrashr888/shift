@@ -1288,11 +1288,11 @@ class ModelPicker(unittest.TestCase):
     def test_workflows_tab_appears_with_the_list_and_shows_a_run(self):
         terminal=self.picker();m=terminal.model
         self.assertNotIn('workflows',terminal.tabs())
-        m.event({'type':'workflows','value':{'items':[{'name':'release-check','version':3,'description':'Verify a checkout before tagging','budget':20,'steps':['status','tests'],'runs':2,'last':{'status':'resolved','rounds':7}},{'name':'broken','error':'the file must start with (workflow "broken" VERSION)'}]}})
+        m.event({'type':'workflows','value':{'items':[{'name':'release-check','version':3,'description':'Verify a checkout before tagging','budget':20,'steps':['status','tests'],'runs':2,'last':{'status':'resolved','rounds':7}},{'name':'callers','version':1,'source':'plugin:ripwire','description':'','steps':['map'],'runs':0,'last':None},{'name':'broken','error':'the file must start with (workflow "broken" VERSION)'}]}})
         self.assertIn('workflows',terminal.tabs())
         m.panel_tab='workflows';terminal.draw();text=self.text(terminal)
         self.assertIn('WORKFLOWS',text);self.assertIn('release-check',text);self.assertIn('2 steps · 2 runs',text)
-        self.assertIn('Verify a checkout',text);self.assertIn('must start with',text)
+        self.assertIn('Verify a checkout',text);self.assertIn('must start with',text);self.assertIn('callers v1 · plugin:ripwire',text)
         m.event({'type':'workflow-run','value':{'workflow':'release-check','index':2,'total':2,'step':'tests','status':'running','rounds':3}})
         terminal.draw();text=self.text(terminal)
         self.assertIn('release-check step 2/2 tests',text);self.assertIn('3 rounds so far',text)
