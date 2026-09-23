@@ -21,7 +21,8 @@ One line per document, then the open work those documents still describe.
 | [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [quality-rfc.md](quality-rfc.md) | RFC: judge evals, session review, compaction scoring, diagnostics, hardening, the runtime handoff and the live-repair proof, in that order. |
 | [context-notes-rfc.md](context-notes-rfc.md) | Notes-first compaction after Codex's context management: one `notes` tool, `/compact` and the budget guard do the loop on the backend, summary as fallback; implemented. |
-| [workflows-rfc.md](workflows-rfc.md) | Workflows as durable procedures with checks, and the self-improvement loop: field notes after every turn, reflection after hard turns, `/workflow improve` kept only by a measured comparison. Implemented; distillation after good runs is the open part. |
+| [brand.md](brand.md) | The brand proposal: what Shift claims to be, its three pillars with their proof, voice, the words retired, the mark, the visual system, and the site section by section. |
+| [workflows-rfc.md](workflows-rfc.md) | Workflows as durable procedures with checks, and the self-improvement loop: field notes after every turn, reflection after hard turns, distillation after good ones, `/workflow improve` kept only by a measured comparison. All implemented. |
 | [jev-rfc.md](jev-rfc.md) | RFC: TypeSafe Jev as a typed judge backend behind `judge-model`, then `tool_search` and skill selection; never on by default. All five phases implemented; the gates await session data. |
 | [website.md](website.md) | The showcase site, Ghostty themes, the pane pack reference, and how to publish. |
 
@@ -34,7 +35,7 @@ Collected from the documents above on September 16, 2026. Each item names the
 document that explains why it matters.
 
 Features:
-  - **Distillation.** Turning a resolved workflow run or a clean tool-heavy turn into a skill or a new step ([workflows-rfc](workflows-rfc.md), source 2); the rest of the loop is in.
+  - **Distilled steps.** Distillation proposes skills; proposing a new workflow step from a good run is the part of source 2 still open ([workflows-rfc](workflows-rfc.md)).
   - **DeepSWE and Terminal-Bench slices.** The two benchmarks worth adding ([evals-rfc](evals-rfc.md)).
   - **Workspace forks for children.** Subagents share the working tree; a git worktree per mutating child is the follow-up ([subagents](subagents.md)).
 Packaging:
