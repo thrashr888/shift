@@ -915,6 +915,7 @@ class Terminal:
                     try:self.switch_session(value)
                     except ValueError as error:self.model.notice=str(error)
                 elif kind=='pane':self.request_command('/pane run '+value,'Running pane '+value.split()[0],'pane')
+                elif kind=='pane-act':self.request_command('/pane act '+value,'Running action in '+value.split()[0],'pane')
                 elif kind=='skill':self.request_command('/skill '+value,'Loading skill '+value,'skill')
                 elif kind=='mcp':self.request_command('/mcp connect '+value,'Connecting '+value,'server')
                 elif kind=='plugin':self.request_command('/plugin '+value,'Plugin '+value,'plugin')
@@ -1705,6 +1706,20 @@ class Terminal:
                     rows.append([(key.split('.')[-1].replace('_',' ')+': ',4,False),(str(value) if value not in (None,'') else 'not measured',1,False)])
                 elif 'source' in row:
                     if str(row['source']) in sections:sections[str(row['source'])]()
+                elif 'action' in row:
+                    # An action is a tool call of the session, so it answers to
+                    # the mode, the allowlist and the judge like any other. The
+                    # row says what it will do; nothing runs until it is picked.
+                    act=row['action'] if isinstance(row['action'],dict) else {}
+                    binding=act.get('binding',{}) if isinstance(act.get('binding'),dict) else {}
+                    tool=str(binding.get('tool',''))
+                    args=binding.get('arguments',{}) if isinstance(binding.get('arguments'),dict) else {}
+                    if tool=='workflow':detail='workflow '+str(args.get('name',''))
+                    elif tool=='run':detail=' '.join(str(part) for part in args.get('argv',[]))
+                    else:detail=tool
+                    mark=('◆ ' if self.unicode and not c.get('ascii') else '* ')
+                    rows.append([(mark,2,True),(str(act.get('label','')),1,True),(' · '+detail,4,False)])
+                    actions[len(rows)-1]=('pane-act',m.panel_tab+' '+str(index))
                 elif 'command' in row:
                     argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
                     mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
@@ -1714,9 +1729,9 @@ class Terminal:
                         for text in entry['lines'][:40]:
                             for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
                         if len(entry['lines'])>40 or entry['truncated']:line('  … more in the Log tab'+(' and the full log' if entry['truncated'] else ''),4)
-            if any(isinstance(row,dict) and 'command' in row for row in pane.get('rows',[])):
+            if any(isinstance(row,dict) and ('command' in row or 'action' in row) for row in pane.get('rows',[])):
                 line('')
-                for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
+                for part in wrap('Commands and actions run only when the mode and /allow-run permit them',width,words=True):line(part,4)
         elif m.panel_tab=='model':render(['models'])
         elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
         elif m.panel_tab=='workflows':render(['workflows'])

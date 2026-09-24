@@ -1,6 +1,9 @@
 # RFC: declared tools and pane actions
 
-Status: draft. Nothing here is implemented.
+Status: implemented. Declared tools, the residency cap, pane `action` rows
+bound to a run, a declared tool or a workflow, and the allbeads conversion all
+ship. "What changed in the building" at the end records where the draft was
+wrong.
 
 This RFC covers two gaps and deliberately re-specifies nothing else. Plugins
 already contribute MCP servers, skills, workflows, panes, themes, live-image
@@ -211,7 +214,9 @@ was called or a check ran.
    the mode and the judge exactly as the equivalent `run` call.
 4. Declared tools are discoverable through `tool_search` by default; at most
    two per plugin may be resident, and the count is printed at enable time.
-5. Pane actions are turns: judged, recorded, never implicit, never on a timer.
+5. Pane actions are turns: subject to the mode and the allowlist, recorded,
+   never implicit, never on a timer. They read the decision rather than
+   asking for one — see "What changed in the building".
 6. A pane action may invoke a workflow, which is the form that makes the
    interface produce checked, recorded runs.
 7. Language servers are a plugin concern, over MCP. No LSP client in the
@@ -257,3 +262,54 @@ was called or a check ran.
    `beads_ready` and `beads_show`, keeps its skill, and its pane gains an
    action that runs a workflow. If that does not read better than the skill
    alone, this RFC is wrong and should be dropped rather than extended.
+
+## What changed in the building
+
+**An action reads the policy; it cannot ask.** The draft said an action goes
+through `tool-decision` and that a run nobody allowed asks, the way the model's
+call would. Building it showed why that cannot be: the host handler runs on the
+interface's thread and holds the session lock, so prompting from there blocks
+the turn the approval belongs to. The first version deadlocked a test.
+
+So an action reads the decision and refuses anything that is not already
+`allow`, naming the `/allow-run` entry that would permit it. Plan mode still
+denies what it denies and an unallowlisted run is still refused; the interface
+simply cannot talk you past either. This is narrower than the draft and better:
+an interface that can raise its own authority by asking a leading question is
+the thing the design was avoiding.
+
+**A pane action binds to run, a declared tool, or a workflow — not any tool.**
+An arbitrary tool call needs the turn loop around it for its span, ledger entry
+and receipt line. `run` and `workflow` already have non-blocking paths, and a
+declared tool is a `run`, so those three work from outside a turn and nothing
+else does.
+
+**The lint checks shape, not existence.** `--check-panes` confirms an action
+names a tool and carries arguments; it cannot confirm the tool or workflow
+exists, because the pack is linted without a session and the registries live in
+one. An action naming something absent fails when it is selected, which is late
+but honest. A `--check-plugin` that resolved a plugin's own actions against its
+own tools and workflows would close most of this and is worth doing.
+
+**Residency is enforced at parse, not at enable.** The draft said the count is
+printed at enable time, which it is. It is also refused at parse time, so a
+plugin with three resident tools fails its lint rather than loading and costing
+what it costs.
+
+## What the allbeads proof showed
+
+allbeads now declares `beads_ready` (resident) and `beads_show`, keeps its
+skill, and its pane's "Pick up next" action runs the `bead-pickup` workflow.
+
+The declared tools earn their place, narrowly. `bd` has far more verbs than are
+worth declaring and the skill still teaches them; what changed is that the two
+a session reaches for by name now arrive with a schema instead of prose the
+model re-derives whenever it wants an issue id. That is the test the RFC set,
+and it passes for exactly the tools it was scoped to.
+
+The pane action is the part that reads better than the skill could. "Pick up
+next" was previously three commands and a judgement call, repeated differently
+every time. As a workflow it is a procedure with checks whose runs land under
+`runs/`, so a session that picked badly is visible afterwards rather than
+forgotten. That is the argument for actions, and it is not an argument any
+amount of skill text could make.

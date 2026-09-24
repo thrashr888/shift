@@ -1820,6 +1820,63 @@
                    (getcwd) ledger turn (coding-context generation #f)
                    `((pane . ,name) (index . ,index)))
                   (loop (cdr rows) (+ index 1) (+ ran 1)))))))))
+;; A pane action is the tool call it names, dispatched through the same
+;; authorization the model's own call would take. It is not a side door: plan
+;; mode denies what it denies, autopilot judges, and a run nobody allowed asks.
+;; Nothing here runs on load or on a tick; a person selects it.
+(define (act-pane! runtime tracer name index turn)
+  (let* ((generation (runtime-current runtime))
+         (panes (json-array-items (json-object-ref (json-object-ref (ui-state) "config") "panes" (json-array))))
+         (pane (find (lambda (pane) (equal? (json-object-ref pane "name" "") name)) panes)))
+    (unless pane (error "no pane named" name))
+    (let ((rows (json-array-items (json-object-ref pane "rows"))))
+      (unless (< -1 index (length rows)) (error "no row at that index" index))
+      (let ((action (json-object-ref (list-ref rows index) "action" #f)))
+        (unless action (error "that row is not an action" index))
+        (let* ((binding (json-object-ref action "binding"))
+               (named (json-object-ref binding "tool"))
+               (given (json-object-ref binding "arguments"))
+               ;; A declared tool becomes its run here too, so an action gets
+               ;; no authority the model's call would not have had.
+               (declared? (declared-tool? named))
+               (tool (if declared? "run" named))
+               (arguments (if declared?
+                              (json-object (cons "argv" (apply json-array (declared-argv named given))))
+                              given)))
+          (unless (member tool '("run" "workflow"))
+            (error "a pane action runs a command, a declared tool, or a workflow" named))
+          ;; The decision is read, never asked. Prompting from here would block
+          ;; the interface on a lock the turn needs, so an action that is not
+          ;; already permitted says what would permit it instead of hanging.
+          ;; Plan mode still denies what it denies, and an unallowlisted run is
+          ;; still refused — the interface simply cannot talk you past it.
+          (let ((policy (tool-decision (setting-ref generation 'mode) tool arguments
+                                       (setting-ref generation 'run-allow)
+                                       (setting-ref generation 'mcp-allow)
+                                       (and (string=? tool "run") (run-sandboxed? generation arguments)))))
+            (unless (eq? policy 'allow)
+              (error (if (string=? tool "run")
+                         (format #f "action is not permitted in ~a mode; /allow-run ~s first"
+                                 (setting-ref generation 'mode)
+                                 (string-join (json-array-items (json-object-ref arguments "argv")) " "))
+                         (format #f "action is not permitted in ~a mode"
+                                 (setting-ref generation 'mode))))))
+          (if (string=? tool "workflow")
+              ;; The workflow tool spawns a child session for the run, so the
+              ;; interface never blocks and the run lands under runs/ with its
+              ;; checks decided.
+              (let ((result (execute-workflow runtime generation tracer arguments #f)))
+                (unless (tool-result-success? result) (error (tool-result-output result)))
+                (format #f "Pane ~a started workflow ~a"
+                        name (json-object-ref arguments "name" "")))
+              (let ((argv (json-array-items (json-object-ref arguments "argv"))))
+                ((builtin-ref 'coding 'start-job!)
+                 (json-object (cons "argv" (apply json-array argv)) (cons "background" #t)
+                              (cons "timeout_seconds" 3600))
+                 (getcwd) ledger turn (coding-context generation #f)
+                 `((pane . ,name) (index . ,index)))
+                (format #f "Pane ~a started ~a" name (string-join argv " ")))))))))
+
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions" "/workflow"))
@@ -1832,6 +1889,9 @@
         (and (<= 3 (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts))
              (or (= (length parts) 3) (string-every char-numeric? (cadddr parts))))
+        (and (= (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "act")
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts))
+             (string-every char-numeric? (cadddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/model")
              (or (string=? (cadr parts) "list")
                  (and (string-index (cadr parts) #\/)
@@ -4033,6 +4093,10 @@
                  (let ((parts (string-tokenize command)))
                    (run-pane! runtime (caddr parts) turn-count
                               (and (= (length parts) 4) (string->number (cadddr parts))))))
+                ((string-prefix? "/pane act " command)
+                 (let ((parts (string-tokenize command)))
+                   (act-pane! runtime tracer (caddr parts)
+                              (string->number (cadddr parts)) turn-count)))
                 ((string-prefix? "/skill " command)
                  (queue-skill! (trimmed-command-argument command "/skill ")))
                 ((string-prefix? "/mcp connect " command)

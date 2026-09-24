@@ -573,6 +573,36 @@ class Bridge(unittest.TestCase):
         self.wait(lambda:self.model.sessions['items'] and self.model.command_pending is None)
         self.assertEqual({i['name']:i['status'] for i in self.model.sessions['items']},{'test':'idle','other':'current'})
 
+    def test_pane_actions_are_tool_calls_under_the_session_policy(self):
+        """An action is not a side door: it answers to the allowlist like a run."""
+        action={'action':{'label':'Say hi','binding':{'tool':'run','arguments':{'argv':['printf','acted\n']}}}}
+        terminal=terminal_view(40,128,self.child);terminal.model=self.model
+        self.child.ui({'action':'patch','patch':{'panes':[{'name':'shift','title':'SHIFT','rows':[{'field':'session.name'},action]}]}})
+        self.wait(lambda:self.model.config.get('panes'))
+        # The row renders with its label and what it will do, and is clickable.
+        self.model.panel_tab='shift';terminal.draw()
+        screen='\n'.join(terminal.screen.line(y) for y in range(40))
+        self.assertIn('Say hi',screen)
+        self.assertIn('printf acted',screen)
+        # Not allowlisted: the action is refused, exactly as the run would be.
+        terminal.request_command('/pane act shift 1','Running action in shift','pane')
+        self.wait(lambda:self.model.command_pending is None)
+        self.assertIn('/allow-run',self.model.notice)
+        # Allowlisted: it runs, and lands in the log like any other run.
+        self.child.close()
+        self.child=tui.Child(self.args+['--allow-run','printf']);self.model=tui.Model();self.wait(lambda:self.model.ready)
+        terminal=terminal_view(40,128,self.child);terminal.model=self.model
+        self.child.ui({'action':'patch','patch':{'panes':[{'name':'shift','title':'SHIFT','rows':[{'field':'session.name'},action]}]}})
+        self.wait(lambda:self.model.config.get('panes'))
+        terminal.request_command('/pane act shift 1','Running action in shift','pane')
+        self.wait(lambda:self.model.command_pending is None and self.model.runs)
+        self.assertIn('Pane shift started printf',self.model.notice)
+        self.assertEqual(self.model.runs[-1]['kind'],'pane')
+        # A row that is not an action says so rather than doing something else.
+        terminal.request_command('/pane act shift 0','Running action in shift','pane')
+        self.wait(lambda:self.model.command_pending is None)
+        self.assertIn('not an action',self.model.notice)
+
     def test_pane_commands_run_only_when_allowlisted_and_reach_pane_and_log(self):
         terminal=terminal_view(40,128,self.child);terminal.model=self.model
         self.child.ui({'action':'patch','patch':{'panes':[{'name':'shift','title':'SHIFT','rows':[{'field':'session.name'},{'command':['printf','pane says hi\\n']}]}]}})
