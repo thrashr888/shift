@@ -260,7 +260,13 @@ class ClaudeTests(unittest.TestCase):
         checkpoint["next_turn"] = 7
         path.write_text(json.dumps(checkpoint))
         (path.parent / "settings.json").write_text(
-            json.dumps({"mode": "plan", "context-limit": 8000, "output-reserve": 1024})
+            # Enough headroom that this tests compaction rather than doubling as
+            # an accidental guard on the static prompt: every bundled plugin
+            # adds a skill line to it, so a limit with no slack fails the next
+            # plugin instead of the change that broke compaction.
+            # test_bundled_plugins_stay_within_their_share_of_every_request is
+            # the deliberate guard on that cost.
+            json.dumps({"mode": "plan", "context-limit": 11000, "output-reserve": 1024})
         )
         result = self.run_cli("inspect readme now\n/quit\n")
         self.assertIn(

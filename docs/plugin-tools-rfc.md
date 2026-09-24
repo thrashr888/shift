@@ -240,7 +240,10 @@ was called or a check ran.
    tool: no schema, no static-context cost, and `read` and `rg` already know
    how to use it. Should a plugin be able to register a scheme — `kanban://`
    resolving through `read` — instead of declaring read tools at all? This may
-   be a better answer to half of section 1 and deserves its own draft.
+   be a better answer to half of section 1 and deserves its own draft. Building
+   kanban made this the most valuable of these questions: its one declared tool
+   exists only because there is no other way to put a project's own data in
+   front of `read` and `rg`.
 5. Can an action appear on a row the plugin did not declare — a built-in
    `(source jobs)` row gaining "cancel"? The draft says no; built-in sources
    stay read-only until there is a reason.
@@ -295,6 +298,58 @@ own tools and workflows would close most of this and is worth doing.
 printed at enable time, which it is. It is also refused at parse time, so a
 plugin with three resident tools fails its lint rather than loading and costing
 what it costs.
+
+## What the kanban plugin showed
+
+Kanban was this RFC's motivating example. The "Why" above says an MCP server is
+absurd for three verbs over a JSON file, with the implication that declared
+tools are what such a plugin needs. Building it showed that is half right, and
+the wrong half is the interesting one.
+
+**A declared tool still needs a binary.** It is a schema over an argv template,
+so it can only name a verb something already implements. Kanban has no CLI. The
+read was declarable — `kanban_board` renders to a fully pinned
+`rg --no-line-number '^(#|- )' .shift/kanban.md`, whose allowlist entry is the
+entire command, so nothing else can be read with it. The mutations were not.
+There is no `kanban move`, and a plugin does not ship one.
+
+So the board moves cards with `edit`, under a workflow whose checks decide
+whether the move was earned. That is worse than a tool in one way — the model
+can get the file's format wrong, where a command could not — and better in
+another, because the checks catch exactly that and leave a run record saying
+so. `card-done` verifies the project's tests and reads the diff before the card
+moves, and its checks are judged rather than commands because the test command
+belongs to the project rather than the plugin.
+
+The honest summary is that declared tools shrink the gap between "wrap a CLI"
+and "write an MCP server", and do nothing at all for a plugin whose data has no
+CLI. For those, the three options are unchanged: ship a binary, write a server,
+or let the model edit the file under checks. Kanban took the third because the
+board is small, the format is one line per card, and a wrong edit is visible in
+the next render.
+
+**Bundling has a cost the RFC did not price.** Adding kanban failed an
+unrelated compaction test, twice, for two different reasons. The first was its
+resident tool schema; the second, after that was dropped, was its skill line.
+Measured: the nine bundled plugins add about 2,950 characters to the system
+prompt of *every* session — the prompt is 2,015 characters without them and
+4,956 with — plus 10,399 characters of tool schemas. Roughly 735 tokens of
+that is plugin skill descriptions, charged to every user on every request,
+whether or not their project has a board.
+
+So kanban's read is not resident, and nothing bundled should be unless its
+`requires` keeps it inert where it is not wanted. allbeads gets away with a
+resident tool only because it needs `ab` and `bd`, which most machines lack;
+that is luck rather than design, and
+`test_a_bundled_plugin_does_not_make_itself_resident` now says so. The static
+cost has its own guard rather than being discovered through an unrelated
+fixture.
+
+This sharpens open question 4. A read that is a pinned `rg` over one file is a
+workaround for the absence of a way to expose project data to the existing
+tools. A registered scheme — `kanban://board` resolving through `read` — would
+be the right shape for every read-only surface a plugin wants, and would have
+made the declared read here unnecessary.
 
 ## What the allbeads proof showed
 

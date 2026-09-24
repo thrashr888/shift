@@ -1357,6 +1357,52 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(Provider.judge_requests, before)
         self.shift("/sandbox off\n/quit\n")
 
+    def test_bundled_plugins_stay_within_their_share_of_every_request(self):
+        """Every bundled plugin taxes every request, used or not."""
+        self.shift("hi\n/quit\n", plan=[answer("done")], session="off")
+        bare = len(str(Provider.last_messages[0]["content"]))
+        self.env["SHIFT_PLUGINS"] = "on"
+        self.shift("hi\n/quit\n", plan=[answer("done")], session="on")
+        loaded = len(str(Provider.last_messages[0]["content"]))
+        tools = len(json.dumps(Provider.last_tools))
+        # Bundled plugins contribute a skill line each to the system prompt of
+        # every session, whether or not that project uses them. Measured at
+        # ~2,950 characters for the nine bundled; this catches a plugin that
+        # arrives with an essay, and a tenth or eleventh joining quietly.
+        self.assertLess(loaded - bare, 4000,
+                        f"bundled plugins add {loaded - bare} chars to every system prompt")
+        # Tool schemas are the other static cost. Resident declared tools land
+        # here, which is why almost none of them should be resident.
+        self.assertLess(tools, 13000, f"tool schemas are {tools} chars")
+
+    def test_kanban_board_reads_through_its_pinned_allowlist_entry(self):
+        """The bundled kanban plugin: one declared read over one pinned argv."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        (self.project / ".shift").mkdir(exist_ok=True)
+        (self.project / ".shift/kanban.md").write_text(
+            "# Board\n\n## Todo\n- [c1] Wire the receipt\n\n## Doing\n- [c2] Declared tools\n\n## Done\n- [c3] Pane actions\n")
+        output = self.shift(
+            "/mode autopilot\nwhat is on the board\n/quit\n",
+            plan=[tool_call("tool_search", {"query": "board"}),
+                  tool_call("kanban_board", {}), answer("done")],
+        )
+        self.assertIn("kanban 0.1", self.shift("/plugins\n/quit\n"))
+        # The plugin pins the whole argv, so the read runs without asking.
+        self.assertIn("## Doing", self.tool_results()[-1])
+        self.assertIn("- [c2] Declared tools", self.tool_results()[-1])
+
+    def test_a_bundled_plugin_does_not_make_itself_resident(self):
+        """Residency is charged on every request of every session, used or not."""
+        for manifest in sorted(ROOT.glob("plugins/*/plugin.scm")):
+            text = manifest.read_text()
+            if "(resident)" not in text:
+                continue
+            # A plugin that is available everywhere must not tax everywhere.
+            # allbeads needs ab and bd, so it is inert without them.
+            self.assertIn("(requires", text, manifest.name)
+            commands = text.split("(requires", 1)[1].split(")\n", 1)[0]
+            self.assertNotIn('"rg"', commands, f"{manifest.name} is resident behind a universal command")
+
     def test_declared_tools_are_run_calls_under_another_name(self):
         """A declared tool carries no authority: it is the equivalent run call."""
         self.env["SHIFT_PLUGINS"] = "on"
