@@ -226,13 +226,29 @@ thinning to dots toward the top edge. It is the favicon and section-heading
 candidate; the label sans remains the mark at hero scale, where dither
 cells would be the size of a fingernail.
 
-**A note on the diagrams.** The INPUT, PROCESS, OUTPUT boxes in the
-wireframe title mock read as generic generated design. The direction to
-take instead is the readout language of Evangelion's MAGI screens: tight
-condensed all-caps labels, angular bracket frames, numbered fields, status
-words rather than nouns. Same wireframe strokes, same palette, no boxes
-with arrows. The `wireframe-workflow.webp` mock is closer already because
-its labels are the product's own words.
+**The readouts** (`readout-workflow.webp`, `readout-receipt.webp`,
+`readout-generation.webp`). The INPUT, PROCESS, OUTPUT boxes in the first
+wireframe mock read as generic generated design, so the diagrams take the
+readout language of Evangelion's MAGI screens instead: heavy condensed
+all-caps labels, bracket frames with clipped corners, numbered fields,
+status words, one hatched magenta element for the thing that is not
+resolved. Same strokes, same palette, no boxes with arrows.
+
+![A receipt as a MAGI-style readout: numbered fields for changed, ran, tokens, judge and trace, a context bar at 48 percent, a GEN 2 stamp, the resume command, and a hatched BLOCKED 0 strip](assets/brand/readout-receipt.webp)
+
+Three mocks, and the receipt is the one to build first: five numbered
+fields, a context bar, a `GEN` stamp, the resume line, and the blocked
+count as the one hatched strip. It is the accountability section's whole
+argument on one screen. The workflow readout turns steps into numbered
+panels stamped `OK` or `PENDING`, with the round budget as the footer bar;
+the generation switch puts the active and candidate images side by side
+with `ATOMIC` on the seam and `ROLLBACK AVAILABLE` and `NO NEW PERMISSIONS`
+as the two strips beneath. All three become SVG built from real receipts,
+run records and generation data, which is also the caveat the mocks make
+for themselves: the model repeated the same three checks in every workflow
+panel, and padded the generation screen with invented `STATUS: OPTIMAL`
+telemetry rows and hex fields. Every field on the site is a field the
+product actually has.
 
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas
