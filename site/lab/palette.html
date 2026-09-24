@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shift /// lab: palette</title>
+<link rel="stylesheet" href="./tokens.css">
+<style>
+  html, body { margin:0; background:var(--plum-deep); color:var(--paper); font:15px/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  main { padding:28px 32px 48px; max-width:1100px; }
+  h1 { font-weight:500; font-size:22px; margin:0 0 4px; } h1 b { color:var(--lime-hi); font-weight:500; }
+  .note { opacity:.75; margin:0 0 24px; }
+  .swatches { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:14px; }
+  .sw { border:1px solid color-mix(in oklab, var(--lime-faded) 45%, transparent); padding:10px; }
+  .sw .chip { height:70px; display:flex; }
+  .sw .chip i { flex:1; } .sw .chip i:first-child { border-right:1px solid rgba(0,0,0,.35); }
+  .sw code { font:12px Menlo, ui-monospace, monospace; display:block; margin-top:8px; opacity:.85; }
+  .sw small { display:block; opacity:.6; font-size:11px; }
+  .gamut { font:12px Menlo, ui-monospace, monospace; color:var(--cyan-faded); margin:18px 0 0; }
+  /* A receipt readout built from tokens: hairline strokes, one highlight, tape artifacts in CSS. */
+  .readout { position:relative; margin-top:36px; padding:22px 26px; max-width:720px; border:1px solid var(--lime-faded); clip-path:polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+             font:16px/1.9 Menlo, ui-monospace, monospace; color:var(--paper); overflow:hidden; background:var(--plum); }
+  .readout h2 { margin:0 0 8px; font:inherit; letter-spacing:.06em; color:var(--lime-faded); text-transform:uppercase; }
+  .readout .row { display:grid; grid-template-columns:36px 120px 1fr; border-top:1px solid color-mix(in oklab, var(--lime-faded) 55%, transparent); }
+  .readout .row span:first-child, .readout .row span:nth-child(2) { color:var(--lime-faded); text-transform:uppercase; letter-spacing:.06em; }
+  .readout .hi { background:var(--lime-hi); color:#0b0412; padding:0 8px; }
+  .readout .stamp { position:absolute; right:26px; top:22px; border:1px dashed var(--cyan-faded); color:var(--cyan-faded); padding:2px 10px; letter-spacing:.1em; }
+  .readout .resume { margin-top:10px; border-top:1px solid var(--lime-faded); padding-top:8px; color:var(--lime-faded); }
+  .readout .resume b { color:var(--paper); font-weight:400; }
+  .fringe { text-shadow:-1px 0 color-mix(in oklab, var(--cyan-hi) 45%, transparent), 1px 0 color-mix(in oklab, var(--magenta-hi) 40%, transparent); }
+  .readout::after { content:""; position:absolute; left:0; right:0; height:14px; top:-20px; background:linear-gradient(transparent, rgba(255,255,255,.10), transparent); animation:track 9s linear infinite; pointer-events:none; }
+  .readout::before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.08;
+    background-image:repeating-linear-gradient(0deg, rgba(255,255,255,.5) 0 1px, transparent 1px 3px); }
+  @keyframes track { 0% { top:-20px } 100% { top:110% } }
+  @media (prefers-reduced-motion: reduce) { .readout::after { animation:none; display:none; } }
+</style>
+</head>
+<body><main>
+  <h1><span class="fringe">shift</span> <b>///</b> lab: palette</h1>
+  <p class="note">Left half of each chip is the sRGB fallback; right half is the OKLCH token, which only differs on a wide-gamut display. The receipt below is built from the tokens, not an image.</p>
+  <div class="swatches" id="swatches"></div>
+  <p class="gamut" id="gamut"></p>
+  <section class="readout" aria-label="A receipt readout built from the palette tokens">
+    <h2>Receipt · turn 12</h2><span class="stamp">GEN 2</span>
+    <div class="row"><span>01</span><span>changed</span><span>3 files</span></div>
+    <div class="row"><span>02</span><span>ran</span><span>make test · exit 0</span></div>
+    <div class="row"><span>03</span><span>tokens</span><span>1493 in / 212 out</span></div>
+    <div class="row"><span>04</span><span>judge</span><span>typesafe/jev <span class="hi">0.98</span></span></div>
+    <div class="row"><span>05</span><span>trace</span><span>2b99aded</span></div>
+    <div class="resume">resume <b>./bin/shift-agent --resume default</b></div>
+  </section>
+</main>
+<script>
+  const names = ['plum','plum-deep','lime-faded','cyan-faded','magenta-faded','paper','lime-hi','cyan-hi','magenta-hi'];
+  const css = getComputedStyle(document.documentElement), sw = document.getElementById('swatches');
+  const sheet = [...document.styleSheets].find(s => (s.href||'').includes('tokens.css'));
+  const fallback = {}, ok = {};
+  for (const rule of sheet.cssRules) {
+    if (rule.style) for (const p of rule.style) fallback[p] = rule.style.getPropertyValue(p).trim();
+    else if (rule.cssRules) for (const inner of rule.cssRules) for (const p of inner.style) ok[p] = inner.style.getPropertyValue(p).trim();
+  }
+  for (const n of names) {
+    const el = document.createElement('div'); el.className = 'sw';
+    el.innerHTML = `<div class="chip"><i style="background:${fallback['--'+n]}"></i><i style="background:${ok['--'+n] || fallback['--'+n]}"></i></div><code>--${n}</code><small>${ok['--'+n] || ''}</small><small>${fallback['--'+n]}</small>`;
+    sw.appendChild(el);
+  }
+  document.getElementById('gamut').textContent = 'display gamut: ' + (matchMedia('(color-gamut: p3)').matches ? 'P3, highlights render past sRGB' : 'sRGB, fallbacks in use') + ' · oklch ' + (CSS.supports('color', 'oklch(50% 0.1 120)') ? 'supported' : 'unsupported');
+</script>
+</main></body>
+</html>

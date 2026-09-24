@@ -120,18 +120,44 @@ ownership), "Own your agent" (a slogan, not a sentence).
 
 ## Visual system
 
-- **Palette:** Acid stays primary: deep purple canvas, lime cursor, cyan
-  selection. It is already the TUI's default and the Ghostty theme, so the
-  site, the terminal and the screenshots are one palette. Paddock, Blueprint
-  and QDOS remain as the proof that themes are real, not as site modes to
-  choose from on arrival.
+- **Palette:** the acid theme, aged like tape. The base is the Acid
+  palette with its chroma pulled down and its lightness lifted, the way a
+  bright label goes milky: a dusty plum canvas, faded lime for strokes and
+  labels, faded cyan for secondary strokes, faded magenta for the one thing
+  on a screen that is not resolved, warm paper for figures. The vivid acid
+  colors survive as highlights only, one per screen, and on the web they
+  are written in OKLCH past the sRGB gamut so a wide-gamut display shows a
+  lime, cyan and magenta no hex can name; every token carries an sRGB
+  fallback for the rest. `site/lab/tokens.css` is the source of truth and
+  `site/lab/palette.html` shows each token beside its fallback. The TUI
+  keeps the Acid theme as it is; the site is the aged print of it.
+
+| Token | Role | OKLCH | sRGB fallback |
+| --- | --- | --- | --- |
+| `--plum` | canvas, aged | `oklch(24% 0.045 320)` | `#29182c` |
+| `--plum-deep` | canvas, deeper | `oklch(17% 0.04 318)` | `#16091b` |
+| `--lime-faded` | strokes and labels | `oklch(80% 0.11 125)` | `#adca7a` |
+| `--cyan-faded` | secondary strokes | `oklch(74% 0.07 215)` | `#76b7c6` |
+| `--magenta-faded` | the one warning element | `oklch(62% 0.13 350)` | `#bf6291` |
+| `--paper` | figures and body | `oklch(90% 0.02 80)` | `#e5ddd0` |
+| `--lime-hi` | highlight, beyond sRGB | `oklch(93% 0.31 128)` | `#aaff00` |
+| `--cyan-hi` | highlight, beyond sRGB | `oklch(88% 0.17 210)` | `#00f4ff` |
+| `--magenta-hi` | highlight, beyond sRGB | `oklch(70% 0.32 350)` | `#ff00b9` |
+
+- **Strokes:** hairline. One CSS pixel at 1x, never a glow. Labels in a
+  condensed sans at modest weight, figures in monospace.
+- **Artifacts:** tape, not neon. Chroma fringes on type (a cyan shadow one
+  pixel left, magenta one pixel right, both at low alpha), a soft tracking
+  band that drifts once every several seconds, faint scanlines at eight
+  percent, a vignette. Sparingly, and all off under reduced motion.
 - **Type:** one monospace family for everything the agent says or shows,
   one humanist sans for the site's own voice. Code is never set in the sans.
 - **Imagery:** real captures of the real TUI, rendered from PTY recordings
   (the capture harness exists), never the simulated terminal. The simulated
   terminal survives only as the try-it-without-a-model demo, below the fold,
   labelled as a simulation.
-- **Motion:** the `///` mark while work runs; nothing else moves.
+- **Motion:** the `///` mark while work runs; the tracking band; nothing
+  else moves.
 - **Layout:** the receipt is a recurring visual element: a bordered block
   with files, runs, tokens, judge. It appears on the hero capture, in the
   accountability section and at the end of the install section as "your
@@ -235,6 +261,16 @@ status words, one hatched magenta element for the thing that is not
 resolved. Same strokes, same palette, no boxes with arrows.
 
 ![A receipt as a MAGI-style readout: numbered fields for changed, ran, tokens, judge and trace, a context bar at 48 percent, a GEN 2 stamp, the resume command, and a hatched BLOCKED 0 strip](assets/brand/readout-receipt.webp)
+
+The first three readouts (`readout-*.webp`) came back too acid and too
+thick: full-saturation strokes with a neon glow. The second set
+(`vhs-receipt.webp`, `vhs-workflow.webp`, `vhs-hero.webp`) is the
+register to keep: hairline strokes, the palette gone milky with age, chroma
+fringes, a tracking band, and exactly one vivid element per screen, the
+`0.98`, the `OK`, the `///`. That single highlight is where the OKLCH
+colors go.
+
+![The receipt as an aged-tape readout: hairline bracket frame, faded lime labels, the judge figure 0.98 as the one vivid highlight, a context bar and a GEN 2 stamp](assets/brand/vhs-receipt.webp)
 
 Three mocks, and the receipt is the one to build first: five numbered
 fields, a context bar, a `GEN` stamp, the resume line, and the blocked
