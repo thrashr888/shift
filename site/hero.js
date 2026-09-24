@@ -37,4 +37,7 @@
   const m = location.hash.match(/^#screen-(\d)$/);
   hero.dataset.js = '1';
   show(m ? parseInt(m[1], 10) - 1 : 0, false);
+  // Hiding two screens moves everything below them, so a deep link to a section is re-aimed.
+  const target = !m && location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if (target) target.scrollIntoView({ block: 'start', behavior: 'instant' });
 })();
