@@ -353,6 +353,27 @@ Three steps, not a game; a metaphor the product earns rather than a theme
 laid over it. The 2-, 8- and 16-bit wordmarks are the first three assets to
 make.
 
+**The three generations** (`wordmark-gen1.png`, `wordmark-gen2.png`,
+`wordmark-gen3.png`, the sheet `wordmark-generations.png`). Each is the same
+letterforms sampled onto its era's grid under its era's palette limit,
+rendered by code so the limits are real, not styled:
+
+| | Year | Hardware | Colors | The mark's grid | How the color is made |
+| --- | --- | --- | --- | --- | --- |
+| GEN 1 | 1984 | CGA 320×200 | 4 | 160×50 cells | CGA palette 1, cyan and magenta and white on the dark; three bands, each boundary an ordered dither |
+| GEN 2 | 1989 | EGA 640×350 | 16 | 320×100 cells | sixteen colors in the acid family; ordered dither between stops; a dithered shadow along the lower edge |
+| GEN 3 | 1991 | VGA 320×240 | 256 | 640×200 cells | a smooth lime-to-cyan ramp quantized to 256 entries, a soft shadow, a one-cell light and dark bevel, the VGA title trick |
+
+CGA's palette 1 turned out to be a gift: cyan, magenta and white on black is
+the acid family before there was an acid theme, so GEN 1 needs no
+translation. GEN 3's ramp runs lime to cyan and back rather than through the
+whole hue circle, because a smooth pass from cyan to magenta crosses blue,
+which is not in the palette; the dither in GEN 2 can jump that gap and a
+ramp cannot. `site/lab/generations.html` is the conceit as a prototype: the
+mark shown at GEN 1, advancing to 2 and 3 as the three pillars scroll past
+the middle of the viewport, keys 1, 2, 3 or three buttons to jump, reduced
+motion showing GEN 3 with no scroll at all.
+
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas
 above, with no libraries: the real TUI capture is Bayer-dithered into

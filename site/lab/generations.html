@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shift /// lab: generations</title>
+<meta name="description" content="A lab page: the wordmark in three generations, CGA, EGA and VGA, stepped by scrolling or by hand.">
+<link rel="stylesheet" href="./tokens.css">
+<style>
+  html, body { margin:0; background:var(--plum-deep); color:var(--paper); font:15px/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  main { padding:28px 32px 48px; max-width:1180px; }
+  h1 { font-weight:500; font-size:22px; margin:0 0 4px; } h1 b { color:var(--lime-hi); font-weight:500; }
+  .note { opacity:.75; margin:0 0 20px; }
+  .control { display:flex; gap:8px; align-items:center; font:13px Menlo, ui-monospace, monospace; color:var(--cyan-faded); margin-bottom:16px; }
+  .control button { font:inherit; background:transparent; color:var(--lime-faded); border:1px solid var(--lime-faded); padding:4px 10px; cursor:pointer; }
+  .control button[aria-pressed="true"] { background:var(--lime-hi); color:#0b0412; border-color:var(--lime-hi); }
+  .stage { border:1px solid var(--lime-faded); padding:24px; background:var(--plum); }
+  .stage img { display:block; width:100%; max-width:1200px; image-rendering:pixelated; image-rendering:crisp-edges; }
+  .stage img[hidden] { display:none; }
+  .caption { font:13px Menlo, ui-monospace, monospace; color:var(--lime-faded); margin-top:12px; }
+  .pillars { margin-top:48px; display:grid; gap:48px; }
+  .pillar { min-height:70vh; border-top:1px solid color-mix(in oklab, var(--lime-faded) 45%, transparent); padding-top:16px; }
+  .pillar h2 { font-weight:500; font-size:18px; margin:0 0 6px; } .pillar h2 span { font:13px Menlo, ui-monospace, monospace; color:var(--cyan-faded); margin-left:10px; }
+  .pillar p { max-width:60ch; opacity:.85; }
+  .sticky { position:sticky; top:16px; }
+  @media (prefers-reduced-motion: reduce) { .pillars { display:none; } }
+</style>
+</head>
+<body><main>
+  <h1>shift <b>///</b> lab: generations</h1>
+  <p class="note">The wordmark in three generations, each honest to its era's grid and palette. Scroll the three pillars and the mark advances; keys 1, 2, 3 or the buttons jump. Reduced motion shows GEN 3 and skips the scroll.</p>
+  <div class="sticky">
+    <div class="control" role="group" aria-label="Generation">
+      <span>GEN</span>
+      <button data-gen="1" aria-pressed="true">1</button><button data-gen="2" aria-pressed="false">2</button><button data-gen="3" aria-pressed="false">3</button>
+      <span id="label"></span>
+    </div>
+    <div class="stage">
+      <img data-gen="1" src="../assets/lab/wordmark-gen1.png" alt="shift /// as a CGA-era mark: four colors on a 160 by 50 grid">
+      <img data-gen="2" src="../assets/lab/wordmark-gen2.png" alt="shift /// as an EGA-era mark: sixteen colors on a 320 by 100 grid, ordered dither between stops" hidden>
+      <img data-gen="3" src="../assets/lab/wordmark-gen3.png" alt="shift /// as a VGA-era mark: 256 colors on a 640 by 200 grid, smooth ramps with a pixel bevel" hidden>
+      <div class="caption" id="caption"></div>
+    </div>
+  </div>
+  <section class="pillars">
+    <div class="pillar" data-gen="1"><h2>Yours <span>GEN 1</span></h2><p>The agent file is Scheme you edit live; a validated change is the next generation, rollback is one command, and no live change grants a permission the runtime withheld.</p></div>
+    <div class="pillar" data-gen="2"><h2>Accountable <span>GEN 2</span></h2><p>Every turn ends in a receipt. Every session is a folder, subagents are folders under it, traces are searchable from any other session, and the judge's verdicts are logged with their confidence.</p></div>
+    <div class="pillar" data-gen="3"><h2>Compounding <span>GEN 3</span></h2><p>Workflows are procedures with checks. Field notes, reflection and distillation propose skills; improvement is kept only when two subagent runs say it won.</p></div>
+  </section>
+</main>
+<script>
+  const captions = {1:'1984 · CGA 320×200 · 4 colors · 160×50 cells', 2:'1989 · EGA 640×350 · 16 colors · 320×100 cells', 3:'1991 · VGA 320×240 · 256 colors · 640×200 cells'};
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function show(gen){
+    document.querySelectorAll('.stage img').forEach(img => { img.hidden = img.dataset.gen !== String(gen); });
+    document.querySelectorAll('.control button').forEach(b => b.setAttribute('aria-pressed', b.dataset.gen === String(gen)));
+    document.getElementById('caption').textContent = captions[gen];
+  }
+  document.querySelectorAll('.control button').forEach(b => b.addEventListener('click', () => { manual = true; show(b.dataset.gen); }));
+  let manual = false;
+  addEventListener('keydown', e => { if ('123'.includes(e.key) && e.key) { manual = true; show(e.key); } });
+  if (reduce) show(3);
+  else {
+    show(1);
+    // The generation advances as each pillar crosses the middle of the viewport; a manual pick holds until the next pillar.
+    const seen = new IntersectionObserver(entries => { for (const en of entries) if (en.isIntersecting) { manual = false; show(en.target.dataset.gen); } }, { rootMargin: '-45% 0px -45% 0px' });
+    document.querySelectorAll('.pillar').forEach(p => seen.observe(p));
+  }
+</script>
+</body>
+</html>
