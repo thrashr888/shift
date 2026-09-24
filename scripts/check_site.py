@@ -12,15 +12,17 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
-SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")}
+SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")} | {
+    "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")}   # scripts/tui_capture.py
+FONTS = {"assets/fonts/" + name for name in ("vt323.woff2", "pixelify-sans.woff2", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
 LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "generations.html", "tokens.css", "cycle.js")} | {
     "assets/lab/gen%d.json" % n for n in (1, 2, 3)}
 LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither.png", "wordmark-iridescent.png", "wordmark-pixel.png")} | {
     "assets/lab/" + pattern % n for n in (1, 2, 3)
     for pattern in ("gen%d.idx.png", "wordmark-gen%d.gif", "wordmark-gen%d.png", "mark-gen%d.gif", "word-gen%d.png")}
-BINARY = SCREENSHOTS | LAB_IMAGES
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | LAB_PAGES | LAB_IMAGES
+BINARY = SCREENSHOTS | LAB_IMAGES | FONTS
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "hero.js", "dither.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
 PAGES = ("index.html", "panes.html")
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
@@ -123,7 +125,9 @@ def check():
     if declared + declared_sources != published:
         errors.append(f"panes.html fields or sources drift from ui.scm: declared={declared + declared_sources}, published={published}")
 
-    if re.search(r"@import\b|url\s*\(", texts["styles.css"], re.IGNORECASE):
+    # The only url() the stylesheet may carry is a self-hosted font from the allowlist.
+    css = re.sub(r"url\(\./(assets/fonts/[a-z0-9-]+\.woff2)\)", lambda m: "" if m.group(1) in FONTS else m.group(0), texts["styles.css"])
+    if re.search(r"@import\b|url\s*\(", css, re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")
     if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts["showcase.js"]):
         errors.append("The local-only simulation must not make network requests.")

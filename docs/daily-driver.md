@@ -625,6 +625,34 @@ There is no stdio transport and no separate MCP process: the session you have
 open is the server, and clients attach to its URL. `.codex/config.toml` in
 this repository registers it that way.
 
+### Attach a desktop agent
+
+Any client that speaks Streamable HTTP attaches to the URL directly. Codex does:
+`.codex/config.toml` in this repository registers the endpoint, so a Codex session
+opened in the checkout can call `shift_status` and `shift_prompt` against the
+terminal you have open.
+
+Claude Desktop launches stdio servers from its configuration file, so bridge the
+HTTP endpoint with `mcp-remote`. Add this to `claude_desktop_config.json` and
+restart the app:
+
+```json
+{
+  "mcpServers": {
+    "shift": { "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:7331/mcp"] }
+  }
+}
+```
+
+ChatGPT's connectors take an MCP URL, but the app must be able to reach it, and
+this server binds loopback only. Put a tunnel in front of the port and register the
+tunnel's URL; set `SHIFT_MCP_TOKEN` first, because the tunnel makes the session
+reachable from outside your machine.
+
+Whatever the client, the session's policy still applies: prompts run in the
+current mode, anything that needs an interactive approval is denied to the
+caller, and the terminal shows each client as a peer with its calls.
+
 
 ## Validation on September 6, 2026
 

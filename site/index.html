@@ -3,17 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101116">
+  <meta name="theme-color" content="#18071e">
   <meta name="description" content="Shift is an experimental coding-agent harness with live Scheme behavior and a terminal interface you can make your own. Change the agent, not the session.">
   <title>Shift — an agent, made yours.</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <script src="./showcase.js" defer></script>
+  <script src="./lab/cycle.js" defer></script>
+  <script src="./dither.js" defer></script>
+  <script src="./hero.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header wrap">
-    <a class="wordmark" href="./" aria-label="Shift home" data-brand-link><span data-display-name>shift</span><span class="brand-mark" aria-hidden="true">///</span></a>
+    <a class="wordmark" href="./" aria-label="Shift home" data-brand-link>
+      <canvas data-mark="./assets/lab/gen1.json" data-period="240" width="160" height="50" aria-hidden="true"></canvas>
+      <canvas data-mark="./assets/lab/gen2.json" data-period="110" width="320" height="100" hidden aria-hidden="true"></canvas>
+      <canvas data-mark="./assets/lab/gen3.json" data-period="70" width="640" height="200" hidden aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
     <nav aria-label="Main navigation">
       <a href="#playground">Playground</a>
       <a href="#ghostty">Themes</a>
@@ -24,6 +32,62 @@
   </header>
 
   <main id="main">
+    <section class="hero" id="hero" aria-label="Shift in three screens">
+      <article class="screen gen-1 wrap" id="screen-1">
+        <div class="screen-copy">
+          <h1 tabindex="-1">The coding agent that's yours to change.</h1>
+          <p class="lead">Its behavior is a program you edit while it runs. A receipt ends every turn.</p>
+          <p class="aside">One developer builds it and uses it daily on this repository. The evals are in the repo.</p>
+        </div>
+        <div class="screen-visual">
+          <div class="stage"><canvas data-dither="./assets/lab/tui-acid.png" aria-label="A Shift session, dithered into lime on plum, with depth that tilts with the cursor"></canvas></div>
+        </div>
+        <div class="screen-foot">
+          <span class="install">&gt; brew install thrashr888/tap/shift<span class="caret" aria-hidden="true">_</span></span>
+          <a class="continue" href="#screen-2">Continue <span aria-hidden="true">▶</span></a>
+        </div>
+      </article>
+
+      <article class="screen gen-2 wrap" id="screen-2">
+        <div class="screen-copy">
+          <h2 tabindex="-1">Every turn leaves a receipt.</h2>
+          <p class="lead">A session is a folder. Its receipt lists what changed, what ran and with which exit code, and how to undo the turn.</p>
+          <p class="lead">Subagents keep their own folders under the parent, as in the session list here, and a search reaches any earlier session.</p>
+        </div>
+        <div class="screen-visual">
+          <img class="capture" src="./assets/fanout-sessions.png" alt="Shift running two subagents in parallel; the session list shows both nested under their parent" width="2048" height="1568">
+        </div>
+        <div class="screen-foot">
+          <span class="install mono">brew install thrashr888/tap/shift</span>
+          <a class="continue" href="#screen-3">Continue <span aria-hidden="true">▶</span></a>
+        </div>
+      </article>
+
+      <article class="screen gen-3 wrap" id="screen-3">
+        <div class="screen-copy">
+          <h2 tabindex="-1">Change it while it runs.</h2>
+          <p>The agent is a Scheme file. Edit it inside the session and the next turn runs the new behavior. Each accepted edit is a numbered generation, and one command returns to the previous one. The session keeps its context and its receipts.</p>
+          <p>The terminal is yours the same way. Four themes ship, each also a Ghostty theme, and the layout, the panes and the wordmark are files you change.</p>
+          <div class="actions">
+            <a class="button primary mono" href="#start">brew install thrashr888/tap/shift</a>
+            <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Read the docs</a>
+          </div>
+        </div>
+        <div class="screen-visual">
+          <ul class="theme-captures">
+            <li><img src="./assets/themes/acid.png" alt="The Shift terminal in the Acid Garage theme: lime on deep purple" width="2848" height="1808" loading="lazy"><span class="mono">acid</span></li>
+            <li><img src="./assets/themes/paddock.png" alt="The Shift terminal in the Paddock theme: dark green on paper" width="2848" height="1808" loading="lazy"><span class="mono">paddock</span></li>
+            <li><img src="./assets/themes/blueprint.png" alt="The Shift terminal in the Blueprint theme: pale yellow on cobalt" width="2848" height="1808" loading="lazy"><span class="mono">blueprint</span></li>
+            <li><img src="./assets/themes/qdos.png" alt="The Shift terminal in the QDOS theme: green and white on black with a red mode badge" width="2848" height="1808" loading="lazy"><span class="mono">qdos</span></li>
+          </ul>
+        </div>
+        <div class="screen-foot">
+          <span class="mono aside">Your machine. Your keys, or Ollama.</span>
+          <a class="continue" href="#playground">Scroll <span aria-hidden="true">▼</span></a>
+        </div>
+      </article>
+    </section>
+
     <section class="appearance wrap" id="appearance" aria-labelledby="appearance-title" hidden>
       <div class="appearance-intro"><h2 id="appearance-title">Make this site yours.</h2><p>The whole page. Not just the box.</p></div>
       <div class="appearance-controls">
@@ -47,22 +111,6 @@
       <p class="qdos-help">Tab moves between controls. Enter activates a link or applies your name. A website theme inspired by the <a href="https://github.com/thrashr888/QDOS/blob/master/spec/SPEC.md">QDOS specification</a>, not a DOS emulator.</p>
     </section>
     <noscript><p class="no-script wrap">Enable JavaScript to personalize the whole site and try the simulated terminal. This static view uses Shift’s original appearance.</p></noscript>
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <p class="eyebrow hero-identity"><span class="status-dot" aria-hidden="true"></span> <span data-display-name>shift</span> / A live agent experiment</p>
-      <div class="hero-grid">
-        <h1 id="hero-title">An agent.<br><span>Made yours.</span></h1>
-        <div class="hero-copy">
-          <p class="lead">Your tools feel better<br class="desktop-break"> when they feel like you.</p>
-          <p>Shift is a tiny coding-agent harness with a live Scheme heart. Change its behavior, reshape its terminal, and keep the session going.</p>
-          <div class="actions">
-            <a class="button primary" href="#start">Try Shift <span aria-hidden="true">↗</span></a>
-            <a class="text-link" href="#playground">Make it yours <span aria-hidden="true">↓</span></a>
-          </div>
-          <p class="small-note">An executable spike. Not a production coding agent yet.</p>
-        </div>
-      </div>
-      <div class="hero-baseline mono"><span>LIVE BEHAVIOR / PERSONAL INTERFACE</span><span>GUILE + YOUR TERMINAL</span></div>
-    </section>
 
     <section class="playground wrap" id="playground" aria-labelledby="playground-title">
       <div class="section-heading">
