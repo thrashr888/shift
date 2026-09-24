@@ -305,6 +305,33 @@ a `1-bit acid` palette beside `aged tape` for exactly this look; the aged
 palette is its default and is read from `tokens.css`, so the lab and the
 site agree.
 
+**Where it converged, September 23.** From everything above, Paul kept
+seven images: the dither lab, the dithered photo composite, the dithered TUI
+capture, the iridescent dot wordmark, the 1-bit desk illustration, the
+sakura chroma cover, and the aged hero. The through-line is one texture,
+dither and halftone, in three registers, and no operating-system chrome:
+
+- **1-bit game scenes** (`scene-rooftop.webp`, `scene-cassette.webp`): the
+  language of late-1980s adventure-game backgrounds, coarse Bayer dots for
+  every tone, one-pixel outlines, lime on plum and nothing between. Spot
+  illustrations for sections: a rooftop with antennas and a terminal on a
+  crate, hands sliding a cassette labelled `shift ///` into a deck. The
+  Mac II mocks went a step too far into System 6 windows and menus; the
+  scenes keep the games and drop the desktop.
+- **The halftone cover** (`chroma-cover.webp`): the sakura chroma move, one
+  enormous flat symbol through a CRT dot screen. Here the symbol is the
+  `///` in faded lime over near-black plum, the wordmark heavy and rounded
+  at the bottom right, the tagline and katakana in a condensed line, a
+  `GEN 1` stamp, and one vivid detail: the dot of the i. This is the hero
+  language and the print language, and the strongest single frame so far.
+- **The iridescent wordmark** (`wordmark-iridescent.png`): now a real
+  asset, not a sheet. A halftone of round dots whose size follows the
+  letterform's coverage, so edges thin to specks, and whose hue drifts
+  across a slow field through lime, cyan, magenta and a warm yellow. It
+  is the mark for section heads and the favicon; it can be muted by
+  running the same field through the aged tokens if the full-saturation
+  version reads too loud beside the cover.
+
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas
 above, with no libraries: the real TUI capture is Bayer-dithered into
