@@ -14,10 +14,11 @@ SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
 SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")}
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
-LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "generations.html", "tokens.css")}
-LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither.png", "wordmark-iridescent.png", "wordmark-pixel.png",
-                                                 "wordmark-gen1.png", "wordmark-gen2.png", "wordmark-gen3.png",
-                                                 "wordmark-gen1.gif", "wordmark-gen2.gif", "wordmark-gen3.gif")}
+LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "generations.html", "tokens.css", "cycle.js")} | {
+    "assets/lab/gen%d.json" % n for n in (1, 2, 3)}
+LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither.png", "wordmark-iridescent.png", "wordmark-pixel.png")} | {
+    "assets/lab/" + pattern % n for n in (1, 2, 3)
+    for pattern in ("gen%d.idx.png", "wordmark-gen%d.gif", "wordmark-gen%d.png", "mark-gen%d.gif", "word-gen%d.png")}
 BINARY = SCREENSHOTS | LAB_IMAGES
 PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | LAB_PAGES | LAB_IMAGES
 PAGES = ("index.html", "panes.html")

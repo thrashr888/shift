@@ -374,23 +374,44 @@ mark shown at GEN 1, advancing to 2 and 3 as the three pillars scroll past
 the middle of the viewport, keys 1, 2, 3 or three buttons to jump, reduced
 motion showing GEN 3 with no scroll at all.
 
-**Palette cycling** (`wordmark-gen1.gif`, `wordmark-gen2.gif`,
-`wordmark-gen3.gif`). The era's own animation, done the era's way: the
-pixel data of each mark is written once and never changes; only the color
-table rotates from frame to frame, so the gradient marches through the
-letters while the dither stays put. They are GIFs at native resolution
-(160×50, 320×100, 640×200) with a local color table per frame, which is the
-one thing the format can do that a PNG cannot, and the browser scales them
-with `image-rendering: pixelated`. GEN 1 rotates its three CGA bands, GEN 2
-a twelve-entry ramp with three shadow entries riding along, GEN 3 a
-ninety-six-entry ramp with its shadow levels and a fixed bevel. The ramp is
-the theme's, lime to cyan and back, never the hue circle. Under reduced
-motion the lab swaps in the still PNGs.
+**Palette cycling** (`scripts/brand_marks.py`, which writes
+`docs/assets/brand/` and `site/assets/lab/`). The era's own animation, done
+the era's way: the pixel data of each mark is written once and never
+changes; only the color table rotates from frame to frame, so the gradient
+marches through the slashes while the dither stays put. The letterforms are
+a heavy geometric sans with flat terminals, Avenir Next Heavy, sampled onto
+each era's grid, which is closer to the first generated mark than the
+rounded face before it. The word holds still under a fixed ramp; only the
+three slashes cycle, the motion rule's `///` in the era's idiom. The ramp
+is the theme's, lime to cyan to magenta and back, so the sixteen- and
+256-color marks carry both highlight hues; it is never the hue circle.
 
-<img src="assets/brand/wordmark-gen2.gif" width="1280" alt="The GEN 2 wordmark cycling its palette: a lime to cyan ramp marching through dithered letterforms">
+Each generation ships as data first: `genN.idx.png`, the index map, one
+byte per cell, and `genN.json`, the palette for every frame and which
+entries cycle. The site draws that on a canvas (`site/lab/cycle.js`) and
+rotates the palette itself, only when it means to: while work runs, or on
+hover; never under reduced motion. Beside the data sit the authentic
+artifacts: `wordmark-genN.gif`, the whole mark cycling at native resolution
+(160×50, 320×100, 640×200) with a local color table per frame; `mark-genN.gif`,
+the slashes alone; `word-genN.png`, the word alone, still. GEN 1 swaps its
+two CGA bands, GEN 2 rotates an eight-entry ramp, GEN 3 a forty-eight-entry
+ramp with its shadow copy riding along and a fixed bevel.
+
+<img src="assets/brand/wordmark-gen2.gif" width="1280" alt="The GEN 2 wordmark: the word still under a lime to cyan to magenta ramp, the three slashes cycling theirs">
+
+The same data renders in a terminal. `scripts/tui_bitmap.py` paints the
+index map two rows per text row with the upper-half-block glyph in
+truecolor, which every modern terminal and the curses TUI can do as they
+stand, and with `--kitty` sends the frames as pixels through the Kitty
+graphics protocol (Ghostty, Kitty, WezTerm). QDOS does the same in Rust with
+ratatui-image, whose picker chooses Kitty, Sixel or iTerm2 and falls back to
+halfblocks. The TUI's own use of this is the `///` in the top bar while a
+turn runs: the GEN 1 mark is 160×50, which is 160 columns by 25 rows in
+halfblocks, so a header-sized crop of the slashes alone fits a normal
+window. That is a later change to `scripts/tui.py`, not this one.
 
 This amends the motion rule above: the `///` mark moves while work runs, and
-the wordmark cycles its palette, which is the same statement in the era's
+the slashes cycle their palette, which is the same statement in the era's
 own idiom. Nothing else moves.
 
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
