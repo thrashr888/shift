@@ -1,33 +1,37 @@
 # Shift website
 
-The branding/showcase site lives in `site/`: plain HTML, CSS, and local JavaScript.
-There is no package install or build step, no analytics, and no model connection.
-The terminal is explicitly simulated. Site appearance controls above the hero
-apply theme and display identity to the whole page, including the terminal.
-Acid Garage keeps the original neutral shell and purple terminal; Paddock and
-Blueprint apply their existing palettes throughout. Controls, focus rings, text,
-cards, and the browser theme color use the same theme selection.
+The site lives in `site/`: plain HTML, CSS and two small local scripts. There is
+no package install, no build step, no analytics, no request that leaves the page
+(the fonts are self-hosted under `assets/fonts/`), and no model connection.
+Every capture on the page is real: the interface, run through a pseudo-terminal
+with the demo model by `scripts/tui_capture.py`, or a session against a local
+model. `docs/brand.md` is the brand it follows; the copy follows the register
+rules in the writing guide it names.
 
-QDOS follows the [QDOS specification](https://github.com/thrashr888/QDOS/blob/master/spec/SPEC.md):
-black canvas, white text/frames, cyan panel labels (`#66b7b3`), green contextual
-help (`#67cc4d`), and yellow-on-red selections (`#e8da59` / `#9d1f14`).
-Compact monospace menus, double frames, and denser sections suggest its DOS
-layout without a fixed 80-column screen or fake DOS commands. Links and form
-controls remain native and keyboard-accessible; the menu wraps on narrow screens.
+## The hero
 
-Applying a display name updates the header, hero identity, footer, browser title,
-and simulated terminal branding. Actual Shift product references, source credits,
-repository/docs links, executable names, and copyable commands never change.
-Names render as text, not HTML, and are limited to 24 printable characters.
-Long wordmarks truncate visually without pushing navigation offscreen.
+The hero is three screens, one visible at a time, each honest to a generation of
+the mark: four colors and the terminal face, sixteen colors and a pixel face,
+then the full palette and the reading faces. Continue, the arrow keys, the digits
+1 to 3 and a `#screen-N` link move between them (`hero.js`); without JavaScript
+the three stack. The first screen's visual is the acid capture dithered into
+points with depth from local contrast, drawn as WebGL point sprites that tilt
+with the cursor and carry the glitch field (`dither.js`); reduced motion draws
+it still, and a browser without WebGL gets the plain image. The header mark is a
+canvas per generation drawn from `assets/lab/genN.idx.png` and its palette file
+by `lab/cycle.js`, which rotates only the slashes' entries, briefly on arrival
+and on hover, never under reduced motion. The second screen shows the sessions
+capture; the third shows a capture of each built-in theme.
 
-One in-memory configuration and undo stack cover appearance and demo placement.
-**Reset appearance** restores the original Shift name and Acid Garage palette;
-it leaves demo layout and work state alone and is itself undoable. Inspector
-placement and simulated work/motion remain clearly labeled demo-only controls.
-Reloading clears customization; there is no storage, tracking, or backend.
-Colors come from the existing live interface study;
-the source prototype and terminal implementation are not part of the website.
+## Below the hero
+
+A section nav, then one section per claim, each a heading column beside a proof
+column: policy, workflows, the MCP endpoint for other agents, the measured table
+(only benchmarks that have run, with their dates), make it yours (the Ghostty
+themes, the pane pack, the interface commands) and start. The start block sits on
+the sixteen-color ramp under a dot screen. The earlier site's simulated terminal
+and its site-wide theme and display-name controls are gone: the brand rule is
+that nothing on the page is illustrative.
 
 ## Ghostty themes
 

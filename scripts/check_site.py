@@ -22,7 +22,7 @@ LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither
     "assets/lab/" + pattern % n for n in (1, 2, 3)
     for pattern in ("gen%d.idx.png", "wordmark-gen%d.gif", "wordmark-gen%d.png", "mark-gen%d.gif", "word-gen%d.png")}
 BINARY = SCREENSHOTS | LAB_IMAGES | FONTS
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "hero.js", "dither.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "hero.js", "dither.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
 PAGES = ("index.html", "panes.html")
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
@@ -77,7 +77,8 @@ def check():
         if (SITE / name).stat().st_size > 900_000:
             errors.append(f"Screenshot over 900 KB: {name}")
     for name, text in texts.items():
-        if re.search(r"localhost|127\.0\.0\.1|/Users/|/home/|\.shift/(?!panes\.scm)|\.env\b", text):
+        # The documented MCP endpoint and the workflow folder are public names, not leaks.
+        if re.search(r"localhost|127\.0\.0\.1(?!:7331/mcp)|/Users/|/home/|\.shift/(?!panes\.scm|workflows/)|\.env\b", text):
             errors.append(f"Local/private reference in public file: {name}")
     pages = {}
     for name in PAGES:
@@ -129,8 +130,9 @@ def check():
     css = re.sub(r"url\(\./(assets/fonts/[a-z0-9-]+\.woff2)\)", lambda m: "" if m.group(1) in FONTS else m.group(0), texts["styles.css"])
     if re.search(r"@import\b|url\s*\(", css, re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")
-    if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts["showcase.js"]):
-        errors.append("The local-only simulation must not make network requests.")
+    for name in ("hero.js", "dither.js"):
+        if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts[name]):
+            errors.append(f"{name} must not make network requests.")
     generated = subprocess.run(
         [sys.executable, str(ROOT / "scripts/ghostty_themes.py"), "--check"], capture_output=True, text=True
     )
