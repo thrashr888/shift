@@ -267,6 +267,15 @@ class ClaudeTests(unittest.TestCase):
             "Compacted earlier turns before the request", result.stdout + result.stderr
         )
         self.assertFalse(self.server.requests[0][1]["stream"])
+        # The summary rides in every later request of the new window, so the
+        # summarizer asks for a word range and caps its own output well above
+        # it as a backstop rather than letting a long summary through.
+        summarizer = [
+            r for _, r in self.server.requests
+            if "150 to 400 words" in str(r.get("system", ""))
+        ]
+        self.assertEqual(len(summarizer), 1)
+        self.assertEqual(summarizer[0]["max_tokens"], 1024)
         after = json.loads(path.read_text())
         self.assertEqual(after["next_turn"], 8)
         self.assertIn("Earlier session summary", after["history"][0]["content"])

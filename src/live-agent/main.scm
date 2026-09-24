@@ -3652,6 +3652,15 @@
          (summary (summarize-compaction generation prefix)))
     (display (json-write (json-object (cons "summary" summary) (cons "model" (format #f "~a/~a" (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model))))))
     (newline) (force-output) 0))
+;; An image written against an older runtime will not have every binding a
+;; newer one looks for. Compaction has to keep working for that image.
+(define (generation-ref/default generation name default)
+  (catch #t (lambda () (generation-ref generation name)) (lambda _ default)))
+
+(define (compaction-summary-tokens generation)
+  (let ((value (generation-ref/default generation 'agent-compaction-summary-tokens 1024)))
+    (if (and (integer? value) (> value 0)) value 1024)))
+
 (define (summarize-compaction generation prefix)
   (when (context-over-budget? (+ 256 (estimate-input-tokens prefix '()))
                               (model-context-limit generation)
@@ -3675,16 +3684,25 @@
                 (make-message
                  "system"
                  (string-append
-                  "Summarize the earlier agent conversation for safe continuation. "
-                  "Preserve user intent, decisions, exact file paths, generation changes, "
-                  "tool outcomes, unresolved work, and safety constraints. Do not claim "
-                  "success without a recorded tool result. Return only the compact summary."))
+                  "Summarize the earlier conversation so the next window can continue it. "
+                  "Keep user intent, decisions, exact file paths, tool outcomes, and what "
+                  "is still unfinished. The full history stays searchable with the traces "
+                  "tool, so record what to look for rather than the detail itself. Do not "
+                  "claim success without a recorded tool result. "
+                  "150 to 400 words, summary only."))
                 (make-message
                  "user" (json-write (apply json-array prefix))))
                '() #f #f keep-alive
                (string-append
                 "shift-" (generation-fingerprint generation) "-compaction")
-               (lambda _ #t) (lambda _ #t))))
+               (lambda _ #t) (lambda _ #t)
+               'default #f
+               ;; The word range is what keeps the summary short; this ceiling
+               ;; is only a backstop against a runaway, set well above it. A
+               ;; summary that reaches the ceiling loses its ending, which is
+               ;; where unfinished work tends to be listed, so the span records
+               ;; the size for a reader who wonders why a window went thin.
+               (compaction-summary-tokens generation))))
         (record-run-usage! (usage-attributes completion))
         (let ((summary (or (completion-content completion) "")))
           (when (string-null? (string-trim-both summary))
@@ -3728,6 +3746,8 @@
                            span "OK"
                            `((generation.id . ,(generation-id generation))
                              (compaction.after_messages . ,(length compacted))
+                             (compaction.summary_chars . ,(string-length summary))
+                             (compaction.summary_ceiling . ,(compaction-summary-tokens generation))
                              (output.value . ,summary)))
                           (runtime-record!
                            runtime 'session-compacted

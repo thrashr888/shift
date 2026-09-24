@@ -83,6 +83,27 @@ The hit span contained 1,753 prompt tokens: 1,280 cached and 473 uncached. This
 is an observed example, not a guarantee for shorter prompts or a different
 backend/cache window.
 
+## Compaction summary budget
+
+A compaction summary is not paid for once. It sits at the head of the new
+window and rides in every request made from it, so a summary that runs long
+is charged again on every later turn. Nothing bounded it: the summarizer asked
+for a "compact summary" and accepted whatever came back.
+
+The summarizer now asks for 150 to 400 words. A stated range works where an
+adjective does not, and this one is affordable at every later turn. The request
+also carries its own `max_tokens`, from `agent-compaction-summary-tokens` in
+the live image, set well above the range as a backstop against a runaway rather
+than as the thing that keeps the summary short — a summary that reached the
+ceiling would lose its ending, which is where unfinished work tends to be
+listed. The `session.compact` span records the summary's size and the ceiling
+in force, so a window that went thin can be explained.
+
+What lets the summary stay this small is that nothing depends on it alone. The
+full history is in `traces.jsonl` and stays searchable after compaction, so the
+prompt asks for what to look for rather than the detail itself. An image
+written against an older runtime that lacks the binding falls back to 1024.
+
 ## Oversized tool output
 
 Output over 64 KiB used to be cut at the cap with a marker giving the original
