@@ -26,7 +26,7 @@
       <a href="#workflows">Workflows</a>
       <a href="#measured">Measured</a>
       <a href="#yours">Make it yours</a>
-      <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Docs</a>
+      <a href="./docs/index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
@@ -44,6 +44,7 @@
         </div>
         <div class="screen-foot">
           <span class="install">&gt; brew install thrashr888/tap/shift<span class="caret" aria-hidden="true">_</span></span>
+          <nav class="pager" aria-label="Hero screens"><a href="#screen-1" aria-current="true">1</a><a href="#screen-2">2</a><a href="#screen-3">3</a></nav>
           <a class="continue" href="#screen-2">Continue <span aria-hidden="true">▶</span></a>
         </div>
       </article>
@@ -58,7 +59,8 @@
           <img class="capture" src="./assets/fanout-sessions.png" alt="Shift running two subagents in parallel; the session list shows both nested under their parent" width="2048" height="1568">
         </div>
         <div class="screen-foot">
-          <span class="install mono">brew install thrashr888/tap/shift</span>
+          <a class="back" href="#screen-1"><span aria-hidden="true">◀</span> Back</a>
+          <nav class="pager" aria-label="Hero screens"><a href="#screen-1">1</a><a href="#screen-2" aria-current="true">2</a><a href="#screen-3">3</a></nav>
           <a class="continue" href="#screen-3">Continue <span aria-hidden="true">▶</span></a>
         </div>
       </article>
@@ -70,7 +72,7 @@
           <p>The terminal is yours the same way. Four themes ship, each also a Ghostty theme, and the layout, the panes and the wordmark are files you change.</p>
           <div class="actions">
             <a class="button primary mono" href="#start">brew install thrashr888/tap/shift</a>
-            <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Read the docs</a>
+            <a class="text-link" href="./docs/index.html">Read the docs</a>
           </div>
         </div>
         <div class="screen-visual">
@@ -82,7 +84,8 @@
           </ul>
         </div>
         <div class="screen-foot">
-          <span class="mono aside">Your machine. Your keys, or Ollama.</span>
+          <a class="back" href="#screen-2"><span aria-hidden="true">◀</span> Back</a>
+          <nav class="pager" aria-label="Hero screens"><a href="#screen-1">1</a><a href="#screen-2">2</a><a href="#screen-3" aria-current="true">3</a></nav>
           <a class="continue" href="#policy">Scroll <span aria-hidden="true">▼</span></a>
         </div>
       </article>
@@ -115,7 +118,7 @@
       <div class="section-copy">
         <h2 id="workflows-title">Workflows that improve themselves.</h2>
         <p class="lede">A workflow is a file of steps, each with a check that decides. When a tool call is refused, the reason goes into a note that later sessions read first. After a hard turn the agent proposes a skill, which stays off until you turn it on. To change a workflow, two runs compare the old version with the new, and only a winner is kept.</p>
-        <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/workflows-rfc.md">How workflows work</a>
+        <a class="text-link" href="./docs/workflows.html">How workflows work</a>
       </div>
       <div class="proof">
         <pre aria-label="A workflow improvement and a field note"><code><span class="cmd">/workflow improve</span> site-check
@@ -204,10 +207,11 @@ printf 'theme = shift-acid\n' &gt;&gt; ~/.config/ghostty/config</code></pre>
     </section>
 
     <section class="start wrap" id="start" aria-labelledby="start-title">
+      <div class="ramp" aria-hidden="true"></div>
       <div>
         <h2 id="start-title">Start local.</h2>
         <p>Runs on your machine with your keys, or with Ollama. Sessions live in a folder you own. The demo model runs the interface without a provider or a network.</p>
-        <p><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Providers and keys</a> · <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">The terminal guide</a></p>
+        <p><a href="./docs/install.html">Install and first session</a> · <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">The terminal guide</a></p>
       </div>
       <pre aria-label="Install Shift and start a session"><code>$ brew install thrashr888/tap/shift
 $ shift-agent                                <span class="dim"># this project's session, resumed</span>
@@ -216,8 +220,8 @@ $ shift-agent --set 'agent-model="demo"'     <span class="dim"># the interface, 
   </main>
 
   <footer class="site-footer wrap">
-    <p>shift /// · Guile and your terminal · one developer, daily, on this repository</p>
-    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+    <p>shift /// · Guile and your terminal · one developer, daily, on this repository<span class="type">Type: the IBM CGA, EGA and VGA faces from <a href="https://int10h.org/oldschool-pc-fonts/">the Oldschool PC Font Pack</a>, CC BY-SA 4.0.</span></p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./docs/index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
   </footer>
 </body>
 </html>

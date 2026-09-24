@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="Define a workflow with checks, run it in a session or unattended, and let Shift improve it under measurement.">
+  <title>Workflows · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+<aside class="rail" aria-label="Documentation pages">
+  <div><h2>Start</h2>
+    <a href="install.html">Install and first session</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#providers-and-context">Providers and keys</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">The terminal</a>
+  </div>
+  <div><h2>Use</h2>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#tool-policy">Modes and policy</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#durable-named-sessions">Receipts and sessions</a>
+    <a href="workflows.html" aria-current="page">Workflows</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#workflows">Skills and notes</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/subagents.md">Subagents</a>
+  </div>
+  <div><h2>Change</h2>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/live-updates.md">The agent file</a>
+    <a href="../panes.html">Extensions and panes</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#live-mcp">Attach a desktop agent</a>
+  </div>
+  <div><h2>Measure</h2>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/evals-rfc.md">Evals</a>
+    <a href="https://github.com/thrashr888/shift/blob/main/docs/jev-rfc.md">The judge</a>
+  </div>
+</aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
+      <h1>Workflows</h1>
+      <p>This page describes what a workflow is, how to define and run one, and how Shift improves one. A workflow is a list of steps that Shift runs in order as turns of the session, each followed by checks that decide whether the run continues.</p>
+
+      <h2>Define a workflow</h2>
+      <p>Create <code>.shift/workflows/NAME/workflow.scm</code> in the project. The file is data: Shift reads it and never evaluates it, so it is safe to commit and to share. The following workflow checks a checkout before a release:</p>
+      <pre><code>((workflow "release-check" 1)
+ (description "Verify a checkout before tagging a release")
+ (budget (rounds 20))
+ (step "status" "Run git status --short and report whether the tree is clean."
+       (check (contains "clean")))
+ (step "tests" "Run make test and report the outcome."
+       (check (run "make" "test")))
+ (step "notes" "Write release notes for the last five commits to the note release.md."
+       (check (notes "release.md"))
+       (check (judge "the notes name the last five commits"))))</code></pre>
+      <p>Each <code>step</code> has a name, the prompt Shift runs as a turn, and zero or more checks. <code>budget</code> caps the tool rounds the whole run can use. The checks are:</p>
+      <table>
+        <thead><tr><th>Check</th><th>Passes when</th></tr></thead>
+        <tbody>
+          <tr><td><code>(run "make" "test")</code></td><td>The command exits 0.</td></tr>
+          <tr><td><code>(contains "clean")</code></td><td>The step's answer contains the text.</td></tr>
+          <tr><td><code>(file "PATH")</code></td><td>The file exists in the project.</td></tr>
+          <tr><td><code>(notes "NAME")</code></td><td>The session has a note with that name.</td></tr>
+          <tr><td><code>(judge "CLAIM")</code></td><td>The judge model decides the answer establishes the claim. The run record keeps its confidence.</td></tr>
+        </tbody>
+      </table>
+      <p>A <code>judge</code> check needs a judge model. Without one the check fails rather than passes.</p>
+
+      <h2>Run a workflow</h2>
+      <p>To run a workflow, enter:</p>
+      <pre><code>/workflow run NAME</code></pre>
+      <p>Shift runs the steps as ordinary turns, so the mode, the allowlist, the judge, receipts and traces all apply. The run stops at the first failed check, at a failed or limited turn, or when the budget is spent; later steps are skipped. Each run writes one record to <code>.shift/workflows/NAME/runs/</code>.</p>
+      <p>To list workflows, enter <code>/workflow</code>. To see a workflow's steps, checks and recent runs, enter <code>/workflow NAME</code>. The sidebar's Workflows tab shows the same list and follows a run step by step.</p>
+      <p>To run a workflow unattended, for example in CI, use print mode. The exit status is the run's outcome:</p>
+      <pre><code>shift-agent --print "/workflow run NAME" --mode autopilot</code></pre>
+      <p>The model can also list, show and run workflows with its <code>workflow</code> tool. A run it starts happens in a subagent, so a long procedure does not fill the parent session's context.</p>
+
+      <h2>Where workflows come from</h2>
+      <p>Shift reads workflows from three places. The first that defines a name wins:</p>
+      <ol>
+        <li>The project's <code>.shift/workflows/</code>.</li>
+        <li>Your <code>~/.config/shift/workflows/</code>.</li>
+        <li>Any enabled plugin whose manifest declares <code>(workflows "workflows")</code>.</li>
+      </ol>
+      <p>Add or edit a <code>workflow.scm</code> in any of them and the Workflows tab shows the change within half a second. Runs and versions always land in the project, so improving a plugin's workflow leaves a project copy and never edits the plugin.</p>
+
+      <h2>Improve a workflow</h2>
+      <p>To ask Shift for a better version of a workflow that has run before, enter:</p>
+      <pre><code>/workflow improve NAME</code></pre>
+      <p>Shift reads the last runs, proposes one change to the file, and runs the current version and the candidate in two subagents. It keeps the candidate only when it resolves in no more rounds than the current version. Every attempt, kept or not, is recorded under <code>.shift/workflows/NAME/versions/</code>, and nothing is deleted: to go back, copy an earlier version over <code>workflow.scm</code>.</p>
+
+      <h2>Notes and skills that follow</h2>
+      <p>Three things run beside workflows and make later sessions better without your asking:</p>
+      <ul>
+        <li>After every turn, each refused tool call becomes one line in <code>.shift/skills/field-notes/SKILL.md</code>, which every later turn reads. Edit or delete lines as you like. Set <code>field-notes false</code> to turn this off.</li>
+        <li>After a hard turn, one that hit a limit, repeated a call, or took three refusals, Shift may propose a note or a skill. A proposed skill is written disabled and never overwrites an existing one. Set <code>reflection false</code> to turn this off.</li>
+        <li>After a good turn, one that ended clean with eight or more tool calls, or a workflow run that resolved, Shift may write the procedure as a disabled skill. Set <code>distillation false</code> to turn this off.</li>
+      </ul>
+      <p>Enter <code>/skills</code> to see proposed skills and enable the ones you want.</p>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="install.html"><span aria-hidden="true">◀</span> Install and first session</a><span></span></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

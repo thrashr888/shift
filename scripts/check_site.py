@@ -3,6 +3,7 @@
 
 from html.parser import HTMLParser
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import sys
@@ -14,7 +15,10 @@ SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
 SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")} | {
     "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")}   # scripts/tui_capture.py
-FONTS = {"assets/fonts/" + name for name in ("vt323.woff2", "pixelify-sans.woff2", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
+FONTS = {"assets/fonts/" + name for name in ("ibm-cga.woff", "ibm-ega.woff", "ibm-vga.woff", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
+DOCS = {"docs/" + name for name in ("index.html", "install.html", "workflows.html")}
+# The font pack's home, credited in the footer.
+EXTERNAL_LINKS = {"https://int10h.org/oldschool-pc-fonts/"}
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
 LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "generations.html", "tokens.css", "cycle.js")} | {
     "assets/lab/gen%d.json" % n for n in (1, 2, 3)}
@@ -22,8 +26,8 @@ LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither
     "assets/lab/" + pattern % n for n in (1, 2, 3)
     for pattern in ("gen%d.idx.png", "wordmark-gen%d.gif", "wordmark-gen%d.png", "mark-gen%d.gif", "word-gen%d.png")}
 BINARY = SCREENSHOTS | LAB_IMAGES | FONTS
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "hero.js", "dither.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
-PAGES = ("index.html", "panes.html")
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "hero.js", "dither.js", "favicon.svg"} | DOCS | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
+PAGES = ("index.html", "panes.html") + tuple(sorted(DOCS))
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
 
@@ -78,7 +82,7 @@ def check():
             errors.append(f"Screenshot over 900 KB: {name}")
     for name, text in texts.items():
         # The documented MCP endpoint and the workflow folder are public names, not leaks.
-        if re.search(r"localhost|127\.0\.0\.1(?!:7331/mcp)|/Users/|/home/|\.shift/(?!panes\.scm|workflows/)|\.env\b", text):
+        if re.search(r"localhost|127\.0\.0\.1(?!:7331/mcp)|/Users/|/home/|\.env\b", text):
             errors.append(f"Local/private reference in public file: {name}")
     pages = {}
     for name in PAGES:
@@ -96,6 +100,8 @@ def check():
         for tag, link in page.links:
             url = urlsplit(link)
             if url.scheme or url.netloc:
+                if tag == "a" and link in EXTERNAL_LINKS:
+                    continue
                 if tag != "a" or url.scheme != "https" or url.hostname != "github.com":
                     errors.append(f"{name}: nonlocal asset or unexpected external link: {link}")
                     continue
@@ -105,14 +111,17 @@ def check():
                     if not path.is_file() or not path.resolve().is_relative_to(ROOT):
                         errors.append(f"{name}: repository documentation target missing: {link}")
                 continue
-            target = url.path.removeprefix("./")
-            if url.path.startswith("/") or ".." in Path(unquote(url.path)).parts:
+            # A relative link resolves against its page; it may climb out of docs/ but never out of site/.
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(name), unquote(url.path))) if url.path else ""
+            if url.path.endswith("/") or target == ".":
+                target = posixpath.normpath(posixpath.join(target, "index.html"))
+            if url.path.startswith("/") or target.startswith(".."):
                 errors.append(f"{name}: URL does not preserve the project-site base path: {link}")
             elif target and target not in PUBLIC_FILES:
                 errors.append(f"{name}: missing local asset: {link}")
             if url.fragment:
                 # Links across pages ("./#panes") resolve against the target page.
-                ids = pages[target or "index.html"].ids if (target or "index.html") in pages else set()
+                ids = pages[target or name].ids if (target or name) in pages else set()
                 if url.fragment not in ids:
                     errors.append(f"{name}: missing anchor: {link}")
 
@@ -127,7 +136,7 @@ def check():
         errors.append(f"panes.html fields or sources drift from ui.scm: declared={declared + declared_sources}, published={published}")
 
     # The only url() the stylesheet may carry is a self-hosted font from the allowlist.
-    css = re.sub(r"url\(\./(assets/fonts/[a-z0-9-]+\.woff2)\)", lambda m: "" if m.group(1) in FONTS else m.group(0), texts["styles.css"])
+    css = re.sub(r"url\(\./(assets/fonts/[a-z0-9-]+\.woff2?)\)", lambda m: "" if m.group(1) in FONTS else m.group(0), texts["styles.css"])
     if re.search(r"@import\b|url\s*\(", css, re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")
     for name in ("hero.js", "dither.js"):

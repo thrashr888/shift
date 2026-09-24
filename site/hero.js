@@ -13,6 +13,7 @@
     hero.dataset.screen = String(n + 1);
     screens.forEach((s, i) => { s.hidden = i !== n; });
     marks.forEach((m, i) => { m.hidden = i !== n; });
+    hero.querySelectorAll('.pager a').forEach(a => { if (a.hash === '#screen-' + (n + 1)) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
     const canvas = screens[n].querySelector('canvas[data-dither]');
     if (canvas) canvas.dispatchEvent(new Event('shift:resume'));
     if (window.shiftMarks && !reduce) { const m = marks[n]; window.shiftMarks.run(m, true); setTimeout(() => window.shiftMarks.run(m, m.matches(':hover')), 1400); }
@@ -36,6 +37,8 @@
     else if (e.key === 'ArrowLeft') { show(current - 1, true, true); e.preventDefault(); }
     else if (e.key >= '1' && e.key <= String(screens.length)) show(parseInt(e.key, 10) - 1, true, true);
   });
+  const home = document.querySelector('.site-header .wordmark');
+  if (home) home.addEventListener('click', e => { e.preventDefault(); show(0, true, true); });
   addEventListener('hashchange', () => { const m = location.hash.match(/^#screen-(\d)$/); if (m) show(parseInt(m[1], 10) - 1, true, true); });
   const m = location.hash.match(/^#screen-(\d)$/);
   hero.dataset.js = '1';
