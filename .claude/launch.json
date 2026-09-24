@@ -1,6 +1,11 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "site", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8321", "--directory", "site"], "port": 8321 }
+    {
+      "name": "site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/serve_site.py", "8321"],
+      "port": 8321
+    }
   ]
 }
