@@ -13,7 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
 SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")}
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS
+# The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
+LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "tokens.css")}
+LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither.png", "wordmark-iridescent.png", "wordmark-pixel.png")}
+BINARY = SCREENSHOTS | LAB_IMAGES
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | LAB_PAGES | LAB_IMAGES
 PAGES = ("index.html", "panes.html")
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
@@ -63,7 +67,7 @@ def check():
     if errors:
         return errors
 
-    texts = {name: (SITE / name).read_text(encoding="utf-8") for name in PUBLIC_FILES - SCREENSHOTS}
+    texts = {name: (SITE / name).read_text(encoding="utf-8") for name in PUBLIC_FILES - BINARY}
     for name in SCREENSHOTS:
         if (SITE / name).stat().st_size > 900_000:
             errors.append(f"Screenshot over 900 KB: {name}")

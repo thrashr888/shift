@@ -72,7 +72,7 @@
                                   (string-every (lambda (c) (or (char-alphabetic? c) (char-numeric? c) (memv c '(#\- #\_)))) value)))
      ((string=? key "identity") (and (safe-text? value 64) (not (string-null? (string-trim-both value)))))
      ((string=? key "branding") (member value '("subtitle" "replace" "none")))
-     ((string=? key "sidebar") (member value '("auto" "on" "off")))
+     ((string=? key "sidebar") (member value '("auto" "on" "full" "off")))
      ((string=? key "placement") (member value '("left" "right" "top" "bottom" "modal")))
      ((string=? key "density") (member value '("compact" "comfortable")))
      ((string=? key "border") (member value '("thin" "heavy" "double" "none")))

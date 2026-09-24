@@ -36,7 +36,7 @@ KEY_SEQUENCES = {
 }
 ENUMS = {
     '/mode':MODES, '/brand':('replace','subtitle','none'), '/place':('left','right','top','bottom','modal'),
-    '/sidebar':('auto','on','off'), '/density':('compact','comfortable'), '/border':('thin','heavy','double','none'),
+    '/sidebar':('auto','on','full','off'), '/density':('compact','comfortable'), '/border':('thin','heavy','double','none'),
     '/motion':('on','off'), '/work':('on','off'), '/fast':('on','off'), '/terminal':('on','off'), '/mouse':('on','off'),
     '/judge':('on','shadow','off','report'),
     '/ui':('get','undo','reload','code-reload','save user','save project'),
@@ -278,7 +278,7 @@ class Rect:
     h: int
 
 
-def layout(cols, rows, config):
+def layout(cols, rows, config, busy=False):
     # A compact prompt survives even in a tiny terminal.
     if rows < 18 or cols < 40:
         return Rect(0, 0, cols, max(0, rows-3)), None, 'compact'
@@ -287,6 +287,13 @@ def layout(cols, rows, config):
     qdos=config.get('theme')=='qdos'
     top=5 if horizontal or qdos else 7
     body = Rect(0, top, cols, rows-top-5)
+    # full: the inspector takes the whole body as columns of tabs and the
+    # transcript steps aside. It hands back to a docked sidebar while a turn
+    # runs, and in a terminal too narrow for two columns of anything.
+    if policy == 'full' and (busy or cols < 96 or body.h < 10):
+        policy = 'on'
+    if policy == 'full':
+        return Rect(0, body.y, cols, 0), Rect(0, body.y, cols, body.h), 'full'
     session = Rect(body.x, body.y, body.w, body.h)
     fits = cols >= (72 if qdos else 96) and body.h >= (8 if qdos else 10) if not horizontal else cols >= 72 and body.h >= 12
     visible = policy == 'on' or policy == 'auto' and fits and place != 'modal'
@@ -1287,6 +1294,13 @@ class Terminal:
             start=panel.w+2 if panel and mode=='docked' and c['placement']=='left' else 2
             self.metadata(strip_y,start,limit-start)
             self.put(strip_y+1,0,self.rule(cols),cols,3)
+            if panel and mode=='full':
+                x=2;tabs=self.tabs();shown=self.column_tabs(panel)
+                for tab in tabs:
+                    text=' '+self.tab_label(tab)+' '
+                    self.button(strip_y,x,text,len(text),('tab',tab),12 if m.panel_tab==tab else 3 if tab in shown else 4,m.panel_tab==tab)
+                    x+=len(text)+1
+                    if x>=cols-2:break
             if panel and mode=='docked':
                 x=panel.x+2
                 labels=[self.tab_label(tab) for tab in self.tabs()]
@@ -1323,16 +1337,16 @@ class Terminal:
         self.put(1,0,'Select commands or sidebar; Shift-Tab cycles mode',room,4)
         if cols>=60:self.put(1,room+2,build,len(build),4)
         self.put(2,0,('=' if c.get('ascii') else '═')*cols,cols,1)
-        if panel and mode=='docked' and c['placement'] in ('left','right'):
-            x=panel.x
-            page,previous,following=self.tab_page(panel.w-1,1,4)
+        if panel and (mode=='docked' and c['placement'] in ('left','right') or mode=='full'):
+            x=0 if mode=='full' else panel.x
+            page,previous,following=self.tab_page((cols if mode=='full' else panel.w)-1,1,4)
             for tab,label in page:
                 text=label+' '
                 self.button(3,x,text,len(text),('tab',tab),12 if tab==m.panel_tab else 3)
                 x+=len(text)
             if previous or following:self.tab_arrows(3,x,previous,following)
-            start=panel.w+1 if c['placement']=='left' else 0
-            width=cols-panel.w-2
+            start=0 if mode=='full' else panel.w+1 if c['placement']=='left' else 0
+            width=cols if mode=='full' else cols-panel.w-2
         else:start=0;width=cols
         self.metadata(3,start,width)
         self.put(4,0,('=' if c.get('ascii') else '═')*cols,cols,1)
@@ -1476,6 +1490,7 @@ class Terminal:
             else:
                 self.put(panel.y+1,2,'Session '+str(m.session.get('name','default'))+' | '+m.status(),panel.w-4,4)
             return
+        if mode=='full':return self.columns(panel)
         if mode=='overlay':self.box(panel,'OUTPUT · Tab changes view')
         else:
             x=panel.x if c['placement']=='right' else panel.x+panel.w-1
@@ -1483,7 +1498,29 @@ class Terminal:
             vertical='║' if double else '│'
             self.put(panel.y-1,x,'+' if c.get('ascii') else '╦' if double else '┬',1,3)
             for y in range(panel.y,panel.y+panel.h):self.put(y,x,'|' if c.get('ascii') else vertical,1,3)
-        width=panel.w-4;group=self.active_group()
+        rows,actions=self.tab_rows(m.panel_tab,panel.w-4,panel.h)
+        self.paint_rows(panel,m.panel_tab,rows,actions)
+
+    def column_tabs(self,panel):
+        # The active tab is the leftmost column; as many follow as fit at 48 wide.
+        tabs=self.tabs();count=max(1,panel.w//48)
+        active=tabs.index(self.model.panel_tab) if self.model.panel_tab in tabs else 0
+        return tabs[active:active+count]
+
+    def columns(self,panel):
+        m=self.model;c=m.config;shown=self.column_tabs(panel);colw=panel.w//len(shown)
+        for i,tab in enumerate(shown):
+            r=Rect(panel.x+i*colw,panel.y,colw,panel.h)
+            if i:
+                for y in range(r.y,r.y+r.h):self.put(y,r.x,'|' if c.get('ascii') else '│',1,3)
+            label=' '+self.tab_label(tab)+' '
+            self.button(r.y,r.x+2,label,len(label),('tab',tab),12 if tab==m.panel_tab else 3,tab==m.panel_tab)
+            rows,actions=self.tab_rows(tab,r.w-4,r.h-1)
+            self.paint_rows(Rect(r.x,r.y+1,r.w,r.h-1),tab,rows,actions)
+
+    def tab_rows(self,tab,width,height):
+        # One tab's content as rows, independent of where it is painted.
+        m=self.model;c=m.config;group=self.active_group()
         rows=[];actions={}
         def title(text):
             rows.append([(text,3,True)])
@@ -1688,9 +1725,9 @@ class Terminal:
             for i,name in enumerate(names):
                 if i:line('')
                 sections[name]()
-        if self.pane(m.panel_tab):
-            pane=self.pane(m.panel_tab);outputs=m.pane_output.get(m.panel_tab,{})
-            title(str(pane.get('title',m.panel_tab)).upper())
+        if self.pane(tab):
+            pane=self.pane(tab);outputs=m.pane_output.get(tab,{})
+            title(str(pane.get('title',tab)).upper())
             fields={'session.name':m.session.get('name'),'session.provider':m.session.get('provider'),'session.model':m.session.get('model'),
                     'session.mode':m.session.get('mode'),'session.turn':m.session.get('turn'),'usage.prompt':m.usage.get('prompt'),
                     'usage.limit':m.usage.get('limit'),'usage.round':m.usage.get('round'),'usage.max_rounds':m.usage.get('max_rounds'),
@@ -1709,7 +1746,7 @@ class Terminal:
                     argv=' '.join(str(part) for part in row['command']);entry=outputs.get(index)
                     mark=('▶ ' if self.unicode and not c.get('ascii') else '> ')
                     rows.append([(mark,2,True),(argv,1,True),((' · '+entry['status']+(' · '+entry['at'] if entry['at'] else '')) if entry else ' · click to run',2 if entry and entry['ok'] else 11 if entry else 4,False)])
-                    actions[len(rows)-1]=('pane',m.panel_tab+' '+str(index))
+                    actions[len(rows)-1]=('pane',tab+' '+str(index))
                     if entry:
                         for text in entry['lines'][:40]:
                             for part in wrap(text,max(1,width-2)):rows.append([('  '+part,1,False)])
@@ -1717,12 +1754,12 @@ class Terminal:
             if any(isinstance(row,dict) and 'command' in row for row in pane.get('rows',[])):
                 line('')
                 for part in wrap('Commands run only when /allow-run permits them',width,words=True):line(part,4)
-        elif m.panel_tab=='model':render(['models'])
-        elif m.panel_tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
-        elif m.panel_tab=='workflows':render(['workflows'])
-        elif m.panel_tab=='session':
+        elif tab=='model':render(['models'])
+        elif tab=='log':render(['jobs','runs'] if m.jobs else ['runs'])
+        elif tab=='workflows':render(['workflows'])
+        elif tab=='session':
             render(['session','skills']+(['plugins'] if m.plugins else [])+['sessions','peers']+(['servers'] if m.servers else [])+['receipt']+(['telemetry'] if c.get('metrics') and 'context' in c['sections'] else [])+['source'])
-        elif m.panel_tab=='diff':
+        elif tab=='diff':
             title('OUTPUT DIFF');line('')
             rows.extend((self.framed_diff(group,width,full=True) or [[('No committed changes',4,False)]])
                         if m.show_diff else [[('Diff folded (^O opens)',4,False)]])
@@ -1738,7 +1775,7 @@ class Terminal:
             if 'files' in c['sections']:
                 title('OUTPUT DIFF');line('')
                 diff=self.diff_rows(group,max(1,width-4) if width>=8 else width)
-                preview=max(2,min(8,panel.h//3))
+                preview=max(2,min(8,height//3))
                 rows.extend((self.framed_diff(group,width,limit=preview) or [[('No committed changes',4,False)]])
                             if m.show_diff else [[('Diff folded (^O opens)',4,False)]])
                 if m.show_diff and len(diff)>preview:line('Tab: full diff ('+str(len(diff))+' lines)',4)
@@ -1754,7 +1791,7 @@ class Terminal:
                 title('TELEMETRY');line('')
                 for metric in self.telemetry():
                     rows.append(self.meter(metric,width))
-                    if panel.h>=26:line('')
+                    if height>=26:line('')
                 for note in self.telemetry_notes():
                     for part in wrap(note,width,words=True):line(part,4)
                 sections['context']=rows;rows=[]
@@ -1764,16 +1801,25 @@ class Terminal:
                     line('exit '+str(run.get('exit_code','unknown'))+'  '+' '.join(run.get('command',[])),2 if run.get('success') else 11)
                 sections['checks']=rows
             rows=[parts for section in c['sections'] for parts in sections.get(section,[])]
+        return rows,actions
+
+    def paint_rows(self,panel,tab,rows,actions):
+        m=self.model;width=panel.w-4
         height=max(0,panel.h-2)
-        self.panel_limits[m.panel_tab]=max(0,len(rows)-height)
-        start=0
-        start=min(m.panel_scroll.get(m.panel_tab,0),max(0,len(rows)-height))
-        m.panel_scroll[m.panel_tab]=start
+        self.panel_limits[tab]=max(0,len(rows)-height)
+        start=min(m.panel_scroll.get(tab,0),max(0,len(rows)-height))
+        m.panel_scroll[tab]=start
         for i,parts in enumerate(rows[start:start+height]):
             self.spans(panel.y+1+i,panel.x+2,parts,width)
             if start+i in actions:self.hit(panel.y+1+i,panel.x+2,width,actions[start+i])
         if len(rows)>height:
             self.put(panel.y+panel.h-1,panel.x+2,f'wheel {start+1}-{min(len(rows),start+height)}/{len(rows)} | Tab',width,4)
+
+    def current_layout(self):
+        # A turn in flight hands a full-width inspector back to the docked
+        # sidebar so the transcript is visible while the model works.
+        m=self.model
+        return layout(*reversed(self.screen.getmaxyx()),m.config,busy=m.activity=='working' and not m.ready)
 
     def draw(self):
         self.colors()
@@ -1785,13 +1831,13 @@ class Terminal:
         self.draw_revision=m.revision
         self.marks=[];self.checker=None;self.dots=None
         self.hits=[];self.regions={};self.draw_size=(rows,cols)
-        session,panel,mode=layout(cols,rows,c)
+        session,panel,mode=self.current_layout()
         self.regions['transcript']=session
-        if panel and (mode=='overlay' or c['placement'] not in ('top','bottom')):self.regions['panel']=panel
+        if panel and (mode in ('overlay','full') or c['placement'] not in ('top','bottom')):self.regions['panel']=panel
         if m.panel_tab not in self.tabs():m.panel_tab='work'
         if mode!='compact':self.header(cols,panel,mode)
         inline_diff=c['placement'] in ('top','bottom') or panel is None or mode=='overlay'
-        lines,positions=self.body_rows(max(1,session.w-4),mode=='compact',inline_diff)
+        lines,positions=([],[]) if mode=='full' else self.body_rows(max(1,session.w-4),mode=='compact',inline_diff)
         pending=self.motion_tick() is not None and session.h>2
         # The pending-tool box takes rows from the transcript instead of
         # covering its tail, so the newest lines stay reachable.
@@ -1984,16 +2030,19 @@ class Terminal:
                 m.activity='cancelling';m.notice='Cancelling · waiting for the session to stop'
             else:m.draft='';m.cursor=0
         elif key=='\x02':
-            _,panel,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
-            visible=panel is not None or mode=='compact' and m.config['sidebar']=='on'
-            self.child.ui({'action':'patch','patch':{'sidebar':'off' if visible else 'on'}})
+            # ^B cycles on, full, off; a terminal too narrow for columns skips full.
+            _,panel,mode=self.current_layout()
+            policy=m.config['sidebar'];wide=self.screen.getmaxyx()[1]>=96 and mode!='compact'
+            visible=panel is not None or mode=='compact' and policy=='on'
+            following='off' if policy=='full' else 'full' if visible and wide else 'off' if visible else 'on'
+            self.child.ui({'action':'patch','patch':{'sidebar':following}})
         elif key=='\x10':self.open_palette()
         elif key==curses.KEY_F2:self.cycle_theme()
         elif key=='\x17':m.work=not m.work
         elif key=='\x0f':m.show_diff=not m.show_diff
         elif key=='\t' and not m.approval:
-            _,panel,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
-            if panel and (mode=='overlay' or m.config['placement'] not in ('top','bottom')):
+            _,panel,mode=self.current_layout()
+            if panel and (mode in ('overlay','full') or m.config['placement'] not in ('top','bottom')):
                 tabs=self.tabs()
                 m.panel_tab=tabs[(tabs.index(m.panel_tab)+1)%len(tabs)] if m.panel_tab in tabs else tabs[0]
                 if m.panel_tab=='model':self.request_model_list()
@@ -2002,7 +2051,7 @@ class Terminal:
             if m.approval:self.log_approval('n');self.child.send('n');m.approval=False;m.activity='working';m.draft,m.cursor=m.pending_draft or ('',0);m.pending_draft=None;self.menu=False
             elif self.menu:self.menu=False
             else:
-                _,_,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
+                _,_,mode=self.current_layout()
                 if mode=='overlay':self.child.ui({'action':'patch','patch':{'sidebar':'off'}})
         elif key in ('\n','\r',curses.KEY_ENTER):
             line=m.draft
@@ -2043,7 +2092,7 @@ class Terminal:
             if m.approval:
                 m.panel_scroll['approval']=max(0,m.panel_scroll.get('approval',0)+(-10 if key==curses.KEY_PPAGE else 10))
                 return True
-            _,panel,mode=layout(*reversed(self.screen.getmaxyx()),m.config)
+            _,panel,mode=self.current_layout()
             if panel and m.panel_tab in m.panel_scroll and (mode=='overlay' or m.config['placement'] not in ('top','bottom')):
                 m.panel_scroll[m.panel_tab]=max(0,m.panel_scroll[m.panel_tab]+(-10 if key==curses.KEY_PPAGE else 10))
             else:

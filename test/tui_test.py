@@ -136,6 +136,15 @@ class Layout(unittest.TestCase):
         terminal.key(tui.curses.KEY_NPAGE);terminal.draw()
         self.assertEqual(terminal.anchor,(10,0))
 
+    def test_full_policy_takes_the_width_and_hands_back_when_busy_or_narrow(self):
+        config={'placement':'right','sidebar':'full'}
+        session,panel,mode=tui.layout(160,40,config)
+        self.assertEqual(mode,'full');self.assertEqual((panel.x,panel.w,panel.y),(0,160,7));self.assertEqual(session.h,0)
+        self.assertEqual(tui.layout(160,40,config,busy=True)[2],'docked')
+        self.assertEqual(tui.layout(80,40,config)[2],'overlay')
+        self.assertEqual(tui.layout(160,20,config)[2],'overlay')
+        self.assertEqual(tui.layout(30,10,config)[2],'compact')
+
     def test_bottom_telemetry_docks_only_when_readable(self):
         config={'placement':'bottom','sidebar':'on'}
         self.assertEqual(tui.layout(40,40,config)[2],'overlay')
@@ -855,7 +864,7 @@ class Interaction(unittest.TestCase):
         self.click('tab','diff')
         self.assertEqual(self.m.panel_tab,'diff')
         self.click('sidebar')
-        self.assertEqual(self.t.child.ui.call_args.args[0]['patch'],{'sidebar':'off'})
+        self.assertEqual(self.t.child.ui.call_args.args[0]['patch'],{'sidebar':'full'})
 
     def test_completion_filter_arguments_escape_palette_and_mouse(self):
         for key in '/mo':self.t.key(key)
@@ -1876,3 +1885,46 @@ class Arguments(unittest.TestCase):
                 self.assertNotIn('requires a terminal',result.stderr)
 
 if __name__=='__main__':unittest.main()
+
+
+class FullWidthPanels(unittest.TestCase):
+    def text(self,terminal):
+        return '\n'.join(terminal.screen.line(y) for y in range(terminal.screen.size[0]))
+
+    def wide(self,policy='full'):
+        terminal=terminal_view(40,160,Mock());m=terminal.model
+        m.event({'type':'session','value':{'name':'main','provider':'ollama','model':'qwen3.8:27b-mlx','mode':'autopilot','turn':1}})
+        m.control('ready');m.config['sidebar']=policy;terminal.draw()
+        return terminal
+
+    def test_columns_fill_the_width_and_the_active_tab_leads(self):
+        terminal=self.wide();m=terminal.model;text=self.text(terminal)
+        self.assertNotIn('What would you like to work on?',text)
+        strip=terminal.screen.line(7)
+        self.assertEqual([tab for tab in ('WORK','DIFF','SESSION') if tab in strip],['WORK','DIFF','SESSION'])
+        self.assertIn('FILES',text);self.assertIn('SESSION',text)
+        self.assertEqual(terminal.column_tabs(terminal.regions['panel']),['work','diff','session'])
+        terminal.key('\t');terminal.draw()
+        self.assertEqual(m.panel_tab,'diff')
+        self.assertEqual(terminal.column_tabs(terminal.regions['panel']),['diff','session','model'])
+        self.assertIn('ollama/qwen3.8:27b-mlx',self.text(terminal))
+
+    def test_narrower_terminals_show_fewer_columns(self):
+        terminal=terminal_view(40,100,Mock());terminal.model.control('ready');terminal.model.config['sidebar']='full';terminal.draw()
+        self.assertEqual(terminal.column_tabs(terminal.regions['panel']),['work','diff'])
+
+    def test_a_running_turn_hands_the_width_back_to_the_transcript(self):
+        terminal=self.wide();m=terminal.model
+        m.control('working');terminal.draw()
+        self.assertIn('What would you like to work on?',self.text(terminal))
+        m.control('ready');terminal.draw()
+        self.assertNotIn('What would you like to work on?',self.text(terminal))
+
+    def test_control_b_cycles_on_full_off(self):
+        terminal=self.wide('on')
+        terminal.key('\x02');self.assertEqual(terminal.child.ui.call_args.args[0]['patch'],{'sidebar':'full'})
+        terminal.model.config['sidebar']='full';terminal.draw()
+        terminal.key('\x02');self.assertEqual(terminal.child.ui.call_args.args[0]['patch'],{'sidebar':'off'})
+        terminal.model.config['sidebar']='off';terminal.draw()
+        terminal.key('\x02');self.assertEqual(terminal.child.ui.call_args.args[0]['patch'],{'sidebar':'on'})
+

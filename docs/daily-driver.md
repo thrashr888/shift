@@ -876,7 +876,7 @@ the cached identity. No inference request is made for these measurements.
 | `/name thrashr888` | Set personal identity |
 | `/brand replace` | Replace the wordmark with your name (`subtitle` or `none` also available) |
 | `/place bottom` | Place the inspector left/right/top/bottom/modal |
-| `/sidebar auto` | Select auto/on/off visibility |
+| `/sidebar auto` | Select auto/on/full/off visibility; `full` lays the inspector's tabs out as columns across the whole width |
 | `/theme acid` | Select a built-in or user-owned theme |
 | `/density compact` | Reduce transcript whitespace (`comfortable` restores it) |
 | `/motion off` | Disable the working mark animation (`on` restores it) |
@@ -1113,7 +1113,17 @@ Validation must cover live resize during streaming, draft/focus retention,
 invalid preference patches, renderer failures and recovery, theme switching,
 scope precedence, narrow layouts, and non-color-only status indicators.
 
-### Full-width panels (proposed September 23, 2026)
+### Full-width panels (September 23, 2026)
+
+Implemented as proposed below, with two details settled in the code: the
+columns share the width evenly once their count is fixed (160 columns is
+three of 53, 100 is two of 50), and the mouse wheel scrolls the active,
+leftmost column. `^B` now cycles on, full, off in a terminal at least 96
+columns wide and on, off in a narrower one; `/sidebar full` and the UI
+tool's `patch` set it directly. During a turn the layout hands back to the
+docked sidebar and returns to `full` when the turn ends. Tests cover the
+layout at five sizes, the column window, the handoff and the cycle.
+
 
 The brand mocks made one thing about the terminal obvious: the inspector's
 tabs are screens in their own right, and a receipt, a workflow run or the

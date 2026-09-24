@@ -332,6 +332,27 @@ dither and halftone, in three registers, and no operating-system chrome:
   running the same field through the aged tokens if the full-saturation
   version reads too loud beside the cover.
 
+**Wordmark, decided.** The round-dot halftone version
+(`wordmark-iridescent.png`) is not it; the square-pixel ordered dither from
+the exploration sheet is, iridescent but pixel-edged, the way a late-1980s
+Sierra title screen dithers a sunset. So the reference era is Sierra's EGA
+to VGA years, 1988 to 1991: King's Quest IV to V, 320 by 200, sixteen colors
+dithered into more. One year keeps it consistent; borrowing across a few is
+fine. The pixel version replaces the halftone one as the mark.
+
+**Fidelity as a conceit.** Paul raised Evoland, where progress unlocks color
+and then 3D, and asked whether the site could do the same, or whether that
+is nostalgia looking for a home. It fits, on one condition: the product
+already has the word for it. Shift's behavior moves through generations, so
+the site can too: `GEN 1` is the 1-bit register, `GEN 2` sixteen EGA
+colors, `GEN 3` the full palette with the OKLCH highlights and the depth
+lab. No achievements, no unlocking by clicking things; the generation
+advances as the reader scrolls through the three pillars, and a control in
+the corner lets anyone jump. Reduced motion and no JavaScript show `GEN 3`.
+Three steps, not a game; a metaphor the product earns rather than a theme
+laid over it. The 2-, 8- and 16-bit wordmarks are the first three assets to
+make.
+
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas
 above, with no libraries: the real TUI capture is Bayer-dithered into
