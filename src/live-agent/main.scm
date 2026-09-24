@@ -36,6 +36,7 @@
   #:use-module (live-agent typesafe)
   #:use-module (live-agent typed)
   #:use-module (live-agent plugins)
+  #:use-module (live-agent declared)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:use-module (live-agent redact)
@@ -616,10 +617,30 @@
            (catch #t
              (lambda () (typed-rank-tools (car endpoint) (cdr endpoint) query candidates))
              (lambda _ (map car candidates)))))))
+;; A plugin's declared tools are searched beside the MCP ones and enabled the
+;; same way, so the cost of a schema is paid by the turn that asked for it.
+;; Matching is the plain substring test the word ranking falls back on; a
+;; declared catalog is small enough that ranking it would be ceremony.
+(define (declared-search query)
+  (let ((needle (string-downcase (string-trim-both query))))
+    (filter-map
+     (lambda (entry)
+       (and (or (string-prefix? "select:" needle)
+                (string-null? needle)
+                (string-contains (string-downcase (car entry)) needle)
+                (string-contains (string-downcase (cdr entry)) needle))
+            (if (string-prefix? "select:" needle)
+                (and (member (car entry)
+                             (map string-trim-both (string-split (substring (string-trim-both query) 7) #\,)))
+                     (list (car entry) (declared-schema (car entry))))
+                (list (car entry) (declared-schema (car entry))))))
+     (declared-catalog))))
+
 (define (execute-tool-search generation arguments)
   (let ((query (json-object-ref arguments "query" #f)))
     (unless (string? query) (error "query must be a string"))
-    (let ((matches (mcp-search query #:rerank (typed-rerank generation))))
+    (let ((matches (append (declared-search query)
+                           (mcp-search query #:rerank (typed-rerank generation)))))
       (emit-servers!)
       (for-each (lambda (m) (unless (member (car m) turn-mcp-tools) (set! turn-mcp-tools (append turn-mcp-tools (list (car m)))))) matches)
       (make-tool-result #t
@@ -702,6 +723,7 @@
     (extra-theme-dirs (delete-duplicates (append-map (lambda (p) (map dirname (plugin-field p 'themes))) enabled)))
     (catch #t (lambda () (ui-action! (json-object (cons "action" "reload")))) (lambda _ #f))
     ;; allowlists
+    (declared-tools-set! (append-map (lambda (p) (plugin-field p 'tools)) enabled))
     (allow-plugin-set! 'run-allow (append-map (lambda (p) (plugin-field p 'allow-run)) enabled))
     (allow-plugin-set! 'mcp-allow (append-map (lambda (p) (plugin-field p 'allow-mcp)) enabled))
     ;; live-image artifacts
@@ -3045,11 +3067,36 @@
   (let loop ((remaining calls) (result messages))
     (if (null? remaining)
         result
-        (let* ((call (car remaining))
+        (let* ((original (car remaining))
+               ;; A declared tool has no authority of its own. Rewriting the
+               ;; call into the equivalent `run` here, before anything else
+               ;; reads it, is what makes that true rather than merely
+               ;; intended: the mode, the allowlist, the judge, the approval
+               ;; prompt, the ledger's run record and the receipt all see the
+               ;; argv, not the plugin's name for it. A template that renders
+               ;; to an argv nobody allowed asks, exactly as run would.
+               (declared (and (declared-tool? (tool-call-name original))
+                              (tool-call-name original)))
+               (rewrite-error
+                (and declared
+                     (catch #t
+                       (lambda () (declared-argv declared (tool-call-arguments original)) #f)
+                       (lambda (key . arguments) (error-text key arguments)))))
+               (call (if (and declared (not rewrite-error))
+                         (make-tool-call
+                          (tool-call-id original) "run"
+                          (json-object (cons "argv" (apply json-array
+                                                           (declared-argv declared (tool-call-arguments original)))))
+                          (tool-call-raw-arguments original))
+                         original))
                (name (tool-call-name call))
                (ui-id (begin (set! next-ui-tool-id (+ next-ui-tool-id 1))
                              next-ui-tool-id))
-               (enabled? (if (member name enabled-tools) #t #f)))
+               (enabled? (if (and (member name enabled-tools)
+                                  ;; The rewrite targets run, so a declared tool
+                                  ;; is unavailable wherever run is.
+                                  (or (not declared) (member "run" enabled-tools)))
+                             #t #f)))
           (runtime-record!
            runtime 'tool-call
            `((generation . ,(generation-id generation))
@@ -3060,14 +3107,18 @@
           (let* ((span
                   (trace-start!
                    tracer (string-append "tool." name) "TOOL"
-                   `((generation.id . ,(generation-id generation))
-                     (tool.name . ,name)
-                     (input.value . ,(json-write (tool-call-arguments call))))
+                   (append
+                    (if declared `((tool.declared . ,declared)) '())
+                    `((generation.id . ,(generation-id generation))
+                      (tool.name . ,name)
+                      (input.value . ,(json-write (tool-call-arguments call)))))
                    parent))
                  (outcome
                   (catch #t
                     (lambda ()
                       (cond
+                       (rewrite-error
+                        (make-tool-result #f (format #f "~a: ~a" declared rewrite-error)))
                        ((not enabled?) (unavailable-result name))
                        ((json-object-ref (tool-call-arguments call) "invalid_json" #f)
                         (runtime-record! runtime 'tool-arguments-invalid
@@ -3325,13 +3376,18 @@
          (configured-tools
           (map tool-name (generation-ref generation 'agent-tools)))
          (enabled-tools
-          (filter (lambda (name)
-                    (and (within-process-tool-ceiling? name)
-                         (or (not (member name '("traces" "recall"))) (builtin-enabled? 'tracing))
-                         (or (not (string=? name "spawn"))
-                             (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
-                         (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
-                  configured-tools))
+          (append
+           (filter (lambda (name)
+                     (and (within-process-tool-ceiling? name)
+                          (or (not (member name '("traces" "recall"))) (builtin-enabled? 'tracing))
+                          (or (not (string=? name "spawn"))
+                              (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
+                          (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
+                   configured-tools)
+           ;; A declared tool becomes a `run` call, so it is worth offering only
+           ;; when run is available at all. The rest of a plugin's tools stay
+           ;; discoverable through tool_search rather than resident.
+           (if (member "run" configured-tools) (declared-resident-names) '())))
          (max-rounds
           (setting-ref generation 'agent-max-tool-rounds))
          (stream? (setting-ref generation 'agent-stream?))
@@ -4226,7 +4282,8 @@
                    (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
                    supported-tool-names
                    (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
-        (external-tool-schema mcp-tool-schema)
+        (external-tool-schema
+         (lambda (name) (or (declared-schema name) (mcp-tool-schema name))))
         (overflow-sink (make-overflow-sink (and session runtime-state-directory)))
         (set! runtime-state-directory-for-judge (and session runtime-state-directory))
         (set! spawn-session session)

@@ -87,6 +87,7 @@ class Provider(BaseHTTPRequestHandler):
 
     plan = []
     last_messages = []
+    last_tools = []
     judge_requests = 0
     lock = threading.Lock()
 
@@ -103,6 +104,7 @@ class Provider(BaseHTTPRequestHandler):
                     step = answer(json.dumps({"verdict": "allow", "rule": "ok", "reason": "fixture"}))
             else:
                 Provider.last_messages = body["messages"]
+                Provider.last_tools = body.get("tools", [])
                 step = Provider.plan.pop(0) if Provider.plan else answer("done")
                 if isinstance(step, tuple):
                     step = step[1]
@@ -151,6 +153,7 @@ class CodingWorkflow(unittest.TestCase):
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         Provider.plan = []
         Provider.last_messages = []
+        Provider.last_tools = []
         image = (ROOT / "test/session-agent.scm").read_text()
         for old, new in (
             ("(define agent-provider 'ollama)", "(define agent-provider 'openai)"),
@@ -1353,6 +1356,99 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("[sandbox] make check", self.tool_results()[-1])
         self.assertEqual(Provider.judge_requests, before)
         self.shift("/sandbox off\n/quit\n")
+
+    def test_declared_tools_are_run_calls_under_another_name(self):
+        """A declared tool carries no authority: it is the equivalent run call."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        plugin = self.project / ".shift/plugins/board"
+        plugin.mkdir(parents=True)
+        (plugin / "plugin.scm").write_text(
+            '((plugin "board" "0.1")\n'
+            ' (description "fixture")\n'
+            ' (tool "board_say" (description "Print one word to the board.")\n'
+            '   (resident)\n'
+            '   (parameter "word" string "The word to print")\n'
+            '   (run "printf" "{word}"))\n'
+            ' (tool "board_peek" (description "Peek at a card by id.")\n'
+            '   (parameter "card" string "Card id")\n'
+            '   (run "printf" "peeked-{card}"))\n'
+            ' (allow-run ("printf")))\n')
+
+        # Resident: offered without a search, and allowlisted by the plugin, so
+        # it runs in manual mode without asking, exactly as the run would.
+        output = self.shift(
+            "/plugins\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "from-declared"}), answer("done")],
+        )
+        self.assertIn("2 tools (1 resident)", output)
+        self.assertIn("from-declared", self.tool_results()[-1])
+
+        # The schema reaches the model under its own name, and the one that did
+        # not ask to be resident does not ride along.
+        names = [t["function"]["name"] for t in Provider.last_tools]
+        self.assertIn("board_say", names)
+        self.assertNotIn("board_peek", names)
+
+        # Non-resident: tool_search enables it for the turn, then it runs.
+        # Autopilot, because manual asks before every read-only tool.
+        output = self.shift(
+            "/mode autopilot\npeek\n/quit\n",
+            plan=[tool_call("tool_search", {"query": "peek at a card"}),
+                  tool_call("board_peek", {"card": "c-12"}),
+                  answer("done")],
+        )
+        self.assertIn("board_peek", self.tool_results()[-2])
+        self.assertIn("peeked-c-12", self.tool_results()[-1])
+
+        # A value full of shell metacharacters is one argv element and nothing
+        # else. printf echoes it back whole; no second command runs.
+        self.shift(
+            "say\n/quit\n",
+            plan=[tool_call("board_say", {"word": "a; touch pwned"}), answer("done")],
+        )
+        self.assertIn("a; touch pwned", self.tool_results()[-1])
+        self.assertFalse((self.project / "pwned").exists())
+
+        # A call that does not satisfy the template is the model's mistake.
+        self.shift(
+            "say\n/quit\n",
+            plan=[tool_call("board_say", {}), answer("done")],
+        )
+        self.assertIn("requires word", self.tool_results()[-1])
+
+        # Plan mode denies it because it denies the run it becomes.
+        output = self.shift(
+            "/mode plan\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "nope"}), answer("done")],
+        )
+        self.assertIn("denied", json.dumps(Provider.last_messages))
+
+        # Disabling the plugin takes the tool with it.
+        output = self.shift(
+            "/plugin disable board\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "gone"}), answer("done")],
+        )
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+
+    def test_declared_tool_without_an_allowlist_entry_asks(self):
+        """A plugin cannot widen its own authority by wrapping a command."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        plugin = self.project / ".shift/plugins/unallowed"
+        plugin.mkdir(parents=True)
+        (plugin / "plugin.scm").write_text(
+            '((plugin "unallowed" "0.1")\n'
+            ' (description "fixture")\n'
+            ' (tool "sneak" (description "Run something nobody allowed.")\n'
+            '   (resident)\n'
+            '   (run "printf" "sneaky")))\n')
+        # The run is not allowlisted, so it needs approval. A piped session has
+        # nobody to ask, so it is denied and the command never runs.
+        self.shift(
+            "go\n/quit\n",
+            plan=[tool_call("sneak", {}), answer("done")],
+        )
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+        self.assertNotIn("sneaky", " ".join(self.tool_results()))
 
     def test_plugins_contribute_and_scopes_override(self):
         self.env["SHIFT_PLUGINS"] = "on"
