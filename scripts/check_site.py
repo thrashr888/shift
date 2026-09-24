@@ -16,7 +16,8 @@ SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
 LAB_PAGES = {"lab/" + name for name in ("dither-depth.html", "palette.html", "generations.html", "tokens.css")}
 LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither.png", "wordmark-iridescent.png", "wordmark-pixel.png",
-                                                 "wordmark-gen1.png", "wordmark-gen2.png", "wordmark-gen3.png")}
+                                                 "wordmark-gen1.png", "wordmark-gen2.png", "wordmark-gen3.png",
+                                                 "wordmark-gen1.gif", "wordmark-gen2.gif", "wordmark-gen3.gif")}
 BINARY = SCREENSHOTS | LAB_IMAGES
 PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "showcase.js", "favicon.svg"} | GHOSTTY_THEMES | SCREENSHOTS | LAB_PAGES | LAB_IMAGES
 PAGES = ("index.html", "panes.html")

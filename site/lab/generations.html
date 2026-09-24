@@ -27,7 +27,7 @@
 </head>
 <body><main>
   <h1>shift <b>///</b> lab: generations</h1>
-  <p class="note">The wordmark in three generations, each honest to its era's grid and palette. Scroll the three pillars and the mark advances; keys 1, 2, 3 or the buttons jump. Reduced motion shows GEN 3 and skips the scroll.</p>
+  <p class="note">The wordmark in three generations, each honest to its era's grid and palette, each a GIF at native resolution whose pixels never change: only the color table rotates, frame to frame, the demoscene's palette cycling. Scroll the three pillars and the mark advances; keys 1, 2, 3 or the buttons jump. Reduced motion shows the still GEN 3 and skips the scroll.</p>
   <div class="sticky">
     <div class="control" role="group" aria-label="Generation">
       <span>GEN</span>
@@ -35,9 +35,9 @@
       <span id="label"></span>
     </div>
     <div class="stage">
-      <img data-gen="1" src="../assets/lab/wordmark-gen1.png" alt="shift /// as a CGA-era mark: four colors on a 160 by 50 grid">
-      <img data-gen="2" src="../assets/lab/wordmark-gen2.png" alt="shift /// as an EGA-era mark: sixteen colors on a 320 by 100 grid, ordered dither between stops" hidden>
-      <img data-gen="3" src="../assets/lab/wordmark-gen3.png" alt="shift /// as a VGA-era mark: 256 colors on a 640 by 200 grid, smooth ramps with a pixel bevel" hidden>
+      <img data-gen="1" src="../assets/lab/wordmark-gen1.gif" alt="shift /// as a CGA-era mark: four colors on a 160 by 50 grid">
+      <img data-gen="2" src="../assets/lab/wordmark-gen2.gif" alt="shift /// as an EGA-era mark: sixteen colors on a 320 by 100 grid, ordered dither between stops" hidden>
+      <img data-gen="3" src="../assets/lab/wordmark-gen3.gif" alt="shift /// as a VGA-era mark: 256 colors on a 640 by 200 grid, smooth ramps with a pixel bevel" hidden>
       <div class="caption" id="caption"></div>
     </div>
   </div>
@@ -58,7 +58,7 @@
   document.querySelectorAll('.control button').forEach(b => b.addEventListener('click', () => { manual = true; show(b.dataset.gen); }));
   let manual = false;
   addEventListener('keydown', e => { if ('123'.includes(e.key) && e.key) { manual = true; show(e.key); } });
-  if (reduce) show(3);
+  if (reduce) { document.querySelectorAll('.stage img').forEach(img => { img.src = img.src.replace('.gif', '.png'); }); show(3); }
   else {
     show(1);
     // The generation advances as each pillar crosses the middle of the viewport; a manual pick holds until the next pillar.

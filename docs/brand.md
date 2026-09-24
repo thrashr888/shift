@@ -374,6 +374,25 @@ mark shown at GEN 1, advancing to 2 and 3 as the three pillars scroll past
 the middle of the viewport, keys 1, 2, 3 or three buttons to jump, reduced
 motion showing GEN 3 with no scroll at all.
 
+**Palette cycling** (`wordmark-gen1.gif`, `wordmark-gen2.gif`,
+`wordmark-gen3.gif`). The era's own animation, done the era's way: the
+pixel data of each mark is written once and never changes; only the color
+table rotates from frame to frame, so the gradient marches through the
+letters while the dither stays put. They are GIFs at native resolution
+(160×50, 320×100, 640×200) with a local color table per frame, which is the
+one thing the format can do that a PNG cannot, and the browser scales them
+with `image-rendering: pixelated`. GEN 1 rotates its three CGA bands, GEN 2
+a twelve-entry ramp with three shadow entries riding along, GEN 3 a
+ninety-six-entry ramp with its shadow levels and a fixed bevel. The ramp is
+the theme's, lime to cyan and back, never the hue circle. Under reduced
+motion the lab swaps in the still PNGs.
+
+<img src="assets/brand/wordmark-gen2.gif" width="1280" alt="The GEN 2 wordmark cycling its palette: a lime to cyan ramp marching through dithered letterforms">
+
+This amends the motion rule above: the `///` mark moves while work runs, and
+the wordmark cycles its palette, which is the same statement in the era's
+own idiom. Nothing else moves.
+
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas
 above, with no libraries: the real TUI capture is Bayer-dithered into
