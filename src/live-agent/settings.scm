@@ -193,6 +193,15 @@
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))
          (json-array-items value)))
    ((and (memq key '(mcp-allow skill-dirs plugin-dirs)) (json-array? value)) (json-array-items value))
+   ;; Price rows carry a symbol provider, a string prefix and four numbers.
+   ;; JSON has no symbols, so the provider comes back as a string.
+   ((and (eq? key 'token-prices) (json-array? value))
+    (map (lambda (row)
+           (let ((items (if (json-array? row) (json-array-items row) row)))
+             (if (and (pair? items) (string? (car items)))
+                 (cons (string->symbol (car items)) (cdr items))
+                 items)))
+         (json-array-items value)))
    (else value)))
 (define (encoded value)
   (cond ((symbol? value) (symbol->string value))

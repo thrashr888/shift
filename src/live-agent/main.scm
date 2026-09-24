@@ -1409,6 +1409,32 @@
 (define (runtime-state-directory tracer)
   (dirname (tracer-path tracer)))
 
+(define overflow-counter 0)
+
+;; Where a tool's oversized output goes so the transcript can carry a window
+;; and a path instead of a truncated head. An ephemeral session has no durable
+;; directory, so it gets no sink and the window says the middle is unrecorded
+;; rather than pointing at a file that will not be there.
+(define (make-overflow-sink state-directory)
+  (if (not state-directory)
+      (lambda (label text) #f)
+      (let ((directory (string-append state-directory "/overflow")))
+        (lambda (label text)
+          (unless (file-exists? directory) (mkdir directory))
+          (set! overflow-counter (+ overflow-counter 1))
+          (let* ((safe (string-map (lambda (c)
+                                     (if (or (char-alphabetic? c) (char-numeric? c)) c #\-))
+                                   label))
+                 (path (format #f "~a/~a-~a.txt" directory safe overflow-counter)))
+            (call-with-output-file path
+              (lambda (port) (display text port)))
+            ;; `read` and `rg` are project-confined, so hand back a path
+            ;; relative to the project when the file sits inside it.
+            (let ((root (string-append (getcwd) "/")))
+              (if (string-prefix? root path)
+                  (substring path (string-length root))
+                  path)))))))
+
 (define (short-hash hash)
   (if (string? hash) (string-append (substring hash 0 12) "…") "absent"))
 
@@ -4181,6 +4207,7 @@
                    supported-tool-names
                    (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
         (external-tool-schema mcp-tool-schema)
+        (overflow-sink (make-overflow-sink (and session runtime-state-directory)))
         (set! runtime-state-directory-for-judge (and session runtime-state-directory))
         (set! spawn-session session)
         (set! spawn-state-directory state-directory)

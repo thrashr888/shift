@@ -1433,7 +1433,13 @@ class CodingWorkflow(unittest.TestCase):
         (receipt,) = self.receipts()
         self.assertEqual(json.loads(receipt_file.read_text()), receipt)
         self.assertEqual(receipt["status"], "ok")
-        self.assertEqual(receipt["tokens"], {"prompt": 4300, "cached": 1000, "uncached": 3300, "completion": 55})
+        self.assertEqual(receipt["tokens"], {"prompt": 4300, "cached": 1000, "cache_write": 0,
+                                             "uncached": 3300, "completion": 55})
+        # The fake provider is not a priced model, so the turn reports no cost
+        # rather than a zero that would sum as a free turn.
+        self.assertIsNone(receipt["cost"])
+        self.assertIsNone(receipt["price_source"])
+        self.assertNotIn("receipt.cost", self.turn_span()["attributes"])
         self.assertEqual(receipt["tool_calls"], {"edit": 1, "run": 1})
         self.assertEqual([c["path"] for c in receipt["changed"]], ["notes.txt"])
         self.assertEqual((receipt["changed"][0]["added"], receipt["changed"][0]["removed"]), (1, 1))

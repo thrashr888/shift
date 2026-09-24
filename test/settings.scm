@@ -55,4 +55,23 @@
 (test-assert "judge-ask-below is a probability or off"
   (and (accepts? 'judge-ask-below 0.5) (accepts? 'judge-ask-below #f)
        (not (accepts? 'judge-ask-below 1.5)) (not (accepts? 'judge-ask-below "0.5"))))
+
+;; A price row carries a symbol provider, and JSON has no symbols. Without a
+;; decode case the provider reloads as a string and every price lookup misses.
+(define price-root (string-append root "/prices"))
+(system* "mkdir" "-p" price-root)
+(call-with-output-file (string-append price-root "/settings.json")
+  (lambda (p) (display "{\"token-prices\":[[\"claude\",\"claude-sonnet\",3.0,0.3,3.75,15.0]]}" p)))
+(settings-init! price-root #f)
+(test-equal "a saved price row reloads with a symbol provider"
+  '((claude "claude-sonnet" 3.0 0.3 3.75 15.0))
+  (setting-ref #f 'token-prices))
+
+(test-assert "a price row needs a provider, a prefix and four rates"
+  (and (accepts? 'token-prices '((claude "claude-sonnet" 3.0 0.3 3.75 15.0)))
+       (accepts? 'token-prices '())
+       (not (accepts? 'token-prices '((claude "claude-sonnet" 3.0))))
+       (not (accepts? 'token-prices '((gemini "gemini" 1.0 1.0 1.0 1.0))))
+       (not (accepts? 'token-prices '((claude "claude-sonnet" -1.0 0.3 3.75 15.0))))))
+
 (test-end "settings")

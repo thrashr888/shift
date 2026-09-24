@@ -12,6 +12,7 @@
   #:use-module (srfi srfi-14)
   #:use-module (srfi srfi-9)
   #:use-module (live-agent json)
+  #:use-module ((live-agent tools) #:select (bounded))
   #:export (mcp-init! mcp-servers mcp-servers-json mcp-connect! mcp-disconnect! mcp-stop-all!
             mcp-tools mcp-tool-schema mcp-tool-hints mcp-tool-name? mcp-tool-server mcp-search mcp-call!
             mcp-prompt-block check-mcp-file parse-mcp-pack mcp-server-tools
@@ -468,10 +469,11 @@
                            call-timeout)))
            (content (filter json-object? (json-array-items (json-object-ref result "content" (json-array)))))
            (text (string-join (map content-text content) "\n"))
-           (bounded (if (> (string-length text) max-output)
-                        (string-append (substring text 0 max-output) "\n…[output truncated; chars=" (number->string (string-length text)) "]")
-                        text)))
-      (values (not (json-object-ref result "isError" #f)) bounded))))
+           ;; An oversized MCP result spills to a file like any other tool
+           ;; output, labelled with the server so the file says where it came
+           ;; from. Integration responses are the ones most likely to be large.
+           (windowed (bounded text (server-name server))))
+      (values (not (json-object-ref result "isError" #f)) windowed))))
 
 (define (mcp-servers-json)
   (apply json-array

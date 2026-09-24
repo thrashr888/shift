@@ -83,6 +83,28 @@ The hit span contained 1,753 prompt tokens: 1,280 cached and 473 uncached. This
 is an observed example, not a guarantee for shorter prompts or a different
 backend/cache window.
 
+## Oversized tool output
+
+Output over 64 KiB used to be cut at the cap with a marker giving the original
+length. That keeps the head and drops the tail, which for a command is usually
+where it says why it failed, and the dropped text cannot be recovered without
+running the command again.
+
+An oversized result is now written whole to `overflow/` inside the session
+directory, and the tool returns the first 24 KiB, the last 8 KiB, and the path.
+The window is smaller in context than the truncation it replaced, and `read`
+and `rg` reach the rest. `rg`, `shell` and MCP results share the mechanism; a
+spilled file is named for the tool or server that produced it. An ephemeral
+session has no durable directory, so it has no sink: the window still carries
+head and tail, and says the middle is not recorded anywhere rather than naming
+a file that will not exist.
+
+`read` is the exception, because the file is already on disk and a copy would
+be pointless. A file larger than one window returns its first 64 KiB with the
+byte range in the header and the exact offset that continues it, and `read`
+takes an `offset` to resume from. Offsets this tool reports always land on a
+character boundary.
+
 ## Cost accounting
 
 A token count is not a cost. An uncached input token, a cache read, a cache
