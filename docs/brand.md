@@ -215,11 +215,36 @@ decision, not the asset.
 synthwave page. Dropped; the label and the wireframe already carry the era
 without the cliché.
 
-**Wordmark** (`wordmark-sheet.webp`). Of six treatments, two survive:
-the rounded label sans for the brand, and monospace with a block cursor
-after the slashes for the terminal and the receipt. The dither and wireframe
-treatments are textures the wordmark can wear inside their own sections, not
-alternate marks.
+**Wordmark** (`wordmark-sheet.webp`, `wordmark-dither.png`). Of six
+treatments, three survive: the rounded label sans for print and the hero,
+monospace with a block cursor after the slashes for the terminal and the
+receipt, and the ordered-dither bitmap, which reads as late-1990s game type
+and is the one Paul reached for first. `wordmark-dither.png` is a real
+asset, not a mock: the mark set in a heavy sans, a lime to cyan to magenta
+gradient dithered by the 4x4 Bayer matrix into the three palette colors,
+thinning to dots toward the top edge. It is the favicon and section-heading
+candidate; the label sans remains the mark at hero scale, where dither
+cells would be the size of a fingernail.
+
+**A note on the diagrams.** The INPUT, PROCESS, OUTPUT boxes in the
+wireframe title mock read as generic generated design. The direction to
+take instead is the readout language of Evangelion's MAGI screens: tight
+condensed all-caps labels, angular bracket frames, numbered fields, status
+words rather than nouns. Same wireframe strokes, same palette, no boxes
+with arrows. The `wireframe-workflow.webp` mock is closer already because
+its labels are the product's own words.
+
+**The lab** (`site/lab/dither-depth.html`, served by `python3 -m
+http.server --directory site`). A working prototype of two of the ideas
+above, with no libraries: the real TUI capture is Bayer-dithered into
+points on the CPU, each point given a depth from local contrast so text and
+frames sit forward of flat panels, and rendered as WebGL point sprites that
+tilt with the cursor. The glitch pass is Alchemy's `glitchField` ported to
+the vertex stage: every four-second epoch hides one burst window at a
+hashed offset, inside which rows shear on a twelve-hertz tick and flash
+magenta. Reduced motion turns both off. It is not a gaussian splat, which
+needs a scan; it is the same gesture from a screenshot, and it says whether
+the gesture is worth a scan.
 
 What this settles for the site plan above: the hero is the label system
 over a dithered photograph or splat; sections two through five use

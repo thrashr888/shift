@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shift /// lab: dithered depth</title>
+<meta name="description" content="A lab page: the Shift terminal capture dithered into points with depth, moved by the cursor, with a glitch pass.">
+<style>
+  :root { --purple:#24063a; --lime:#b8ff3c; --cyan:#37e6ff; --paper:#f2eee6; }
+  html, body { margin:0; background:var(--purple); color:var(--paper); font:16px/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  header { padding:24px 32px 8px; display:flex; align-items:baseline; gap:24px; flex-wrap:wrap; }
+  header img { height:56px; image-rendering:pixelated; }
+  header p { margin:0; opacity:.8; }
+  .stage { position:relative; margin:8px 32px 24px; aspect-ratio:1600/1132; max-height:78vh; border:2px solid var(--lime); }
+  canvas { display:block; width:100%; height:100%; background:var(--purple); }
+  .hud { position:absolute; left:16px; bottom:12px; font:13px/1.4 Menlo, ui-monospace, monospace; color:var(--cyan); opacity:.9; }
+  .hud b { color:var(--lime); font-weight:600; }
+  label { margin-right:16px; font-size:13px; }
+  footer { padding:0 32px 32px; font-size:13px; opacity:.7; }
+  @media (prefers-reduced-motion: reduce) { .hud .motion { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="../assets/lab/wordmark-dither.png" alt="shift /// as an ordered-dither bitmap">
+  <p>Lab: the real TUI capture, dithered to points with depth, tilted by the cursor, with a glitch pass. No libraries.</p>
+</header>
+<div class="stage">
+  <canvas id="c"></canvas>
+  <div class="hud"><b>shift&gt;</b> <span id="stats">building points…</span><span class="motion"> · move the cursor · </span>
+    <label><input type="checkbox" id="glitch" checked> glitch</label><label><input type="range" id="depth" min="0" max="2" step="0.05" value="1"> depth</label></div>
+</div>
+<footer>Points are the lime cells of a 4×4 Bayer dither of <code>tui-acid.png</code>. Depth comes from local contrast, so text and frames sit forward of flat panels; the purple is the canvas, not a texture. The glitch is the Alchemy field: epochs of a few seconds hide one burst window; inside it rows shear on a hashed tick. Reduced motion turns both off.</footer>
+<script>
+(() => {
+  const canvas = document.getElementById('c'), stats = document.getElementById('stats');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+  if (!gl) { stats.textContent = 'WebGL2 unavailable'; return; }
+  const VS = `#version 300 es
+  in vec2 a_pos; in float a_depth; in float a_lum;
+  uniform vec2 u_mouse; uniform float u_time; uniform float u_depth; uniform float u_glitch; uniform float u_size; uniform vec2 u_aspect;
+  out float v_depth; out float v_lum; out float v_tear;
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  void main(){
+    float t = mod(u_time, 2048.0);
+    // Alchemy's glitch field: each ~4s epoch hides one burst window; inside it rows shear on a 12 Hz tick.
+    float epoch = floor(t * 0.25), ph = fract(t * 0.25);
+    float w = 0.10 + 0.80 * hash(vec2(epoch, 3.0));
+    float window = smoothstep(0.045, 0.015, abs(ph - w)) * u_glitch;
+    float tick = floor(t * 12.0), row = floor((a_pos.y * 0.5 + 0.5) * 42.0);
+    float burst = step(0.72, hash(vec2(row, tick))) * window;
+    float shear = (hash(vec2(row, tick + 41.0)) - 0.5) * 0.18 * burst;
+    v_tear = burst;
+    // Parallax: the cursor tilts the cloud; points nearer the viewer move more, and grow.
+    float z = a_depth * u_depth;
+    vec2 p = a_pos + shear * vec2(1.0, 0.0);
+    p += (u_mouse * 0.06) * z;
+    p += (u_mouse * -0.015);                 // the whole cloud leans slightly the other way
+    p *= 1.0 + 0.04 * z;                     // near points spread from the centre
+    gl_Position = vec4(p, 0.0, 1.0);
+    gl_PointSize = u_size * (0.85 + 0.45 * z);
+    v_depth = a_depth; v_lum = a_lum;
+  }`;
+  const FS = `#version 300 es
+  precision mediump float;
+  in float v_depth; in float v_lum; in float v_tear; out vec4 o;
+  void main(){
+    vec3 lime = vec3(0.722, 1.0, 0.235), cyan = vec3(0.216, 0.902, 1.0), mag = vec3(1.0, 0.247, 0.643);
+    vec3 c = mix(mix(cyan, lime, clamp(v_depth * 1.4, 0.0, 1.0)), mag, v_tear * 0.8);
+    o = vec4(c * (0.75 + 0.25 * v_lum), 1.0);
+  }`;
+  function shader(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+  const prog = gl.createProgram(); gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  const U = n => gl.getUniformLocation(prog, n);
+  const img = new Image(); img.src = '../assets/lab/tui-acid.png';
+  let count = 0, mouse = [0, 0], target = [0, 0], start = performance.now();
+  img.onload = () => {
+    // CPU: luminance per cell, Bayer threshold, depth from local contrast (text and frames forward).
+    const cell = 3, w = Math.floor(img.width / cell), h = Math.floor(img.height / cell);
+    const off = document.createElement('canvas'); off.width = w; off.height = h;
+    const ctx = off.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data, lum = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) lum[i] = (0.2126 * px[i*4] + 0.7152 * px[i*4+1] + 0.0722 * px[i*4+2]) / 255;
+    const bayer = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+    const pos = [], dep = [], lums = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const l = lum[y*w + x], th = bayer[(y & 3) * 4 + (x & 3)] / 16;
+      if (l <= th) continue;
+      // local contrast in a 5x5 window: high where there is text or an edge
+      let mn = 1, mx = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const yy = y+dy, xx = x+dx; if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue; const v = lum[yy*w + xx]; if (v < mn) mn = v; if (v > mx) mx = v; }
+      const depth = Math.min(1, 0.25 * l + 0.9 * (mx - mn));
+      pos.push((x + 0.5) / w * 2 - 1, 1 - (y + 0.5) / h * 2); dep.push(depth); lums.push(l);
+    }
+    count = dep.length;
+    const buf = (data, loc, size) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW); const a = gl.getAttribLocation(prog, loc); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, size, gl.FLOAT, false, 0, 0); };
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    buf(pos, 'a_pos', 2); buf(dep, 'a_depth', 1); buf(lums, 'a_lum', 1);
+    stats.textContent = count.toLocaleString() + ' points · ' + w + '×' + h + ' cells';
+    requestAnimationFrame(frame);
+  };
+  function resize(){ const dpr = Math.min(devicePixelRatio || 1, 2); const r = canvas.getBoundingClientRect(); canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); gl.viewport(0, 0, canvas.width, canvas.height); return dpr; }
+  const stage = canvas.parentElement;
+  stage.addEventListener('pointermove', e => { const r = stage.getBoundingClientRect(); target = [((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1)]; });
+  stage.addEventListener('pointerleave', () => { target = [0, 0]; });
+  function frame(now){
+    const dpr = resize();
+    mouse[0] += (target[0] - mouse[0]) * 0.08; mouse[1] += (target[1] - mouse[1]) * 0.08;
+    gl.clearColor(0.141, 0.024, 0.227, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(prog);
+    gl.uniform2f(U('u_mouse'), reduce ? 0 : mouse[0], reduce ? 0 : mouse[1]);
+    gl.uniform1f(U('u_time'), (now - start) / 1000);
+    gl.uniform1f(U('u_depth'), parseFloat(document.getElementById('depth').value));
+    gl.uniform1f(U('u_glitch'), (!reduce && document.getElementById('glitch').checked) ? 1 : 0);
+    gl.uniform1f(U('u_size'), (canvas.width / (img.width / 3)) * 1.15);
+    gl.drawArrays(gl.POINTS, 0, count);
+    if (!reduce) requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>
