@@ -1,23 +1,23 @@
 /* Shift palette tokens: an aged-tape base in sRGB, highlights pushed past sRGB in OKLCH where the display can show them. */
 :root {
-  --plum: #29182c;
-  --plum-deep: #16091b;
-  --lime-faded: #adca7a;
-  --cyan-faded: #76b7c6;
-  --magenta-faded: #bf6291;
-  --paper: #e5ddd0;
+  --plum: #2e1635;
+  --plum-deep: #18071e;
+  --lime-faded: #add658;
+  --cyan-faded: #59c2d6;
+  --magenta-faded: #d8559b;
+  --paper: #e8e0d3;
   --lime-hi: #aaff00;
   --cyan-hi: #00f4ff;
   --magenta-hi: #ff00b9;
 }
 @supports (color: oklch(50% 0.1 120)) {
   :root {
-    --plum: oklch(24% 0.045 320);
-    --plum-deep: oklch(17% 0.04 318);
-    --lime-faded: oklch(80% 0.11 125);
-    --cyan-faded: oklch(74% 0.07 215);
-    --magenta-faded: oklch(62% 0.13 350);
-    --paper: oklch(90% 0.02 80);
+    --plum: oklch(25% 0.065 318);
+    --plum-deep: oklch(17% 0.05 316);
+    --lime-faded: oklch(82% 0.16 125);
+    --cyan-faded: oklch(76% 0.1 212);
+    --magenta-faded: oklch(64% 0.18 350);
+    --paper: oklch(91% 0.02 80);
     --lime-hi: oklch(93% 0.31 128);
     --cyan-hi: oklch(88% 0.17 210);
     --magenta-hi: oklch(70% 0.32 350);

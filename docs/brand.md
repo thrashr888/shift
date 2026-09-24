@@ -134,16 +134,20 @@ ownership), "Own your agent" (a slogan, not a sentence).
 
 | Token | Role | OKLCH | sRGB fallback |
 | --- | --- | --- | --- |
-| `--plum` | canvas, aged | `oklch(24% 0.045 320)` | `#29182c` |
-| `--plum-deep` | canvas, deeper | `oklch(17% 0.04 318)` | `#16091b` |
-| `--lime-faded` | strokes and labels | `oklch(80% 0.11 125)` | `#adca7a` |
-| `--cyan-faded` | secondary strokes | `oklch(74% 0.07 215)` | `#76b7c6` |
-| `--magenta-faded` | the one warning element | `oklch(62% 0.13 350)` | `#bf6291` |
-| `--paper` | figures and body | `oklch(90% 0.02 80)` | `#e5ddd0` |
+| `--plum` | canvas, aged | `oklch(25% 0.065 318)` | `#2e1635` |
+| `--plum-deep` | canvas, deeper | `oklch(17% 0.05 316)` | `#18071e` |
+| `--lime-faded` | strokes and labels | `oklch(82% 0.16 125)` | `#add658` |
+| `--cyan-faded` | secondary strokes | `oklch(76% 0.1 212)` | `#59c2d6` |
+| `--magenta-faded` | the one warning element | `oklch(64% 0.18 350)` | `#d8559b` |
+| `--paper` | figures and body | `oklch(91% 0.02 80)` | `#e8e0d3` |
 | `--lime-hi` | highlight, beyond sRGB | `oklch(93% 0.31 128)` | `#aaff00` |
 | `--cyan-hi` | highlight, beyond sRGB | `oklch(88% 0.17 210)` | `#00f4ff` |
 | `--magenta-hi` | highlight, beyond sRGB | `oklch(70% 0.32 350)` | `#ff00b9` |
 
+  The first aged set went too far: base chroma has since come back up
+  (lime 0.11 to 0.16, cyan 0.07 to 0.10, magenta 0.13 to 0.18, plum 0.045 to
+  0.065) while the highlights stayed where they were. Bright but muted with
+  age, not grey.
 - **Strokes:** hairline. One CSS pixel at 1x, never a glow. Labels in a
   condensed sans at modest weight, figures in monospace.
 - **Artifacts:** tape, not neon. Chroma fringes on type (a cyan shadow one
@@ -285,6 +289,21 @@ for themselves: the model repeated the same three checks in every workflow
 panel, and padded the generation screen with invented `STATUS: OPTIMAL`
 telemetry rows and hex fields. Every field on the site is a field the
 product actually has.
+
+**The Mac II direction** (`mac-title.webp`, `mac-receipt-window.webp`).
+Paul's other favorite from round one was the 1-bit acid look: lime on plum
+with nothing in between, coarse Bayer dots for every tone, one-pixel
+outlines, Chicago-style bitmap type, System 6 window chrome. Two mocks push
+it: a game title screen with the wordmark dithering from solid to dots over
+a desk, a moon and a mug, and a receipt as a System 6 window over a
+dithered desktop with a `workflows` window behind it. It is a real
+candidate for the install section and for empty states in the TUI itself,
+where two colors and a bitmap font are native. The second mock carries an
+Apple mark the model added on its own; a real trademark never ships, and
+the window chrome should be Shift's, not System 6's. The dither lab now has
+a `1-bit acid` palette beside `aged tape` for exactly this look; the aged
+palette is its default and is read from `tokens.css`, so the lab and the
+site agree.
 
 **The lab** (`site/lab/dither-depth.html`, served by `python3 -m
 http.server --directory site`). A working prototype of two of the ideas

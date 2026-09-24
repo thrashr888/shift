@@ -1112,3 +1112,27 @@ validated UI preference tools and persistence; hot-swappable render extensions.
 Validation must cover live resize during streaming, draft/focus retention,
 invalid preference patches, renderer failures and recovery, theme switching,
 scope precedence, narrow layouts, and non-color-only status indicators.
+
+### Full-width panels (proposed September 23, 2026)
+
+The brand mocks made one thing about the terminal obvious: the inspector's
+tabs are screens in their own right, and a receipt, a workflow run or the
+session tree deserves the whole width when that is what the person is
+looking at. The proposal: a third sidebar policy beyond `auto`, `on` and
+`off`, `full`, which hides the conversation and the composer's surroundings
+and lays the inspector's tabs out as columns side by side, as many as the
+terminal's width allows at a fixed column width (48 columns, so a 160-column
+terminal shows three, a 200-column one four). The active tab is the leftmost
+column; Tab and Shift-Tab still move the active tab, and the row scrolls
+horizontally so the active column is always on screen, with the tab strip
+showing which columns are visible as a window over the list. The composer
+stays at the bottom in one line so a prompt can still be typed; sending one
+returns to the previous policy for the turn and comes back to `full` when
+the turn ends. `^B` cycles `auto`, `on`, `full`, `off`; `/sidebar full` sets
+it; the UI tool's `patch` accepts the value; it persists at the same scopes
+as the other preferences. Rendering reuses each tab's section list unchanged
+at column width, so a pane pack or the WORKFLOWS tab needs nothing new.
+Narrow terminals (under 96 columns) show one column and fall back to the
+overlay behavior. The order of work: the layout and `^B`, then horizontal
+scrolling, then the composer handoff during a turn, each with PTY tests at
+the three widths.

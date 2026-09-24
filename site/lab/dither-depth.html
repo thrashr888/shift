@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shift /// lab: dithered depth</title>
 <meta name="description" content="A lab page: the Shift terminal capture dithered into points with depth, moved by the cursor, with a glitch pass.">
+<link rel="stylesheet" href="./tokens.css">
 <style>
-  :root { --purple:#24063a; --lime:#b8ff3c; --cyan:#37e6ff; --paper:#f2eee6; }
+  :root { --purple:var(--plum-deep); --lime:var(--lime-faded); --cyan:var(--cyan-faded); }
   html, body { margin:0; background:var(--purple); color:var(--paper); font:16px/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
   header { padding:24px 32px 8px; display:flex; align-items:baseline; gap:24px; flex-wrap:wrap; }
   header img { height:56px; image-rendering:pixelated; }
@@ -28,7 +29,7 @@
 <div class="stage">
   <canvas id="c"></canvas>
   <div class="hud"><b>shift&gt;</b> <span id="stats">building points…</span><span class="motion"> · move the cursor · </span>
-    <label><input type="checkbox" id="glitch" checked> glitch</label><label><input type="range" id="depth" min="0" max="2" step="0.05" value="1"> depth</label></div>
+    <label><input type="checkbox" id="glitch" checked> glitch</label><label><select id="palette"><option value="aged">aged tape</option><option value="acid">1-bit acid</option></select></label><label><input type="range" id="depth" min="0" max="2" step="0.05" value="1"> depth</label></div>
 </div>
 <footer>Points are the lime cells of a 4×4 Bayer dither of <code>tui-acid.png</code>. Depth comes from local contrast, so text and frames sit forward of flat panels; the purple is the canvas, not a texture. The glitch is the Alchemy field: epochs of a few seconds hide one burst window; inside it rows shear on a hashed tick. Reduced motion turns both off.</footer>
 <script>
@@ -65,10 +66,11 @@
   const FS = `#version 300 es
   precision mediump float;
   in float v_depth; in float v_lum; in float v_tear; out vec4 o;
+  uniform vec3 u_near; uniform vec3 u_far; uniform vec3 u_tear; uniform float u_flat;
   void main(){
-    vec3 lime = vec3(0.722, 1.0, 0.235), cyan = vec3(0.216, 0.902, 1.0), mag = vec3(1.0, 0.247, 0.643);
-    vec3 c = mix(mix(cyan, lime, clamp(v_depth * 1.4, 0.0, 1.0)), mag, v_tear * 0.8);
-    o = vec4(c * (0.75 + 0.25 * v_lum), 1.0);
+    vec3 c = mix(mix(u_far, u_near, clamp(v_depth * 1.4, 0.0, 1.0)), u_tear, v_tear * 0.8);
+    // 1-bit: every dot the same color, like a Mac II game; aged: dimmer dots recede.
+    o = vec4(mix(c * (0.75 + 0.25 * v_lum), u_near, u_flat), 1.0);
   }`;
   function shader(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
   const prog = gl.createProgram(); gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
@@ -101,6 +103,13 @@
     stats.textContent = count.toLocaleString() + ' points · ' + w + '×' + h + ' cells';
     requestAnimationFrame(frame);
   };
+  // Colors come from tokens.css so the lab and the site agree; the canvas is sRGB, so fallbacks are read.
+  const css = getComputedStyle(document.documentElement);
+  const rgb = name => { const v = css.getPropertyValue(name).trim(); const m = v.match(/^#([0-9a-f]{6})$/i); if (m) return [0,2,4].map(i => parseInt(m[1].slice(i, i+2), 16) / 255); const c = document.createElement('canvas').getContext('2d'); c.fillStyle = v; c.fillRect(0,0,1,1); return [...c.getImageData(0,0,1,1).data].slice(0,3).map(x => x/255); };
+  const palettes = {
+    aged: { canvas: rgb('--plum-deep'), near: rgb('--lime-faded'), far: rgb('--cyan-faded'), tear: rgb('--magenta-hi'), flat: 0 },
+    acid: { canvas: [0.141, 0.024, 0.227], near: rgb('--lime-hi'), far: rgb('--lime-hi'), tear: rgb('--magenta-hi'), flat: 1 },
+  };
   function resize(){ const dpr = Math.min(devicePixelRatio || 1, 2); const r = canvas.getBoundingClientRect(); canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); gl.viewport(0, 0, canvas.width, canvas.height); return dpr; }
   const stage = canvas.parentElement;
   stage.addEventListener('pointermove', e => { const r = stage.getBoundingClientRect(); target = [((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1)]; });
@@ -108,13 +117,16 @@
   function frame(now){
     const dpr = resize();
     mouse[0] += (target[0] - mouse[0]) * 0.08; mouse[1] += (target[1] - mouse[1]) * 0.08;
-    gl.clearColor(0.141, 0.024, 0.227, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(prog);
     gl.uniform2f(U('u_mouse'), reduce ? 0 : mouse[0], reduce ? 0 : mouse[1]);
     gl.uniform1f(U('u_time'), (now - start) / 1000);
     gl.uniform1f(U('u_depth'), parseFloat(document.getElementById('depth').value));
     gl.uniform1f(U('u_glitch'), (!reduce && document.getElementById('glitch').checked) ? 1 : 0);
     gl.uniform1f(U('u_size'), (canvas.width / (img.width / 3)) * 1.15);
+    const pal = palettes[document.getElementById('palette').value];
+    gl.clearColor(...pal.canvas, 1);
+    gl.uniform3f(U('u_near'), ...pal.near); gl.uniform3f(U('u_far'), ...pal.far); gl.uniform3f(U('u_tear'), ...pal.tear); gl.uniform1f(U('u_flat'), pal.flat);
+    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.POINTS, 0, count);
     if (!reduce) requestAnimationFrame(frame);
   }
