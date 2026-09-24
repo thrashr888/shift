@@ -16,7 +16,10 @@
     const canvas = screens[n].querySelector('canvas[data-dither]');
     if (canvas) canvas.dispatchEvent(new Event('shift:resume'));
     if (window.shiftMarks && !reduce) { const m = marks[n]; window.shiftMarks.run(m, true); setTimeout(() => window.shiftMarks.run(m, m.matches(':hover')), 1400); }
-    try { history.replaceState(null, '', n ? '#screen-' + (n + 1) : location.pathname + location.search); } catch (e) { /* the address bar is optional */ }
+    // Screen one is the page itself; only a screen hash is replaced, a section hash is left alone.
+    if (n || /^#screen-/.test(location.hash)) {
+      try { history.replaceState(null, '', n ? '#screen-' + (n + 1) : location.pathname + location.search); } catch (e) { /* the address bar is optional */ }
+    }
     if (focus) screens[n].querySelector('h1, h2').focus({ preventScroll: true });
     if (scroll) scrollTo({ top: 0, behavior: 'instant' });
   }
@@ -39,5 +42,8 @@
   show(m ? parseInt(m[1], 10) - 1 : 0, false);
   // Hiding two screens moves everything below them, so a deep link to a section is re-aimed.
   const target = !m && location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
-  if (target) target.scrollIntoView({ block: 'start', behavior: 'instant' });
+  if (target) {
+    const aim = () => target.scrollIntoView({ block: 'start', behavior: 'instant' });
+    aim(); addEventListener('load', aim, { once: true }); document.fonts.ready.then(aim);
+  }
 })();
