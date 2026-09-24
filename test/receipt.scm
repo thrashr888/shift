@@ -1,5 +1,6 @@
 (use-modules (srfi srfi-64) (srfi srfi-1) (ice-9 textual-ports)
-             (live-agent receipt) (live-agent changes) (live-agent json) (live-agent sha256))
+             (live-agent receipt) (live-agent changes) (live-agent json) (live-agent sha256)
+             (live-agent pricing))
 
 (test-begin "receipt")
 
@@ -79,6 +80,59 @@
 
 (define object (receipt->json receipt))
 (test-equal "JSON tokens" 1900 (json-object-ref (json-object-ref object "tokens") "cached"))
+
+;; Cost accounting. The turn above runs an unpriced model, so it must report
+;; no cost at all rather than a zero that would sum as a free turn.
+(test-equal "an unpriced model reports a null cost" json-null
+  (json-object-ref object "cost"))
+(test-assert "an unpriced turn carries no cost span attribute"
+  (not (assq 'receipt.cost (receipt-attributes receipt))))
+(test-assert "an unpriced turn shows no dollar figure"
+  (not (string-contains text "$")))
+
+(define priced
+  (build-receipt #:turn 4 #:status "ok" #:error #f #:model "claude-sonnet-4-6" #:provider "claude"
+                 #:generation 3 #:duration-ms 6100
+                 #:usage '((prompt . 2645) (cached . 1900) (cache_write . 200)
+                           (uncached . 545) (completion . 611) (rounds . 4))
+                 #:prices '((claude "claude-sonnet" 3.0 0.3 3.75 15.0))
+                 #:tool-calls '() #:ledger ledger #:trace-id "t" #:span-id "s"
+                 #:session-name "dogfood" #:session-id "sess-1"))
+
+(test-equal "cost is price-weighted across the four buckets" 0.01212
+  (exact->inexact (assq-ref priced 'cost)))
+(test-equal "the receipt records which rates applied" "configured"
+  (assq-ref priced 'price_source))
+(test-equal "cache writes survive into the receipt" 200
+  (assq-ref (assq-ref priced 'tokens) 'cache_write))
+(test-equal "JSON carries the cost as a number" 0.01212
+  (json-object-ref (receipt->json priced) "cost"))
+(test-assert "the receipt line shows the cost"
+  (string-contains (receipt->text priced) "$0.0121"))
+(test-equal "span attributes carry the cost" 0.01212
+  (assq-ref (receipt-attributes priced) 'receipt.cost))
+(test-equal "span attributes separate cache writes from uncached input" '(200 . 545)
+  (let ((attributes (receipt-attributes priced)))
+    (cons (assq-ref attributes 'receipt.tokens.cache_write)
+          (assq-ref attributes 'receipt.tokens.uncached))))
+
+;; Rates travel with the turn, so correcting one applies from the next receipt
+;; without restarting the session.
+(define overridden
+  (build-receipt #:turn 4 #:status "ok" #:error #f #:model "claude-sonnet-5" #:provider "claude"
+                 #:generation 3 #:duration-ms 10
+                 #:usage '((prompt . 100) (cached . 0) (cache_write . 0)
+                           (uncached . 100) (completion . 0) (rounds . 1))
+                 #:prices '((claude "claude-sonnet-5" 2.0 0.2 2.5 10.0))
+                 #:tool-calls '() #:ledger #f #:trace-id "t" #:span-id "s"
+                 #:session-name "dogfood" #:session-id "sess-1"))
+
+(test-equal "a configured rate prices the turn" 0.0002
+  (exact->inexact (assq-ref overridden 'cost)))
+(test-equal "the receipt says the rate was configured" "configured"
+  (assq-ref overridden 'price_source))
+(test-equal "cost survives a JSON round trip" 0.01212
+  (exact->inexact (assq-ref (receipt-from-json (receipt->json priced)) 'cost)))
 (test-equal "JSON tool calls" 2 (json-object-ref (json-object-ref object "tool_calls") "run"))
 (test-equal "JSON runs carry the agentkernel fields" -1
   (json-object-ref (cadr (json-array-items (json-object-ref object "runs"))) "exit_code"))

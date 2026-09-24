@@ -83,6 +83,49 @@ The hit span contained 1,753 prompt tokens: 1,280 cached and 473 uncached. This
 is an observed example, not a guarantee for shorter prompts or a different
 backend/cache window.
 
+## Cost accounting
+
+A token count is not a cost. An uncached input token, a cache read, a cache
+write and an output token bill at four different rates, and on Anthropic's
+published multiples a cache read is a tenth of an input token while an output
+token is five times one. A harness change that trades output for prompt can
+therefore shrink the raw count and raise the bill. Cursor's
+[token-efficiency report](https://cursor.com/blog/improved-token-efficiency)
+makes the same point and states the metric this project should use: price-
+weighted cost per completed task, not tokens per request.
+
+The four buckets now partition the prompt. The tracing layer already reported
+`llm.token_count.prompt_cache_write` separately; the turn counters previously
+folded it into uncached input, which priced a cache write at the base input
+rate instead of the higher write rate. `record-run-usage!` keeps the two apart,
+and the turn budget counts a write as spend rather than a saving.
+
+Rates are not compiled into the harness. Providers change prices without
+warning, and a rate baked into a release would go stale silently while
+falsifying every comparison drawn from it. The `token-prices` setting is the
+only source of rates, as rows of
+`(PROVIDER MODEL-PREFIX input cache-read cache-write output)` in dollars per
+million tokens. The longest matching prefix within the provider wins, so one
+family row covers its dated releases:
+
+```scheme
+(claude "claude-sonnet" 3.0 0.3 3.75 15.0)
+```
+
+The single built-in row is local inference at zero, which is a fact about the
+provider rather than a price that can go out of date.
+
+A model with no row is **unpriced**, never priced at zero. The receipt reports
+a null cost, the `agent.turn` span carries no cost attribute at all, and the
+session summary counts the turn separately from the priced total rather than
+folding it in. A sentinel zero would average and sum in a viewer as though the
+turn were free, which is worse than no number.
+
+Every receipt records a `price_source` of `configured` or `listed`, so a
+surprising figure can be traced back to the row that produced it. Rates are
+read per turn, so correcting one applies from the next receipt on without
+restarting.
+
 ## What Tardigrade changes in the longer-term design
 
 [Tardigrade's rationale](https://tardigrade.sh/docs/why) models agent behavior as

@@ -168,6 +168,7 @@
 ;; calls by name. Reset when a turn starts.
 (define turn-prompt-tokens 0)
 (define turn-cached-tokens 0)
+(define turn-cache-write-tokens 0)
 (define turn-uncached-tokens 0)
 (define turn-completion-tokens 0)
 (define turn-rounds 0)
@@ -184,6 +185,7 @@
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
+  (set! turn-cache-write-tokens 0)
   (set! turn-uncached-tokens 0)
   (set! turn-completion-tokens 0)
   (set! turn-rounds 0)
@@ -1660,6 +1662,11 @@
 (define run-prompt-tokens 0)
 (define run-completion-tokens 0)
 (define run-usage-reported? #f)
+;; Session cost is the sum of the priced turns only, with the unpriced ones
+;; counted separately. A session that mixes a priced model with an unpriced
+;; one has to say so rather than report a total that silently omits turns.
+(define run-cost 0)
+(define run-unpriced-turns 0)
 
 (define (reset-run-usage!)
   (set! last-ui-identity #f)
@@ -1667,21 +1674,35 @@
   (set! last-ui-metadata #f)
   (set! run-prompt-tokens 0)
   (set! run-completion-tokens 0)
+  (set! run-cost 0)
+  (set! run-unpriced-turns 0)
   (set! run-usage-reported? #f))
 
 ;; The turn budget counts what a turn actually spends: uncached prompt tokens
 ;; plus completion tokens. Cache reads are near free and, once a turn is
 ;; deep in a repository, dwarf everything else in the raw prompt count.
 (define (record-run-usage! attributes)
-  (let ((prompt (assq-ref attributes 'llm.token_count.prompt))
-        (uncached (assq-ref attributes 'llm.token_count.prompt_uncached))
-        (completion (assq-ref attributes 'llm.token_count.completion)))
+  (let* ((prompt (assq-ref attributes 'llm.token_count.prompt))
+         (reported-uncached (assq-ref attributes 'llm.token_count.prompt_uncached))
+         (cache-write (assq-ref attributes 'llm.token_count.prompt_cache_write))
+         ;; The provider's prompt total already contains the cache write, and
+         ;; a write bills above a plain input token rather than below it. Keep
+         ;; the two apart so the four buckets partition the prompt and each
+         ;; can be priced at its own rate.
+         (uncached (if (and (number? reported-uncached) (number? cache-write))
+                       (max 0 (- reported-uncached cache-write))
+                       reported-uncached))
+         (completion (assq-ref attributes 'llm.token_count.completion)))
     (when (number? prompt)
       (set! run-prompt-tokens (+ run-prompt-tokens prompt))
       (set! turn-prompt-tokens (+ turn-prompt-tokens prompt))
       (set! turn-tokens (+ turn-tokens (if (number? uncached) uncached prompt)))
       (set! turn-uncached-tokens (+ turn-uncached-tokens (if (number? uncached) uncached prompt)))
       (set! run-usage-reported? #t))
+    (when (number? cache-write)
+      (set! turn-cache-write-tokens (+ turn-cache-write-tokens cache-write))
+      ;; A write is spend, not a saving: the budget counts it like uncached input.
+      (set! turn-tokens (+ turn-tokens cache-write)))
     (let ((cached (assq-ref attributes 'llm.token_count.prompt_cached)))
       (when (number? cached)
         (set! turn-cached-tokens (+ turn-cached-tokens cached))))
@@ -1691,11 +1712,23 @@
       (set! turn-tokens (+ turn-tokens completion))
       (set! run-usage-reported? #t))))
 
+(define (session-cost-summary)
+  (cond
+   ((and (> run-cost 0) (> run-unpriced-turns 0))
+    (format #f " · $~,4f plus ~a unpriced turn~:p"
+            (exact->inexact run-cost) run-unpriced-turns))
+   ((> run-cost 0) (format #f " · $~,4f" (exact->inexact run-cost)))
+   ((> run-unpriced-turns 0)
+    (format #f " · cost unavailable (~a unpriced turn~:p; set token-prices)"
+            run-unpriced-turns))
+   (else "")))
+
 (define (show-close-message session)
   (if run-usage-reported?
-      (format #t "~%Session closed · ~a input + ~a output = ~a tokens~%"
+      (format #t "~%Session closed · ~a input + ~a output = ~a tokens~a~%"
               run-prompt-tokens run-completion-tokens
-              (+ run-prompt-tokens run-completion-tokens))
+              (+ run-prompt-tokens run-completion-tokens)
+              (session-cost-summary))
       (display "\nSession closed · token usage unavailable\n"))
   (when session
     (format #t "Resume ./bin/shift-agent --resume ~a~%ID ~a~%"
@@ -3704,8 +3737,10 @@
                   (round (* 1000 (/ (- (get-internal-real-time) started)
                                     internal-time-units-per-second))))
    #:usage `((prompt . ,turn-prompt-tokens) (cached . ,turn-cached-tokens)
+             (cache_write . ,turn-cache-write-tokens)
              (uncached . ,turn-uncached-tokens) (completion . ,turn-completion-tokens)
              (rounds . ,turn-rounds))
+   #:prices (setting-ref generation 'token-prices)
    #:tool-calls turn-tool-calls
    #:ledger ledger
    #:skills (reverse turn-skills)
@@ -3723,6 +3758,10 @@
 ;; --receipt FILE. A receipt that cannot be written never fails the turn.
 (define (deliver-receipt! runtime tracer receipt)
   (set! last-receipt receipt)
+  (let ((cost (assq-ref receipt 'cost)))
+    (if cost
+        (set! run-cost (+ run-cost cost))
+        (set! run-unpriced-turns (+ run-unpriced-turns 1))))
   (emit-ui-diff! (assq-ref receipt 'turn))
   (ui-emit! "receipt" (receipt->json receipt))
   (when (and (not (ui-connected?)) (setting-ref (runtime-current runtime) 'show-work))

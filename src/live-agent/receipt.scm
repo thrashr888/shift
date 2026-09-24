@@ -9,6 +9,7 @@
   #:use-module (live-agent changes)
   #:use-module (live-agent diff)
   #:use-module (live-agent json)
+  #:use-module (live-agent pricing)
   #:export (build-receipt receipt->json receipt->text receipt-attributes
             receipt-append! receipt-write! receipt-from-json))
 
@@ -62,13 +63,23 @@
                   (log . ,(json-object-ref record "log" #f))))))
        (ledger-runs ledger))))
 
-;; `usage` is an alist with prompt, cached, uncached, completion, and rounds;
-;; `tool-calls` is an alist of tool name to count. `status` is ok, failed, or
-;; cancelled, and `error` is the failure detail or #f.
+;; `usage` is an alist with prompt, cached, cache_write, uncached, completion,
+;; and rounds; `tool-calls` is an alist of tool name to count. `status` is ok,
+;; failed, or cancelled, and `error` is the failure detail or #f.
 (define* (build-receipt #:key turn status error model provider generation
                         duration-ms usage tool-calls ledger skills mcp-tools judge
-                        trace-id span-id session-name session-id)
-  (let ((changed (changed-files ledger turn)))
+                        trace-id span-id session-name session-id prices)
+  (let* ((changed (changed-files ledger turn))
+         (tokens `((prompt . ,(or (assq-ref usage 'prompt) 0))
+                   (cached . ,(or (assq-ref usage 'cached) 0))
+                   (cache_write . ,(or (assq-ref usage 'cache_write) 0))
+                   (uncached . ,(or (assq-ref usage 'uncached) 0))
+                   (completion . ,(or (assq-ref usage 'completion) 0))))
+         ;; Prices are read per turn rather than cached, so correcting a rate
+         ;; mid-session applies from the next receipt on.
+         (cost (and model
+                    (parameterize ((configured-prices (or prices '())))
+                      (token-cost (or provider 'unknown) model tokens)))))
     `((turn . ,turn)
       (at . ,(timestamp))
       (status . ,status)
@@ -78,10 +89,12 @@
       (generation . ,generation)
       (duration_ms . ,duration-ms)
       (rounds . ,(or (assq-ref usage 'rounds) 0))
-      (tokens . ((prompt . ,(or (assq-ref usage 'prompt) 0))
-                 (cached . ,(or (assq-ref usage 'cached) 0))
-                 (uncached . ,(or (assq-ref usage 'uncached) 0))
-                 (completion . ,(or (assq-ref usage 'completion) 0))))
+      (tokens . ,tokens)
+      ;; Dollars at the rates that applied, or #f when the model is unpriced.
+      ;; An unpriced turn reports no cost rather than a zero that would sum
+      ;; into a total as though the turn were free.
+      (cost . ,(and cost (car cost)))
+      (price_source . ,(and cost (symbol->string (cdr cost))))
       (tool_calls . ,(or tool-calls '()))
       (changed . ,changed)
       (runs . ,(turn-runs ledger turn))
@@ -114,6 +127,9 @@
    (cons "tokens" (apply json-object
                          (map (lambda (entry) (cons (symbol->string (car entry)) (cdr entry)))
                               (get 'tokens))))
+   (cons "cost" (let ((cost (get 'cost)))
+                  (if cost (exact->inexact cost) json-null)))
+   (cons "price_source" (json-or-null (get 'price_source)))
    (cons "tool_calls" (apply json-object
                              (map (lambda (entry) (cons (car entry) (cdr entry)))
                                   (get 'tool_calls))))
@@ -167,6 +183,8 @@
     (rounds . ,(get "rounds" 0))
     (tokens . ,(map (lambda (entry) (cons (string->symbol (car entry)) (cdr entry)))
                     (json-object-entries (get "tokens" (json-object)))))
+    (cost . ,(get "cost"))
+    (price_source . ,(get "price_source"))
     (tool_calls . ,(json-object-entries (get "tool_calls" (json-object))))
     (changed . ,(map (lambda (change)
                        `((path . ,(json-object-ref change "path"))
@@ -203,12 +221,23 @@
 (define (receipt-attributes receipt)
   (let ((tokens (assq-ref receipt 'tokens))
         (changed (assq-ref receipt 'changed))
-        (runs (assq-ref receipt 'runs)))
-    `((receipt.status . ,(assq-ref receipt 'status))
+        (runs (assq-ref receipt 'runs))
+        (cost (assq-ref receipt 'cost)))
+    (append
+     ;; An unpriced turn carries no cost attribute at all. A sentinel value
+     ;; would average and sum in a viewer as though it were a measurement.
+     (if cost
+         `((receipt.cost . ,(exact->inexact cost))
+           (receipt.price_source . ,(assq-ref receipt 'price_source)))
+         '())
+     `((receipt.status . ,(assq-ref receipt 'status))
       (receipt.rounds . ,(assq-ref receipt 'rounds))
       (receipt.tokens.prompt . ,(assq-ref tokens 'prompt))
       (receipt.tokens.cached . ,(assq-ref tokens 'cached))
+      (receipt.tokens.cache_write . ,(or (assq-ref tokens 'cache_write) 0))
+      (receipt.tokens.uncached . ,(or (assq-ref tokens 'uncached) 0))
       (receipt.tokens.completion . ,(assq-ref tokens 'completion))
+
       (receipt.tool_calls . ,(fold + 0 (map cdr (assq-ref receipt 'tool_calls))))
       (receipt.changed . ,(length changed))
       (receipt.files . ,(string-join (map (lambda (change) (assq-ref change 'path)) changed) ","))
@@ -218,12 +247,20 @@
       (receipt.mcp_tools . ,(string-join (or (assq-ref receipt 'mcp_tools) '()) ","))
       (receipt.judged . ,(or (assq-ref receipt 'judged) 0))
       (receipt.blocked . ,(or (assq-ref receipt 'blocked) 0))
-      (receipt.undo . ,(if (assq-ref receipt 'undo) #t #f)))))
+      (receipt.undo . ,(if (assq-ref receipt 'undo) #t #f))))))
 
 (define (short-id value)
   (if (and (string? value) (> (string-length value) 8))
       (string-append (substring value 0 8) "…")
       (or value "none")))
+
+;; Four decimals keeps a single cheap turn legible without implying more
+;; precision than list rates carry.
+(define (dollars cost)
+  (let ((value (exact->inexact cost)))
+    (if (and (> value 0) (< value 0.0001))
+        "<$0.0001"
+        (format #f "$~,4f" value))))
 
 (define (seconds ms)
   (format #f "~as" (/ (round (/ (or ms 0) 100.0)) 10.0)))
@@ -232,17 +269,19 @@
   (define (get key) (assq-ref receipt key))
   (let* ((tokens (get 'tokens))
          (cached (assq-ref tokens 'cached))
+         (cost (get 'cost))
          (changed (get 'changed))
          (runs (get 'runs))
          (status (get 'status))
          (lines
           (append
            (list
-            (format #f "turn ~a · ~a · generation ~a · ~a round~:p · ~:d in~a + ~:d out · ~a"
+            (format #f "turn ~a · ~a · generation ~a · ~a round~:p · ~:d in~a + ~:d out · ~a~a"
                     (get 'turn) (or (get 'model) "no model") (or (get 'generation) "?")
                     (get 'rounds) (assq-ref tokens 'prompt)
                     (if (and (number? cached) (> cached 0)) (format #f " (~:d cached)" cached) "")
-                    (assq-ref tokens 'completion) (seconds (get 'duration_ms))))
+                    (assq-ref tokens 'completion) (seconds (get 'duration_ms))
+                    (if cost (string-append " · " (dollars cost)) "")))
            (if (string=? status "ok")
                '()
                (list (format #f "status   ~a~a" status
