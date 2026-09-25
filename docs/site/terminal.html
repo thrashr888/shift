@@ -1,0 +1,97 @@
+<!--
+title: The terminal
+group: Start
+description: The layout, the keys, themes that are also Ghostty themes, identity and placement, and the preferences that persist.
+-->
+      <h1>The terminal</h1>
+            <p>This page describes the terminal interface: how the screen is laid out, the keys that move around it, the four built-in themes, and the commands that make the interface yours and keep it that way. The interface runs in the same session as the agent, with the same permissions, streaming and cancellation; it does not start a second agent.</p>
+            <p>Launch <code>shift-agent</code> from your project, or run <code>make</code> in a Shift checkout. It needs Python 3 with curses and an interactive terminal. To try the interface without a model, run:</p>
+            <pre><code>shift-agent --session ui-demo --set 'agent-model="demo"'</code></pre>
+
+            <h2>The layout</h2>
+            <p>The screen has three parts:</p>
+            <ul>
+              <li>The transcript, where <code>USER</code> and <code>SHIFT</code> role blocks alternate with grouped <code>READ</code>, <code>EDIT</code> and <code>RUN</code> work rows. A preview you have not approved never appears as a change. The live transcript keeps 3,000 lines, and a resumed session shows its last 50 saved messages.</li>
+              <li>The composer at the bottom. Up and Down browse the project's saved command history and restore an unfinished draft when you return to the newest entry.</li>
+              <li>The sidebar, with five tabs. Work shows output, files and telemetry; Diff the unified diff; Session the session, its receipt, the durable sessions with a status mark, loaded skills and MCP peers; Model the provider's models; Log the output of every run and the background jobs still going.</li>
+            </ul>
+            <p>The sidebar docks beside the transcript from 96 columns when the height allows. Below 40 columns or 18 rows, a compact transcript, status line and input replace the larger frame.</p>
+
+            <h2>Keys</h2>
+            <p>An approval takes one <code>y</code> or <code>N</code> keystroke without Enter. The rest of the keys are:</p>
+            <table>
+              <thead><tr><th>Key</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td>Ctrl+B</td><td>Toggle the sidebar without discarding the draft.</td></tr>
+                <tr><td>Tab</td><td>Select the next sidebar tab; past the last visible tab it turns the page. Inside command suggestions it completes the selection.</td></tr>
+                <tr><td>Shift+Tab</td><td>Cycle the mode from manual to plan to autopilot and back, when idle. Clicking the mode badge does the same.</td></tr>
+                <tr><td>Ctrl+P</td><td>Open searchable command completion; Escape restores the draft. Typing <code>/</code> filters command names and argument choices.</td></tr>
+                <tr><td>F2</td><td>Cycle the built-in themes, then any custom theme packs. A bare <code>/theme</code> does the same.</td></tr>
+                <tr><td>Ctrl+W, Ctrl+O</td><td>Fold work groups, or committed diffs and inline run output.</td></tr>
+                <tr><td>Ctrl+G</td><td>Jump to the latest transcript without changing the draft.</td></tr>
+                <tr><td>PageUp, PageDown</td><td>Scroll the transcript or the selected sidebar pane. Mac keyboards without page keys use Option or Ctrl with Up and Down.</td></tr>
+                <tr><td>Ctrl+C</td><td>Cancel the current turn, or clear an idle draft.</td></tr>
+                <tr><td>Ctrl+D</td><td>Exit and restore the terminal.</td></tr>
+                <tr><td>Escape</td><td>Dismiss an overlay, or decline an approval.</td></tr>
+              </tbody>
+            </table>
+            <p>The sidebar also has a full-width mode. <code>/sidebar full</code> lays its tabs out as columns across the whole width; <code>/sidebar auto</code>, <code>on</code> and <code>off</code> are the other choices.</p>
+            <p>Interface commands such as <code>/theme</code>, <code>/name</code>, <code>/motion</code> and <code>/ui</code> answer while the agent runs or waits for an approval. They never approve or decline the waiting request.</p>
+
+            <h2>Choose a theme</h2>
+            <p>To select a theme, enter <code>/theme NAME</code>. Four are built in:</p>
+            <ul>
+              <li><strong>Acid</strong> has a deep purple canvas with a lime, cyan and lavender hierarchy, a lowercase pixel wordmark, and a two-thirds transcript beside a one-third output pane.</li>
+              <li><strong>Paddock</strong> keeps paper colors and compact spacing, and docks the pane on the left.</li>
+              <li><strong>Blueprint</strong> gives the transcript the full width, with a three-row telemetry band above the composer, a spaced wordmark and a double composer border.</li>
+              <li><strong>QDOS</strong> uses a black canvas, a compact clickable command menu, green contextual help, white double rules, cyan metadata and yellow-on-red selection. Its default left pane fits at 80 by 25.</li>
+            </ul>
+            <p>Each theme is one Scheme data file under <code>themes/NAME.scm</code> in the installation, your user config, or the project's <code>.shift/</code>, and the project copy wins. Copy a bundled pack under a new name to make it yours; a valid saved change activates within half a second, and an invalid one keeps the working view.</p>
+            <p>Each built-in theme is also a Ghostty theme, generated from the same pack so the surrounding terminal can match the full palette. Download them from the <a href="../index.html#yours">Make it yours</a> section of the home page. Separately, the interface sets the terminal's default background, foreground and cursor color to the theme's whenever it loads, and resets them on exit. Enter <code>/terminal off</code> to keep your terminal as it is.</p>
+
+            <h2>Set your identity and brand</h2>
+            <p><code>/name NAME</code> sets your personal identity. <code>/brand replace</code> puts your name where the wordmark was; <code>/brand subtitle</code> and <code>/brand none</code> are the other choices. Identity and explicit placement survive a theme change, and your explicit color overrides are never replaced by a theme's defaults.</p>
+
+            <h2>Place the sidebar</h2>
+            <p><code>/place</code> takes <code>left</code>, <code>right</code>, <code>top</code>, <code>bottom</code> or <code>modal</code>, and wins under any theme. Left and right use the side-pane arrangement. Top and bottom give the transcript the full width with a telemetry band, and show diffs and the first 20 lines of run output inline under their work group.</p>
+
+            <h2>Turn motion off</h2>
+            <p>While the session is working, the <code>///</code> mark cycles at four steps per second and a ticking <code>...</code> marks where the reply will appear. Nothing else animates. <code>/motion off</code> stops the animation and leaves the <code>WORKING</code> text; <code>/motion on</code> restores it. The choice is saved with the other preferences. There is no automatic reduced-motion detection in curses.</p>
+
+            <h2>Save preferences</h2>
+            <p>Preferences live in <code>ui.json</code> in three places, from lowest to highest precedence: your user config, the project's <code>.shift/</code>, and the named session directory. A change you make is saved to the current session. To keep it beyond that session:</p>
+            <ol>
+              <li>Enter <code>/ui get</code> to check the current configuration.</li>
+              <li>Enter <code>/ui save project</code> to keep it for this project, or <code>/ui save user</code> to keep it everywhere.</li>
+            </ol>
+            <p><code>/ui undo</code> restores the previous working revision; the undo stack is bounded and resets on restart. The agent has the same <code>ui</code> tool with get, patch, undo, reload and save. Manual mode asks before it changes anything, plan mode permits only get, and autopilot allows validated changes.</p>
+            <div class="note"><p><strong>Note:</strong> Mode switching is a <code>/mode</code> command, not a preference. The agent's <code>ui</code> tool cannot change it.</p></div>
+
+            <h2>Add your own tabs</h2>
+            <p>A project can add up to four tabs of its own in <code>.shift/panes.scm</code>, a pane pack: one Scheme data form, never evaluated, whose rows are text, a live field such as <code>session.model</code>, or a command. The file loads whenever Shift runs in that folder, reloads within half a second when it changes, and is safe to commit. Clicking a command row, or entering <code>/pane run NAME</code>, starts it as a background job, but only when the run allowlist already permits it. The grammar and the field list are in the <a href="../panes.html">pane pack reference</a>.</p>
+
+            <h2>Command reference</h2>
+            <table>
+              <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td><code>/theme acid</code></td><td>Select a built-in or user-owned theme.</td></tr>
+                <tr><td><code>/name thrashr888</code></td><td>Set personal identity.</td></tr>
+                <tr><td><code>/brand replace</code></td><td>Replace the wordmark with your name (<code>subtitle</code> or <code>none</code> also available).</td></tr>
+                <tr><td><code>/place bottom</code></td><td>Place the inspector left, right, top, bottom or modal.</td></tr>
+                <tr><td><code>/sidebar auto</code></td><td>Select auto, on, full or off visibility.</td></tr>
+                <tr><td><code>/motion off</code></td><td>Disable the working mark animation (<code>on</code> restores it).</td></tr>
+                <tr><td><code>/terminal on</code></td><td>Sync the terminal's default colors and cursor to the theme (<code>off</code> restores).</td></tr>
+                <tr><td><code>/pane run NAME [ROW]</code></td><td>Start a user-owned pane's allowlisted commands as background jobs.</td></tr>
+                <tr><td><code>/ui get</code></td><td>Inspect current configuration.</td></tr>
+                <tr><td><code>/ui undo</code></td><td>Restore the previous working UI revision.</td></tr>
+                <tr><td><code>/ui reload</code></td><td>Reload the selected presentation pack.</td></tr>
+                <tr><td><code>/ui save user</code></td><td>Promote preferences to user scope (<code>project</code> also available).</td></tr>
+              </tbody>
+            </table>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="../panes.html">Pane packs</a> for the rows a tab of your own can hold.</li>
+              <li><a href="sessions.html">Sessions</a> for the durable sessions the Session tab lists.</li>
+              <li><a href="providers.html">Providers and keys</a> for the Model tab and the context bar.</li>
+            </ul>

@@ -1,0 +1,74 @@
+<!--
+title: Evals
+group: Measure
+description: What Shift measures, the results with their dates and caveats, and how to run the evals from the repository.
+-->
+      <h1>Evals</h1>
+            <p>This page reports what Shift measures about its coding loop, the results so far with their dates and caveats, and the <code>scripts/evals.py</code> subcommands that run each set. It is a report rather than a procedure. Every number is a single run on the model and machine named, and the caveats are part of the result.</p>
+
+            <h2>What is measured</h2>
+            <table>
+              <thead><tr><th>Set</th><th>Tasks</th><th>What it tells you</th></tr></thead>
+              <tbody>
+                <tr><td>SWE-bench Verified, a fixed slice</td><td>25 instance IDs chosen once by a seeded shuffle and committed to <code>evals/swebench-verified-25.txt</code>. The nine rated as fixes under fifteen minutes form <code>easy-9</code>; the rest are <code>rest-16</code>.</td><td>Whether the tree's <code>git diff</code> after one turn passes the official harness's hidden tests. The external number.</td></tr>
+                <tr><td>Dogfood tasks</td><td>Tickets against Shift's own repository with hidden tests. Two exist, <code>status-last-undo</code> and <code>run-list-source</code>.</td><td>The loop rather than the model: tool choice, stale handling, approvals and round limits.</td></tr>
+                <tr><td>Terminal-Bench</td><td>Five tasks with the lowest expert-time estimates across five categories, listed in <code>evals/terminal-bench-5.txt</code>, run through Harbor.</td><td>Operating a terminal: <code>run</code>, background jobs and the sandbox path rather than patching.</td></tr>
+                <tr><td>DeepSWE</td><td>Five tasks, one per language with the smallest reference patch, listed in <code>evals/deepswe-5.txt</code>, run through Harbor and graded by a verifier in a clean container.</td><td>Long-horizon tasks in live repositories across five languages.</td></tr>
+              </tbody>
+            </table>
+            <p>Each task's receipt supplies the same fields: resolved or not, rounds, tool calls, files changed, test runs, tokens, wall time and a failure class. There is no other score; the point is to see which failure class dominates.</p>
+
+            <h2>SWE-bench Verified</h2>
+            <p>Slice runs use a 40-round cap and a token budget. A run that hits a cap is a recorded failure, not a retry.</p>
+            <h3>Sonnet 5, September 8 and 9, 2026</h3>
+            <p>The first graded batch, on September 8, 2026, ran <code>easy-9</code> with Sonnet 5: <strong>7 of 9 resolved</strong>. <code>sphinx-10435</code> ended in exploration with no patch and <code>sympy-15875</code> left an incomplete fix. Five runs were stopped by a token budget that counted cache reads at full weight; it now counts uncached prompt plus completion tokens.</p>
+            <p>The single pass over the whole slice, on September 9, 2026, graded by the official harness: <strong>16 of 25 resolved</strong>, the 7 of 9 above plus 9 of 16 on <code>rest-16</code> through the agentkernel backend. Two misses were harness defects. Both were fixed and rerun: <code>sympy-23413</code> then resolved and <code>django-15957</code> did not, which makes <strong>17 of 25 with the fixes</strong>. A third, <code>xarray-4695</code>, has the correct one-line patch applied, but the harness's own pytest segfaults under amd64 emulation on this machine before any test runs, so it can only be graded on a native amd64 host. The other seven misses are model failures: five ended at the round cap still working and two completed with wrong fixes.</p>
+
+            <h3>The seven misses on a local model</h3>
+            <table>
+              <thead><tr><th>Date</th><th>Run</th><th>Result and caveat</th></tr></thead>
+              <tbody>
+                <tr><td>September 10, 2026</td><td><code>ollama/qwen3.8:27b-mlx</code> through agentkernel, with provider retries and the finish nudge.</td><td><strong>1 of 7 resolved</strong> (<code>sympy-15875</code>); three patches were empty. Provider and model changed at once, so nothing is isolated.</td></tr>
+                <tr><td>September 17, 2026</td><td>Same model and limits, after the quality work: diagnostics first, the autopilot judge on mutations, a corrected judge prompt.</td><td><strong>3 of 7 resolved</strong> (<code>django-16877</code>, <code>seaborn-3187</code>, <code>pylint-8898</code>); <code>sympy-15875</code> hit the round limit this time. One run per instance on a local model is noisy: better on this slice, this time, not the effect of any one change.</td></tr>
+                <tr><td>September 17, 2026</td><td>The same seven from a snapshot, after the tolerance fixes.</td><td>No graded result: the patches were in a scratch worktree that was cleaned up before grading.</td></tr>
+                <tr><td>September 21, 2026</td><td>The five still missing, from the real checkout with the tolerance fixes.</td><td><strong>1 of 5 resolved</strong> (<code>sympy-15875</code>). Every instance hit the round cap while the Harbor probes shared the same Ollama, so it cannot separate the fixes from the model's variance. It does not improve on 3 of 7.</td></tr>
+              </tbody>
+            </table>
+            <p>The Sonnet 5 comparison after the quality work could not run: the Anthropic key had reached its monthly usage limit until October 1.</p>
+
+            <h2>Terminal-Bench and DeepSWE through Harbor</h2>
+            <p>Both benchmarks ship in the Harbor task format, so one adapter, <code>scripts/bench_agent.py</code>, serves both: it installs the runtime into the task container, runs one print-mode turn in autopilot with every command allowed, commits whatever changed, and copies the session next to the receipt. On September 21, 2026, both pipelines completed end to end with the local model, and neither probe task was solved:</p>
+            <ul>
+              <li>Terminal-Bench <code>html-js-filter</code>, an XSS filter in Python: <strong>graded 0</strong> at 40 rounds and again at 12 rounds under a 15-minute bound. The model probed BeautifulSoup's API and never wrote the file the verifier tests.</li>
+              <li>DeepSWE <code>anko-default-function-arguments</code>, in Go: the verifier returned <strong>-1, could not grade</strong>. Harbor's oracle agent, which applies the reference solution, also got -1: the task image's Go toolchain is zero-byte files, as are the toolchains in the other non-Python images pulled on this machine. Until that is understood, the DeepSWE slice is five Python tasks.</li>
+              <li>DeepSWE <code>psd-tools-blend-range-api</code>, in Python and validated with the oracle: the first graded Shift result on this benchmark, and it is <strong>0</strong>. The 60-minute bound ended the turn at 21 rounds with one file changed and a 45-line patch; all 979 pass-to-pass tests still pass and none of the 45 fail-to-pass tests do.</li>
+            </ul>
+            <p>These tasks are sized for hours on frontier models, so the local model's score is a check that the harness works, not a comparable number. The comparable run is the same slice on Sonnet 5, once the key's limit resets.</p>
+
+            <h2>Dogfood</h2>
+            <p>On September 10, 2026, the two dogfood tasks ran with <code>ollama/qwen3.8:27b-mlx</code> against clean commit <code>35eb811</code>. <strong>Neither attempt delivered a completed, regression-clean patch.</strong> <code>status-last-undo</code> passed its hidden test at 38 rounds in 861.8 seconds, then exhausted its token budget with three failures in the final coding suite: its tests changed a shared fixture and included a wrong expected turn. <code>run-list-source</code> was stopped by the user with no edits, so it is ungraded. Both features were finished locally afterwards, which does not count as a model success.</p>
+            <p>Since that run, a hidden-test pass also requires the candidate's full <code>make test</code> to pass before a task counts as resolved, and the two tasks are regression cases that refuse to launch a model against a tree where they already pass. New dogfood attempts need an unsolved ticket.</p>
+
+            <h2>Judge cases and compaction scoring</h2>
+            <p>Two smaller sets sit beside these. <code>evals/judge/cases.jsonl</code> is a fixed set of autopilot decisions with the human's answer; <code>scripts/evals.py judge --cases --model PROVIDER/MODEL</code> replays it through a judge and fails on any disagreement, and <code>--session NAME</code> replays a session's own log instead. <code>scripts/evals.py compaction --judge PROVIDER/MODEL</code> adds a second column to the compaction scorer: whether each durable fact is recoverable from the summary, not only quoted in it. The judge results and their dates are on <a href="judge.html">The judge</a>.</p>
+
+            <h2>Run the evals</h2>
+            <p>Every set runs through print mode, with <code>--allow-run</code> seeding the allowlist and <code>--receipt</code> writing the per-task record, so nothing parses a transcript. Results land under <code>evals/results/RUN_ID/</code>, existing run names are refused, and a user interruption saves the partial patch without starting grading or another task.</p>
+            <table>
+              <thead><tr><th>Command</th><th>What it runs</th></tr></thead>
+              <tbody>
+                <tr><td><code>python3 scripts/evals.py dogfood --tasks status-last-undo,run-list-source --run-id NAME</code></td><td>The dogfood tasks in sequence, each against a fresh snapshot of the working tree with the hidden tests held outside it.</td></tr>
+                <tr><td><code>python3 scripts/evals.py swebench</code></td><td>The 25-instance slice through the official harness. <code>--backend agentkernel</code> runs each instance in a sandbox built from the harness image, which repositories with C extensions need.</td></tr>
+                <tr><td><code>python3 scripts/evals.py terminal-bench</code></td><td>The five Terminal-Bench tasks through Harbor.</td></tr>
+                <tr><td><code>python3 scripts/evals.py deepswe --tasks NAME,NAME</code></td><td>The named DeepSWE tasks through Harbor, or the five in <code>evals/deepswe-5.txt</code> by default. <code>--oracle</code> applies the reference solution instead of running a model, which proves a task grades on the machine before any model time is spent.</td></tr>
+                <tr><td><code>python3 scripts/evals.py session NAME</code></td><td>A per-turn review of a session, including a benchmark turn copied next to its receipt.</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><p><strong>Note:</strong> Run evals from a durable checkout, never a scratch one; the ungraded September 17 run lost its patches that way. On Apple silicon the Harbor images run under emulation, which costs about ten minutes per task before the model starts. The in-container turn is bounded at 3600 seconds by default; <code>--timeout</code> changes it.</p></div>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="judge.html">The judge</a> for the judge case set and its agreement numbers.</li>
+              <li><a href="policy.html">Tool policy</a> for the autopilot mode the benchmark turns run in.</li>
+              <li><a href="workflows.html">Workflows</a> for print mode in your own unattended runs.</li>
+            </ul>

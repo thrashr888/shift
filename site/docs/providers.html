@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="Ollama by default, Claude and OpenAI-compatible providers with keys from the environment, custom endpoints, effort and speed, and the context budget.">
+  <title>Providers and keys · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html" aria-current="page">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html">Modes and policy</a>
+        <a href="sessions.html">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Start</p>
+<h1>Providers and keys</h1>
+            <p>This page describes which model Shift talks to, how to choose a different provider or model, where a provider's key comes from, and how Shift keeps a conversation inside the model's context window. Shift ships with a local Ollama model selected, so nothing on this page is required to start.</p>
+
+            <h2>The default: a local Ollama model</h2>
+            <p>The agent file sets the provider to <code>ollama</code>, the model to <code>qwen3.8:27b-mlx</code>, and the endpoint to Ollama's standard local address. No key is configured: <code>agent-api-key-environment</code> is <code>#f</code>. To start with the default:</p>
+            <ol>
+              <li>Start Ollama.</li>
+              <li>Confirm the model is installed with <code>ollama list</code>.</li>
+              <li>Run <code>shift-agent</code>.</li>
+            </ol>
+            <p>In Ollama's local metadata, the default model advertises completion, tool calling, thinking, vision and a 262K context window. It was chosen over a 104 GB alternative to keep interactive work practical.</p>
+            <p>Output streams by default and thinking is hidden by default. <code>/thinking</code>, <code>/thinking medium</code> and <code>/thinking off</code> change the thinking level; <code>/stream off</code> and <code>/stream on</code> control streaming. The same choices are live Scheme settings: <code>agent-thinking</code> takes <code>#t</code>, <code>#f</code> or one of <code>'low</code>, <code>'medium</code> and <code>'high</code>, and <code>agent-stream?</code> takes a boolean. <code>agent-keep-alive</code> is sent to Ollama as <code>keep_alive</code> and defaults to <code>"10m"</code>, long enough for a normal pause without pinning the model.</p>
+            <p>To try the interface without any model, set the model to <code>demo</code>:</p>
+            <pre><code>shift-agent --session ui-demo --set 'agent-model="demo"'</code></pre>
+
+            <h2>Choose a provider and model</h2>
+            <p>To see what the current provider offers, enter <code>/model list</code>. Shift asks Ollama's tag endpoint or the provider's models endpoint; this is a metadata request with no inference. The sidebar's Model tab shows the same list, marks the current <code>provider/model</code>, and switches when you click a row.</p>
+            <p>To switch, enter:</p>
+            <pre><code>/model PROVIDER/MODEL</code></pre>
+            <p>Naming the provider selects it together with its standard endpoint. The picker does not infer a provider from an ambiguous model name, so name it. <code>/model NAME</code> at the prompt Tab-completes the listed names. Choosing another model of the current provider keeps that provider's endpoint and key source, so a local OpenAI-compatible server stays selected; choosing another provider restores that provider's defaults. A running turn or a pending approval refuses the switch without consuming your input. The session checkpoint keeps the selection across restarts.</p>
+            <p>Claude is a built-in native adapter with streaming text, thinking, signed thinking blocks, tool calls and usage. Switching between providers mid-session keeps tool call IDs intact; blocks that only Claude understands are kept for the model that produced them and left out when the conversation goes to another provider.</p>
+
+            <h2>Supply a key</h2>
+            <p>Keys come from the environment of the process, never from the agent file. Claude reads <code>CLAUDE_API_KEY</code> and OpenAI reads <code>OPENAI_API_KEY</code>. Export the variable before you launch <code>shift-agent</code>. Settings and checkpoints store only the variable's name, so a saved session never contains the key itself, and after a restart the environment still has to hold it.</p>
+            <p>The <code>agent-api-key-environment</code> setting names the variable a provider reads. It is <code>#f</code> for the Ollama default and takes a string such as <code>"OPENAI_API_KEY"</code> for a remote provider.</p>
+            <p>For OpenAI specifically, the checked-in <code>openai-gateway</code> extension selects <code>gpt-5.4-mini</code> at OpenAI's endpoint without changing the repository's Ollama default. With the key exported, enter <code>/extension-load openai-gateway</code> in a session.</p>
+
+            <h2>Use a custom endpoint</h2>
+            <p>Any OpenAI-compatible gateway works through the <code>openai</code> provider. Set the endpoint and the key variable with the typed <code>agent-base-url</code> and <code>agent-api-key-environment</code> settings in the project's <code>.shift/settings.json</code> before launch, or redefine them live:</p>
+            <pre><code>/eval (define agent-provider 'openai)
+      /eval (define agent-base-url "https://your-provider.example/v1")
+      /eval (define agent-api-key-environment "OPENAI_API_KEY")</code></pre>
+            <p>Requests to a generic OpenAI-compatible endpoint support SSE streaming and streamed function calls.</p>
+
+            <h2>Set effort and speed</h2>
+            <p><code>/effort</code> and <code>/fast</code> are independent preferences. For known Claude models, Shift sends <code>output_config.effort</code> and <code>speed: fast</code>; for known OpenAI reasoning models it sends <code>reasoning_effort</code> and <code>service_tier: fast</code>. The mappings are deliberately conservative. A preference the current model does not support is kept, shown as unavailable, and left out of the request. OpenAI manages its own thinking, so <code>/effort</code> is the control there; no separate thinking toggle goes to OpenAI Chat Completions.</p>
+            <div class="note"><p><strong>Note:</strong> Fast service may carry premium pricing, and whether your account can use it is decided by the provider.</p></div>
+
+            <h2>Watch the context window</h2>
+            <p>Enter <code>/context</code> to see the last request's estimated input, the known context limit, the output reserve and the usage the provider reported. The sidebar shows the same as a segmented bar with a compact count such as <code>24k / 131k</code>.</p>
+            <p>The estimate counts tool schemas and message framing and is not a tokenizer count. The first request of a turn estimates bytes divided by three; later tool rounds scale that by the ratio of the provider's last reported prompt count to the raw estimate for the same request. Cache reads count toward context size. A 20% margin and the output reserve apply on top; the <code>output-reserve</code> setting defaults to 8192.</p>
+            <p>Claude's window is discovered from the account's model metadata. For a local Ollama model, a bounded metadata request supplies the loaded model's context length; architecture maximums are never substituted. If a provider does not report its window, the limit stays unknown and the bar shows <code>?</code>. To set it yourself, enter:</p>
+            <pre><code>/context limit TOKENS</code></pre>
+            <p>An explicit limit wins over anything discovered. Switching models clears it.</p>
+
+            <h2>Compaction</h2>
+            <p>Before each request in a tool loop, Shift checks the conversation against 80% of the input-plus-output budget (<code>agent-compaction-threshold</code>). When it is over, Shift first asks the model to save its progress, decisions, unresolved work and exact paths with the <code>notes</code> tool, into the session's <code>notes/</code> folder and never into the project. It then replaces the earlier context with a pointer that lists those files and reminds the model that <code>traces</code> and <code>recall</code> still reach earlier turns. If the model writes no note, Shift summarizes the earlier complete turns instead, keeping the current turn and its tool chain. If even the retained turn cannot fit, the run pauses with an error and the checkpoint is preserved. <code>/compact</code> runs the same step on demand. Every compaction writes what it replaced beside the checkpoint as <code>compactions/N.json</code>, and raw usage stays in the local traces.</p>
+
+            <h2>Reference</h2>
+            <table>
+              <thead><tr><th>Setting</th><th>Default</th><th>Meaning</th></tr></thead>
+              <tbody>
+                <tr><td><code>agent-provider</code></td><td><code>'ollama</code></td><td>Which adapter sends requests.</td></tr>
+                <tr><td><code>agent-model</code></td><td><code>"qwen3.8:27b-mlx"</code></td><td>The model name the provider receives; <code>"demo"</code> needs no model.</td></tr>
+                <tr><td><code>agent-base-url</code></td><td>Ollama's local address</td><td>The endpoint, for gateways and OpenAI-compatible servers.</td></tr>
+                <tr><td><code>agent-api-key-environment</code></td><td><code>#f</code></td><td>The name of the environment variable that holds the key.</td></tr>
+                <tr><td><code>agent-thinking</code></td><td><code>#f</code></td><td><code>#t</code>, <code>#f</code>, or <code>'low</code>, <code>'medium</code>, <code>'high</code>.</td></tr>
+                <tr><td><code>agent-stream?</code></td><td><code>#t</code></td><td>Whether output streams.</td></tr>
+                <tr><td><code>agent-keep-alive</code></td><td><code>"10m"</code></td><td>Sent to Ollama as <code>keep_alive</code>.</td></tr>
+                <tr><td><code>agent-compaction-threshold</code></td><td><code>80</code></td><td>The percent of the budget at which compaction runs.</td></tr>
+              </tbody>
+            </table>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="agent-file.html">The agent file</a> for the rest of the settings and how to change them live.</li>
+              <li><a href="sessions.html">Sessions</a> for checkpoints, notes and what a resumed session remembers.</li>
+              <li><a href="terminal.html">The terminal</a> for the Model tab and the context bar.</li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="install.html"><span aria-hidden="true">◀</span> Install and first session</a><a href="terminal.html">The terminal <span aria-hidden="true">▶</span></a></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

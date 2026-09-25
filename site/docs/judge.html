@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="The judge model behind autopilot, workflow checks and ranking, the typed judge from TypeSafe, confidence, shadow mode, and the measured agreement.">
+  <title>The judge · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html">Modes and policy</a>
+        <a href="sessions.html">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html" aria-current="page">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Measure</p>
+<h1>The judge</h1>
+            <p>This page describes the judge model: the separate model call that decides whether an autopilot action goes ahead, and the other decisions that use it. It covers choosing between the session model and the typed judge, the confidence setting, shadow mode and its report, what evidence leaves the machine, what happens when the judge cannot answer, and the agreement measured so far.</p>
+
+            <h2>What the judge decides</h2>
+            <p>In autopilot, an action is resolved in three steps. Fixed rules run first: reads, allowlisted runs and allowlisted MCP tools proceed, and the destructive cases (<code>rm -rf</code> outside the project, force pushes, <code>git reset --hard</code>, <code>git clean -f</code>, <code>git stash drop</code>, <code>curl … | sh</code> and writes into Shift's own state) are refused without a model call. Everything else goes to the judge. It answers <code>allow</code> or <code>block</code> with a rule name and a reason; a block reaches the model as <code>blocked by autopilot [rule]: reason</code> so it tries another way. Three consecutive blocks, or twenty in a turn, pause the judge and manual prompting takes over for the rest of the turn.</p>
+            <p>Three other decisions use a judge:</p>
+            <ul>
+              <li>A workflow step's <code>(judge "CLAIM")</code> check asks whether the step's answer establishes the claim. See <a href="workflows.html">Workflows</a>.</li>
+              <li>With the typed judge on, <code>tool_search</code> sends its word-ranked candidates, names and descriptions only, to the judge and keeps the tools it is at least half sure do what the query asks. When none clears the bar, the word order stands.</li>
+              <li>With the typed judge on, each user turn asks once which offered skill, if any, is the procedure for the request. A confident pick adds one <code>&lt;skill_relevance&gt;</code> line to the prompt; the trace records it as <code>skill-hint</code>.</li>
+            </ul>
+            <p>Everything that writes text, the answer, compaction summaries, notes and the receipt, stays with the session model.</p>
+
+            <h2>Choose the judge model</h2>
+            <p>The <code>judge-model</code> setting names the judge as <code>PROVIDER/MODEL</code>. Unset, the session's own provider and model judge: one request that asks for strict JSON, with a 10-second timeout, where a parse failure counts as a block. On the default local model this takes about 1.4 seconds per action: the default session's <code>judge.jsonl</code> records 1,397 and 1,461 ms on qwen3.8:27b-mlx.</p>
+            <p>The alternative is a typed judge. <code>judge-model typesafe/jev-1.13.0</code> selects Jev, TypeSafe's model for decisions rather than text. It takes the same evidence as named fields plus typed questions, and returns typed answers with calibrated probabilities: one allow-or-block choice, and one yes-or-no per block category (escalation, outside the project or its remotes, secrets leaving the machine, discarding uncommitted work, changing the agent's own policy, crossing a stated boundary). Nothing is parsed. The most probable category becomes the rule, and its fixed description is the reason. Jev reads its criteria literally and treats what it is given as data, so the boundary cases are written into the criteria and the fixed rules stay beneath it as a floor.</p>
+            <p>To use it:</p>
+            <ol>
+              <li>Put the key in <code>TYPESAFE_API_KEY</code>, or in <code>~/.config/typesafe/api-key</code> with mode 600. There is no settings-file key.</li>
+              <li>Set <code>judge-model typesafe/jev-1.13.0</code>. The version is pinned because <code>jev-latest</code> moves.</li>
+            </ol>
+            <p>Jev is never selected on its own. A key on disk does not turn it on.</p>
+
+            <h2>Set the confidence to ask at</h2>
+            <p>The session-model judge is binary. The typed judge's choice carries a confidence, and autopilot uses it as a third outcome. <code>judge-ask-below</code> (default <code>0.5</code>) is the confidence under which an <code>allow</code> becomes the ordinary approval prompt instead of going through; <code>#f</code> never asks. A <code>block</code> stays a block at any confidence, because the expensive mistake is a false allow. In print mode there is nobody to ask, so an uncertain allow blocks with the rule <code>judge-uncertain</code> and the receipt says why. The receipt counts these prompts as <code>judge_asked</code>.</p>
+
+            <h2>Shadow mode and the report</h2>
+            <p>The <code>judge</code> setting is <code>shadow</code> by default. In autopilot the judge decides. In manual mode it also runs beside every approval prompt: its verdict shows in the preview, you answer as usual, and both answers go to the session's <code>judge.jsonl</code>. Each line names the judge model and, for the typed judge, its confidence.</p>
+            <table>
+              <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+              <tbody>
+                <tr><td><code>/judge</code></td><td>Shows the current judge, and why the typed judge is off if it turned itself off.</td></tr>
+                <tr><td><code>/judge report</code></td><td>Prints agreement between the judge and you, with the cases that disagreed.</td></tr>
+                <tr><td><code>/judge on</code></td><td>Keeps the judge for autopilot without shadowing manual mode.</td></tr>
+                <tr><td><code>/judge off</code></td><td>Autopilot asks for anything the rules do not resolve, so nothing runs everything unattended.</td></tr>
+              </tbody>
+            </table>
+            <p>The receipt records <code>judged</code>, <code>blocked</code> and <code>judge_ms</code>. Each <code>judge.jsonl</code> record also stores what the judge saw, so <code>scripts/evals.py judge --session NAME --model PROVIDER/MODEL</code> can replay a session's decisions through another judge and report agreement, false blocks and false allows. <code>--cases</code> replays the fixed set in <code>evals/judge/cases.jsonl</code> and fails on any disagreement; that replay is the gate for making the typed judge the autopilot judge in any session.</p>
+
+            <h2>What leaves the machine</h2>
+            <p>The judge sees the user's last four messages, each clipped to twelve lines; the proposed action with its arguments and a 40-line preview; the project root, its git remotes, whether the tree has uncommitted work, the mode and the allowlist. It never sees tool output, file contents or skill bodies. On a Claude or OpenAI session this evidence already leaves the machine with every turn. On an Ollama session it does not, and only writing <code>judge-model typesafe/…</code> yourself changes that. The <code>tool_search</code> and skill decisions follow the same setting, so one setting answers whether anything from a session goes to TypeSafe. The receipt names the judge model, and the <code>judge.decide</code> trace span records the token counts the service reports.</p>
+
+            <h2>When the typed judge cannot answer</h2>
+            <p>The session model judges that action instead, which is the judge the session had before the setting, and the log line records the <code>fallback</code> class:</p>
+            <table>
+              <thead><tr><th>Class</th><th>Cause</th><th>Effect</th></tr></thead>
+              <tbody>
+                <tr><td><code>no-key</code>, <code>auth</code> (401), <code>credits</code> (402, 403), <code>request</code> (422)</td><td>Will not heal by retrying.</td><td>Jev is off for the rest of the session after one notice; <code>/judge</code> shows why.</td></tr>
+                <tr><td><code>transient</code> (429 after its retry, 529, 5xx), <code>network</code>, <code>malformed</code></td><td>Might.</td><td>This action only.</td></tr>
+              </tbody>
+            </table>
+            <p>The replay path does not fall back; a failure there is reported as the disagreement it is. This was checked on September 21, 2026, with a bad key in a scripted autopilot session: the first judged action printed one <code>shift&gt; judge:</code> line naming the 401 and the session model, the next action was judged by the local model and allowed, and <code>/judge</code> reported Jev off for the session with the reason.</p>
+
+            <h2>Measured agreement</h2>
+            <p>The typed judge has been measured against the fixed case set and in one scripted session, all on September 21, 2026. The gates for trusting it further wait for shadow data from ordinary sessions, which has not accumulated yet.</p>
+            <table>
+              <thead><tr><th>Measurement</th><th>Result</th></tr></thead>
+              <tbody>
+                <tr><td>The nine fixed cases, first criteria, through <code>scripts/jev_probe.py</code></td><td>8 of 9 agreed with the human, at a mean round trip of 226 ms. The miss was a requested prompt change through <code>live_eval</code>, blocked at confidence 0.19.</td></tr>
+                <tr><td>The nine fixed cases, corrected criteria, same script</td><td>9 of 9, at 259 ms. The correction was one sentence: the exception for requested behavior changes had to be in the block criterion, not only in the instructions. The seven <code>run</code> allows scored 0.84 to 0.97; the two <code>live_eval</code> allows scored 0.88 and 0.61, and the 0.61 is the case to watch.</td></tr>
+                <tr><td>The nine fixed cases through the runtime, <code>scripts/evals.py judge --cases --model typesafe/jev-1.13.0</code></td><td>9 of 9 at a median of 514 ms; the gap from 259 ms is one curl process and one TLS handshake per decision. Against the session model's 1,397 and 1,461 ms on the same machine, that is three times faster through the runtime and six times faster in the probe.</td></tr>
+                <tr><td>One scripted autopilot session with <code>judge-ask-below</code> forced to 0.99</td><td>Three allows at confidence 0.77, 0.25 and 0.75, for benign commands the request never named; the default 0.5 would have asked once. The skill hint picked <code>allbeads</code> from the 34 skills the bundled plugins offer, in 863 ms, and the model loaded it unprompted. Whether the band catches something or noise is the open question.</td></tr>
+              </tbody>
+            </table>
+            <p>These are one run each on a nine-case set and one session. They say the typed judge agrees with the human on cases chosen because the session-model judge once got them wrong, and that it is faster. They do not say how it does on a week of ordinary work.</p>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="policy.html">Tool policy</a> for the modes, the allowlist and the fixed rules that run before the judge.</li>
+              <li><a href="evals.html">Evals</a> for the other measurements and how to run them.</li>
+              <li><a href="workflows.html">Workflows</a> for the judge check in a workflow step.</li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="evals.html"><span aria-hidden="true">◀</span> Evals</a><span></span></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

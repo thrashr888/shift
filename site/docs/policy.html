@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="The three modes, the run and MCP allowlists, the fixed rules that refuse destructive actions, and the judge that decides the rest in autopilot.">
+  <title>Modes and policy · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html" aria-current="page">Modes and policy</a>
+        <a href="sessions.html">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
+<h1>Modes and policy</h1>
+            <p>This page describes how Shift decides whether a tool call runs: the three modes, the allowlists for commands and MCP tools, the fixed rules that refuse destructive actions, and the judge model that decides the rest in autopilot. Every model tool call crosses this policy. Prompt words never authorize anything; the mode is data the process owns, and a live patch cannot change it.</p>
+
+            <h2>Choose a mode</h2>
+            <p>To change the mode for the session, enter <code>/mode manual</code>, <code>/mode plan</code> or <code>/mode autopilot</code>. The default is manual.</p>
+            <table>
+              <thead><tr><th>Mode</th><th>What runs without asking</th><th>What happens to the rest</th></tr></thead>
+              <tbody>
+                <tr><td><code>manual</code></td><td>Reads, searches and runs already on the allowlist.</td><td>Shift asks before each tool execution. In a terminal one <code>y</code> or <code>N</code> keystroke answers.</td></tr>
+                <tr><td><code>plan</code></td><td>Reads, search, traces, <code>status</code>, <code>diff</code> and extension listing.</td><td>Mutations are denied.</td></tr>
+                <tr><td><code>autopilot</code></td><td>Reads, allowlisted runs and MCP tools.</td><td>A fixed rule set refuses the destructive cases. The judge model decides everything else.</td></tr>
+              </tbody>
+            </table>
+            <p>The same policy gates model tools, selected context reads and recovery retries. Slash commands you type are user operations and are not gated. Autopilot is an explicit choice; nothing in a prompt turns it on.</p>
+
+            <h2>Set the run allowlist</h2>
+            <p>Runs on the allowlist never ask in manual mode. The allowlist has three scopes whose entries union: the user scope in <code>~/.config/shift/settings.json</code>, the project scope in <code>.shift/settings.json</code>, and the session. The project file is committable, so a repository can ship the commands its panes and tests need.</p>
+            <ol>
+              <li>At an approval prompt, answer <code>a</code> to approve the run and add its exact argv to this session's allowlist.</li>
+              <li>To allow a prefix for this session, enter <code>/allow-run "cargo test"</code>. Quotes are optional.</li>
+              <li>To persist the prefix, add the scope: <code>/allow-run "cargo test" project</code> or <code>/allow-run "cargo test" user</code>.</li>
+              <li>To review the list, enter <code>/run list</code>. Each prefix is shown with its scope.</li>
+              <li>To remove a prefix from every scope that holds it, enter <code>/run deny cargo test</code>.</li>
+            </ol>
+            <p>Prefixes match exact leading elements of the argv only. <code>/run allow cargo test</code> is the session form of the same command, and <code>/settings save</code> promotes the whole effective list to the chosen scope. For an unattended run, <code>--allow-run "ARGV PREFIX"</code> on the command line seeds the same list and can be repeated. MCP callers cannot approve a run or extend the list.</p>
+
+            <h2>Allow an MCP tool</h2>
+            <p>Policy treats a tool from an MCP server like any other tool: manual asks, autopilot allows, and plan allows only tools the server annotates as read-only, non-destructive and closed-world. To put a tool on the same scoped allowlist as runs, enter <code>/allow-mcp SERVER__TOOL</code> with <code>project</code> or <code>user</code> when it should persist. A project can commit, for example, that <code>github__search_issues</code> never asks. See <a href="mcp.html">MCP servers</a> for how tools are named and found.</p>
+
+            <h2>What the fixed rules refuse</h2>
+            <p>In autopilot, process-owned rules run before any model is asked. Reads, allowlisted runs and allowlisted MCP tools proceed. The following are refused without a model call:</p>
+            <ul>
+              <li><code>rm -rf</code> outside the project</li>
+              <li>force pushes</li>
+              <li><code>git reset --hard</code>, <code>git clean -f</code> and <code>git stash drop</code></li>
+              <li><code>curl … | sh</code></li>
+              <li>writes into Shift's own state</li>
+            </ul>
+            <p>Shell <code>deny</code> and the process tool ceiling still apply in every mode.</p>
+
+            <h2>How the judge decides</h2>
+            <p>Everything the rules do not resolve goes to the judge model in one request to a separate model. The judge sees the user's last four messages, the proposed action with a 40-line preview, the project root, its git remotes, whether the tree has uncommitted work, and the allowlist. It never sees tool output. It answers <code>allow</code> or <code>block</code> with a rule name and one sentence. A block reaches the model as <code>blocked by autopilot [rule]: reason</code>, so the model tries another route. A judge that fails or does not answer counts as a block. After three consecutive blocks, or twenty in one turn, the judge pauses and manual prompting takes over for the rest of the turn.</p>
+            <p>The <code>judge-model</code> setting names the judge as <code>PROVIDER/MODEL</code>. When it is unset, the session's own provider and model judge. <code>judge-model typesafe/jev-1.13.0</code> uses TypeSafe's Jev, a typed judge: one allow-or-block choice plus one yes/no per block category, answered in about a quarter of a second with calibrated probabilities and no text to parse. Jev sees the same evidence and nothing more, reads its key from <code>TYPESAFE_API_KEY</code> or <code>~/.config/typesafe/api-key</code>, and is never selected on its own. When Jev cannot answer, the session model judges that action instead and the log line says so. A rejected key, an empty balance, a missing key or a malformed request turns Jev off for the rest of the session after one notice; <code>/judge</code> shows why. <a href="judge.html">The judge</a> page has the measured numbers.</p>
+            <p>With the typed judge, an allow it is not sure of asks you instead of going through. <code>judge-ask-below</code> (default <code>0.5</code>) is the confidence under which that happens, and <code>#f</code> never asks. In print mode there is nobody to ask, so such an allow blocks with the rule <code>judge-uncertain</code>.</p>
+
+            <h2>Turn the judge on, off or into shadow</h2>
+            <p>The <code>judge</code> setting defaults to <code>shadow</code>: the judge decides in autopilot, and in manual mode it also runs beside every prompt. Its verdict shows in the approval preview, and both answers go to the session's <code>judge.jsonl</code>.</p>
+            <ul>
+              <li><code>/judge report</code> prints agreement between you and the judge and lists the cases that disagreed.</li>
+              <li><code>/judge on</code> keeps the judge for autopilot without shadowing in manual mode.</li>
+              <li><code>/judge off</code> makes autopilot ask for anything the rules do not resolve, so nothing runs unattended.</li>
+            </ul>
+            <div class="note"><p><strong>Note:</strong> Each <code>judge.jsonl</code> record stores the action's arguments, the run preview and the user messages the judge saw, so <code>scripts/evals.py judge --session NAME</code> can replay a session's decisions through another judge model. See <a href="evals.html">Evals</a>.</p></div>
+
+            <h2>What the receipt records</h2>
+            <p>The receipt at the end of each turn records <code>judged</code>, <code>blocked</code> and <code>judge_ms</code>, and counts allows that asked you as <code>judge_asked</code>. Blocks appear in the Log tab as <code>[judge]</code> entries. Every answer you give an approval prompt, whether <code>y</code>, <code>a</code>, <code>n</code>, Esc or a typed reply, appears there too as an <code>[approval]</code> entry naming the tool and its subject. See <a href="sessions.html">Receipts and sessions</a> for the rest of the receipt.</p>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="sessions.html">Receipts and sessions</a></li>
+              <li><a href="judge.html">The judge</a></li>
+              <li><a href="mcp.html">MCP servers</a></li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="terminal.html"><span aria-hidden="true">◀</span> The terminal</a><a href="sessions.html">Receipts and sessions <span aria-hidden="true">▶</span></a></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

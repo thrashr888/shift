@@ -33,6 +33,18 @@ the sixteen-color ramp under a dot screen. The earlier site's simulated terminal
 and its site-wide theme and display-name controls are gone: the brand rule is
 that nothing on the page is illustrative.
 
+## Docs pages
+
+`site/docs/` is built by `scripts/site_docs.py` from fragments in `docs/site/`:
+one file per page, an HTML comment of metadata (title, group, description) and
+the content from `<h1>` on. The script adds the header, the rail of every page,
+the breadcrumb and the previous and next links from one page order, so edits
+go in the fragment and the script is run afterwards; `--check`, run by
+`check_site.py`, fails when a committed page differs from its fragment. The
+register is the Google developer documentation style: a page opens by saying
+what it covers, headings are sentence-case tasks, procedures are numbered, and
+every fact comes from the repository docs, which stay the reference.
+
 ## Ghostty themes
 
 `site/ghostty/shift-NAME` is a Ghostty theme for each bundled Shift pack, listed

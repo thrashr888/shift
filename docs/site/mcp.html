@@ -1,0 +1,101 @@
+<!--
+title: Attach a desktop agent
+group: Change
+description: Every session serves MCP on your machine: attach Codex, Claude Desktop or another client, and add MCP servers as tools the other way.
+-->
+      <h1>Attach a desktop agent</h1>
+            <p>This page describes the MCP endpoint that every interactive Shift session serves, the four tools it offers, the policy and security rules that apply to callers, and how to attach Codex, Claude Desktop and ChatGPT to the terminal session you already have open. The last section covers the other direction: Shift as an MCP client that uses other servers' tools.</p>
+
+            <h2>The endpoint</h2>
+            <p>An interactive session starts an HTTP MCP server inside its own Guile process. The first session listens at:</p>
+            <pre><code>http://127.0.0.1:7331/mcp</code></pre>
+            <p>The Session tab shows the address of the current session. There is no daemon, no separate executable and no stdio transport: the session is the server. It shares the terminal's settings, conversation, generation and approval policy, and the endpoint stops when the session ends. A port collision fails with a clear error rather than attaching to another session.</p>
+            <p>Three options control it:</p>
+            <ul>
+              <li><code>--mcp-port PORT</code> pins a port. It also starts the endpoint for sessions with piped input, which otherwise do not serve one.</li>
+              <li><code>--no-mcp</code> disables the endpoint for the session.</li>
+              <li>Leaving <code>mcp</code> out of <code>SHIFT_BUILTINS</code> disables it as a built-in.</li>
+            </ul>
+            <p>The server answers Streamable HTTP POST requests with JSON responses and has no notification stream. A GET returns 405.</p>
+
+            <h2>The tools</h2>
+            <table>
+              <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td><code>shift_status</code></td><td>Reports the process ID, project, session, settings, generation and current turn.</td></tr>
+                <tr><td><code>shift_prompt</code></td><td>Submits a prompt as a turn in the session's current mode. While a turn is running, a second mutating request gets a busy error.</td></tr>
+                <tr><td><code>shift_inspect</code></td><td>Runs a read-only command such as <code>/show</code> or <code>/receipt</code>. It cannot invoke <code>/eval</code>, change the mode, or pass slash commands through the prompt tool.</td></tr>
+                <tr><td><code>shift_cancel</code></td><td>Cancels the active turn and keeps the checkpoint taken before it.</td></tr>
+              </tbody>
+            </table>
+            <p>Terminal and MCP share one controller. Mutating requests serialize, and status stays available while a turn runs. Clients that keep the <code>Mcp-Session-Id</code> returned by <code>initialize</code> appear in the terminal as peers, with their calls listed beside them.</p>
+
+            <h2>Policy still applies</h2>
+            <p>A prompt from an MCP client runs under the same rules as a typed one: the current mode, the allowlist, the judge and the receipt. Anything that needs an interactive approval is denied to the caller. Approve it from the terminal instead, where the peer's request is visible. <a href="policy.html">Tool policy</a> describes the modes.</p>
+
+            <h2>Security</h2>
+            <ul>
+              <li>The server binds the loopback interface only. Nothing outside the machine can reach it unless you put a tunnel in front of it.</li>
+              <li>Every request's <code>Host</code> and <code>Origin</code> headers are validated.</li>
+              <li>Set <code>SHIFT_MCP_TOKEN</code> in the session's environment to require a Bearer token from clients.</li>
+            </ul>
+
+            <h2>Attach Codex</h2>
+            <p>Codex reads MCP servers from <code>.codex/config.toml</code>. The Shift repository registers the endpoint this way, so a Codex session opened in the checkout can call <code>shift_status</code> and <code>shift_prompt</code> against the terminal you have open:</p>
+            <pre><code>[mcp_servers.shift]
+      url = "http://127.0.0.1:7331/mcp"
+      startup_timeout_sec = 10
+      tool_timeout_sec = 600</code></pre>
+
+            <h2>Attach Claude Desktop</h2>
+            <p>Claude Desktop launches stdio servers from its configuration file, so it needs a bridge to the HTTP endpoint. To attach it:</p>
+            <ol>
+              <li>Start a Shift session in the terminal.</li>
+              <li>Add the following to <code>claude_desktop_config.json</code>:
+                <pre><code>{
+        "mcpServers": {
+          "shift": { "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:7331/mcp"] }
+        }
+      }</code></pre></li>
+              <li>Restart Claude Desktop.</li>
+            </ol>
+            <p><code>mcp-remote</code> runs through <code>npx</code> and forwards the app's stdio session to the URL.</p>
+
+            <h2>Attach ChatGPT</h2>
+            <p>ChatGPT's connectors take an MCP URL, but the app has to reach it, and this server binds loopback only. To attach it:</p>
+            <ol>
+              <li>Set <code>SHIFT_MCP_TOKEN</code> before you start the session. The tunnel in step 3 makes the session reachable from outside your machine, so the token is required here, not optional.</li>
+              <li>Start the session.</li>
+              <li>Put a tunnel in front of the port.</li>
+              <li>Register the tunnel's URL as the connector's MCP URL.</li>
+            </ol>
+            <div class="note"><p><strong>Note:</strong> Whatever the client, prompts run in the current mode, approvals stay in the terminal, and the terminal shows each client as a peer with its calls. Attaching a desktop agent adds a caller; it does not add authority.</p></div>
+
+            <h2>Use MCP servers from Shift</h2>
+            <p>Shift is also an MCP client. Servers are data in <code>.shift/mcp.scm</code> in the project, which you can commit, and in <code>~/.config/shift/mcp.scm</code> for your user. Shift reads the file and never evaluates it, and a project server shadows a user server of the same name. To lint a file, run <code>./bin/shift-agent --check-mcp FILE</code>.</p>
+            <pre><code>((server "github"
+         (command "npx" "-y" "@modelcontextprotocol/server-github")
+         (env GITHUB_TOKEN))
+       (server "docs"
+         (url "https://docs.example.com/mcp")
+         (header "Authorization" "Bearer $DOCS_TOKEN")))</code></pre>
+            <p>A <code>command</code> server starts as a child of the session with a minimal environment plus the variables named in <code>env</code>. A <code>url</code> server speaks Streamable HTTP and keeps its <code>Mcp-Session-Id</code>. Secrets come only from the project's local environment file: <code>env</code> names are copied from there and <code>$NAME</code> in a header expands from there, so a committed file cannot read a variable you did not put in it.</p>
+            <p>Servers connect at the first <code>tool_search</code> or <code>/mcp connect NAME</code>, with a ten-second budget; a failure is kept with its reason until you retry. Tools are named <code>SERVER__TOOL</code>, and a tool that would shadow a built-in is refused. Their schemas never sit in the system prompt. The model sees server names and one-line descriptions, calls <code>tool_search</code> with a few words or <code>select:SERVER__TOOL</code>, and up to eight matching tools become callable for the rest of the turn. The receipt lists them as <code>mcp_tools</code>.</p>
+            <p>Policy treats an MCP tool like any other: manual mode asks, autopilot allows, and plan mode allows only tools the server marks as read-only, non-destructive and closed-world. <code>/allow-mcp SERVER__TOOL [project|user]</code> puts a tool on the same scoped allowlist as runs, so a project can commit that <code>github__search_issues</code> never asks.</p>
+            <table>
+              <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+              <tbody>
+                <tr><td><code>/mcp</code></td><td>Lists servers with their state and tool counts.</td></tr>
+                <tr><td><code>/mcp connect NAME</code></td><td>Connects a server now instead of at the first search.</td></tr>
+                <tr><td><code>/mcp disconnect NAME</code></td><td>Drops the connection.</td></tr>
+                <tr><td><code>/mcp tools NAME</code></td><td>Shows the tools a connected server offers.</td></tr>
+              </tbody>
+            </table>
+            <p>The Session tab's SERVERS section shows the same state, and clicking a server that is not connected connects it. Results are bounded to 64 KiB; images and other non-text content are named with their type and size rather than inlined.</p>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="policy.html">Tool policy</a> for the modes that decide what an attached client's prompt may do.</li>
+              <li><a href="terminal.html">Terminal</a> for the Session tab, where peers and servers appear.</li>
+              <li><a href="sessions.html">Sessions</a> for the session the endpoint belongs to.</li>
+            </ul>

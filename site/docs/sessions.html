@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="What a receipt lists, how to undo a turn, sessions as folders you can resume, and recall across every session's traces.">
+  <title>Receipts and sessions · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html">Modes and policy</a>
+        <a href="sessions.html" aria-current="page">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
+<h1>Receipts and sessions</h1>
+            <p>This page describes the receipt Shift prints after every turn, how to undo a turn, and how named sessions keep a conversation and its records across restarts. It also covers what a session folder holds and how to search the traces of every session in a project.</p>
+
+            <h2>Read the receipt</h2>
+            <p>Every turn ends with a receipt. It lists the model and generation, the tool rounds and tokens, the files the turn changed with their diffstats, the commands it ran, whether the turn can be undone, and the trace and resume identifiers:</p>
+            <pre><code>turn 3 · claude-sonnet-5 · generation 1 · 4 rounds · 2,445 in (1,900 cached) + 611 out · 6.1s
+      changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
+      ran      cargo test -- session  exit 0  4.8s
+      undo     available (/undo)
+      trace    3f9a1b2c… span 8c21aa00…   resume ./bin/shift-agent --resume dogfood</code></pre>
+            <p>The files and diffstats come from the session's change record, the <code>ran</code> lines from its run records, and the tokens and rounds from the turn's provider usage. A failed or cancelled turn gets a <code>status</code> line with the reason and still lists whatever committed before the interruption. The same record is appended as JSON to the session's <code>receipts.jsonl</code> and attached to the <code>agent.turn</code> span as <code>receipt.*</code> attributes, so <code>/traces</code> shows it too. The JSON shape is in <a href="https://github.com/thrashr888/shift/blob/main/docs/coding-workflow-rfc.md#9-receipt">the coding workflow RFC</a>.</p>
+            <p>To reprint the last receipt, enter <code>/receipt</code>. In a resumed session it comes from <code>receipts.jsonl</code>. The <code>show-work</code> setting, toggled with <code>/work off</code> and <code>/work on</code>, hides the receipt text and the tool echo; receipts are still recorded either way.</p>
+
+            <h2>Undo a turn</h2>
+            <p>To revert the most recent turn that still has file changes, enter <code>/undo</code>. Every file that turn touched must still match its recorded post-image. Otherwise the command refuses and names the diverged files; there is no force flag. Files the turn created are removed and files it deleted come back. Repeating <code>/undo</code> walks back one turn at a time, and a system message tells the model what was reverted. <code>/undo</code> never touches git.</p>
+            <p>After a crash or a cancellation in the middle of a file change, <code>/recover</code> lists the in-flight files with their recorded and current hashes. <code>/recover restore</code> puts back any file that carries the interrupted post-image and leaves untouched files alone.</p>
+
+            <h2>Work in a named session</h2>
+            <p>An interactive launch resumes or creates the project's <code>default</code> session. Use a named session when the conversation and live behavior should survive a process restart:</p>
+            <pre><code>./bin/shift-agent --session dogfood       # resume if present, otherwise create
+      ./bin/shift-agent --session recipes "Continue our Lisp cookie recipe."
+      ./bin/shift-agent --new-session spike-2   # fail if the name already exists
+      ./bin/shift-agent --resume dogfood        # fail if it does not exist
+      ./bin/shift-agent --list-sessions
+      ./bin/shift-agent session-fork dogfood experiment</code></pre>
+            <p>Piped input stays ephemeral unless you name a session. When the process closes, Shift prints the provider-reported token totals for the run, the session's stable ID and a copyable resume command. An advisory owner lock prevents two processes from opening the same named session at once; different names run concurrently. <code>session-fork</code> copies a fixed checkpoint into a distinct child identity while preserving its generation fingerprint and tool ceiling.</p>
+            <p>To see the current identity and checkpoint, enter <code>/session</code>. To clear the persisted conversation while keeping live behavior, enter <code>/reset</code>.</p>
+
+            <h2>What a session stores</h2>
+            <p>Each session is a folder at <code>.shift/sessions/NAME/</code> in the project. The checkpoint is rewritten atomically after each successful turn and interactive mutation; resume rebuilds a fresh module from the current agent source plus the validated patches and never deserializes a live object, so traces before and after a restart share <code>session.id</code> and <code>session.name</code>.</p>
+            <table>
+              <thead><tr><th>Entry</th><th>Contents</th></tr></thead>
+              <tbody>
+                <tr><td><code>session.json</code></td><td>The checkpoint: provider message history, next turn number, active live-patch source, generation number and the stable session ID. Bounded at 8 MiB and 2,000 messages.</td></tr>
+                <tr><td><code>receipts.jsonl</code></td><td>One JSON record per turn, the same data as the printed receipt.</td></tr>
+                <tr><td><code>changes.jsonl</code> and <code>blobs/</code></td><td>The change record: the last hash seen for every path read, edited or written, with pre- and post-images of each mutation.</td></tr>
+                <tr><td><code>runs/</code></td><td>The full log of every command, including <code>job-N.log</code> for background jobs.</td></tr>
+                <tr><td><code>notes/</code></td><td>Files the model writes with the <code>notes</code> tool. They never go in the project.</td></tr>
+                <tr><td><code>compactions/N.json</code></td><td>What each compaction replaced: the prefix and its summary.</td></tr>
+                <tr><td><code>judge.jsonl</code></td><td>Every judge decision with the evidence it saw. See <a href="policy.html">Modes and policy</a>.</td></tr>
+                <tr><td><code>traces.jsonl</code></td><td>The session's spans.</td></tr>
+                <tr><td><code>agents/</code></td><td>Child sessions. See <a href="subagents.html">Subagents</a>.</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><p><strong>Note:</strong> Large artifacts belong in files, with references in the conversation, rather than in the checkpoint.</p></div>
+
+            <h2>Compact a long conversation</h2>
+            <p>Older history compacts automatically after 80 provider messages, keeping at least 24 recent messages and a boundary-safe summary. The settings <code>agent-compaction-threshold</code> and <code>agent-compaction-keep-recent</code> change those values. <code>/compact</code> runs the same operation on demand. Compaction is notes-first: before the window resets, Shift asks the model to save progress, decisions, unresolved work and exact paths with the <code>notes</code> tool, then replaces the earlier context with a pointer to those files. If the model writes no note, the summary compaction runs instead. A failed or cancelled summary leaves the original checkpoint intact.</p>
+
+            <h2>Search across sessions</h2>
+            <p>Compacted turns remain searchable. <code>/traces QUERY</code> searches the completed spans of the current session, and <code>/trace SPAN_ID</code> fetches the full stored span behind a hit. To search the traces of every session in the project, child sessions included, enter:</p>
+            <pre><code>/recall QUERY</code></pre>
+            <p>The match is literal and case-insensitive over the stored span JSON, newest first, bounded by <code>limit</code>. Each hit names its session, so <code>traces</code> with the <code>span_id</code> inside that session, or resuming it, gets the full detail. The <code>session</code> filter restricts the search to one session or its subtree; <code>name</code>, <code>kind</code>, <code>status</code> and <code>errors_only</code> filter as they do for <code>traces</code>. The model has the same search as the read-only <code>recall</code> tool, which plan mode allows.</p>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="policy.html">Modes and policy</a></li>
+              <li><a href="subagents.html">Subagents</a></li>
+              <li><a href="skills.html">Skills and notes</a></li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="policy.html"><span aria-hidden="true">◀</span> Modes and policy</a><a href="workflows.html">Workflows <span aria-hidden="true">▶</span></a></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

@@ -16,7 +16,8 @@ GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "bluep
 SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")} | {
     "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")}   # scripts/tui_capture.py
 FONTS = {"assets/fonts/" + name for name in ("ibm-cga.woff", "ibm-ega.woff", "ibm-vga.woff", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
-DOCS = {"docs/" + name for name in ("index.html", "install.html", "workflows.html")}
+DOCS = {"docs/" + name for name in ("index.html", "install.html", "providers.html", "terminal.html", "policy.html", "sessions.html", "workflows.html",
+                                     "skills.html", "subagents.html", "agent-file.html", "mcp.html", "evals.html", "judge.html")}   # scripts/site_docs.py
 # The font pack's home, credited in the footer.
 EXTERNAL_LINKS = {"https://int10h.org/oldschool-pc-fonts/"}
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
@@ -142,11 +143,10 @@ def check():
     for name in ("hero.js", "dither.js"):
         if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts[name]):
             errors.append(f"{name} must not make network requests.")
-    generated = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/ghostty_themes.py"), "--check"], capture_output=True, text=True
-    )
-    if generated.returncode != 0:
-        errors.append(generated.stderr.strip() or "Ghostty themes are out of date.")
+    for script, message in (("scripts/ghostty_themes.py", "Ghostty themes are out of date."), ("scripts/site_docs.py", "Docs pages are out of date.")):
+        generated = subprocess.run([sys.executable, str(ROOT / script), "--check"], capture_output=True, text=True)
+        if generated.returncode != 0:
+            errors.append(generated.stderr.strip() or message)
     return errors
 
 

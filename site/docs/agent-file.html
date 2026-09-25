@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="The Scheme file that defines the agent, how to change a definition in the running session, generations and rollback, and what a live change cannot do.">
+  <title>The agent file · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html">Modes and policy</a>
+        <a href="sessions.html">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html" aria-current="page">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Change</p>
+<h1>The agent file</h1>
+            <p>This page describes the agent file, the Scheme file that defines how a Shift session behaves, and the commands that change it while the session runs: <code>/eval</code>, <code>/rollback</code>, <code>/reload</code> and the extension commands. It also draws the line between what the file can change and what needs a restart.</p>
+
+            <h2>What the file defines</h2>
+            <p>Shift starts from <code>agent/default.scm</code>, or the file you pass with <code>--agent</code>. The file is ordinary Scheme: a set of <code>define</code> forms that the runtime loads as one generation of behavior. The definitions you are most likely to change are:</p>
+            <table>
+              <thead><tr><th>Definition</th><th>What it controls</th><th>Default</th></tr></thead>
+              <tbody>
+                <tr><td><code>agent-system-prompt</code></td><td>The system prompt sent with every turn.</td><td>A prompt that names the tools, asks for concise answers, and tells the model to use <code>live_eval</code> when asked to change its own behavior.</td></tr>
+                <tr><td><code>agent-tools</code></td><td>The tool names the model may call. The runtime owns each tool's implementation and its capability checks; the list only names them.</td><td><code>'(read rg skill write edit apply_patch status diff run job spawn tool_search shell traces recall notes workflow live_eval extension ui)</code></td></tr>
+                <tr><td><code>agent-max-tool-rounds</code></td><td>How many tool rounds one turn may use.</td><td><code>12</code></td></tr>
+                <tr><td><code>agent-shell-policy</code></td><td>Whether the <code>shell</code> tool asks before running or is refused. Only <code>'ask</code> and <code>'deny</code> are accepted.</td><td><code>'ask</code></td></tr>
+                <tr><td><code>agent-select-context</code></td><td>A function that receives the user's text and returns project-relative files to read into the turn as context. The runtime reads them through the confined <code>read</code> tool.</td><td>Returns <code>'()</code>.</td></tr>
+                <tr><td><code>agent-transform-user</code></td><td>A function that rewrites the user's text before the model sees it.</td><td>Returns the text unchanged.</td></tr>
+              </tbody>
+            </table>
+            <p>The same file holds the provider, model, base URL, API key variable name, streaming, thinking, keep-alive and compaction settings. <a href="providers.html">Providers</a> covers those.</p>
+
+            <h2>Change a definition in the running session</h2>
+            <p>To redefine a binding without leaving the session, enter <code>/eval</code> followed by a Scheme form. The following turns replace the system prompt, use it once, and put it back:</p>
+            <pre><code>shift&gt; hello
+      assistant&gt; ...answer streams here...
+
+      shift&gt; /eval (define agent-system-prompt "Reply in uppercase.")
+      generation 2 ...
+
+      shift&gt; hello
+      ...response using the patched prompt...
+
+      shift&gt; /rollback
+      generation 1 ...
+
+      shift&gt; hello
+      ...response using the restored prompt...</code></pre>
+            <p>To extend the prompt rather than replace it, build on the current value:</p>
+            <pre><code>/eval (set! agent-system-prompt (string-append agent-system-prompt " Answer in one short paragraph."))</code></pre>
+            <p>The same form works for any definition in the table. Redefining <code>agent-select-context</code>, for example, changes which files every later turn reads first; <code>string-contains</code> and <code>string-contains?</code> are available inside it.</p>
+            <p>The model can make the same change through its <code>live_eval</code> tool. The default prompt tells it to explain the exact binding change before the call and to report the before and after generations when it returns, so the change is visible in the conversation rather than hidden in a file edit.</p>
+
+            <h2>How a change is validated</h2>
+            <p>Each <code>/eval</code> produces a new generation. The runtime evaluates the form in a fresh module, checks the result against the same authority ceiling it applies to the file at startup, and only then makes it the current generation, in one step. A form that fails evaluation or validation leaves the active generation untouched.</p>
+            <p>A turn that is already running keeps the generation it started with; only later turns see the new one. The boot line names the current generation and its fingerprint:</p>
+            <pre><code>shift λ
+        default · generation 1 · 0123456789ab
+        qwen3.8:27b-mlx via ollama
+        stream on · thinking off · watch on
+        12 tools · shell ask · /help for commands</code></pre>
+
+            <h2>Roll back</h2>
+            <p>To return to the previous generation, enter <code>/rollback</code>. The command restores the earlier definitions and reports the generation that is now active. Nothing is lost by trying a change: the generation you came from is still there.</p>
+
+            <h2>Edit the file while Shift runs</h2>
+            <p>In a terminal session, Shift watches the agent file. When you save a distinct version, the runtime rebuilds it in a fresh module, validates it as <code>/reload</code> would, and activates it as another generation. Patches you made with <code>/eval</code> are reapplied on top of the new file. An invalid or incomplete save is rejected once, with the reason written to the session journal, and the working generation stays active until the file changes again. Ordinary editor write patterns are therefore safe to iterate on.</p>
+            <p>The watcher has three controls:</p>
+            <ul>
+              <li><code>--no-watch</code> turns it off, so only <code>/reload</code> picks up the file.</li>
+              <li>Sessions with redirected input start with the watcher off; pass <code>--watch</code> to turn it on there.</li>
+              <li><code>/reload</code> loads the file on demand, and <code>/reload-clean</code> loads it and drops the session's <code>/eval</code> patches.</li>
+            </ul>
+
+            <h2>What a live change cannot do</h2>
+            <p>The agent file is one half of Shift. The other half, the stable runtime under <code>src/live-agent</code> and the trusted built-ins under <code>extensions/shift</code>, owns validation, filesystem confinement, shell approval, transport and tracing. Changes to those files are not loaded into a running process. If they change on disk, the watcher keeps the working generation and asks for a restart before it accepts another agent image, so a newer image never crosses into an older runtime.</p>
+            <p>The split decides what a live change can reach:</p>
+            <table>
+              <thead><tr><th>The agent file sets</th><th>The runtime keeps</th></tr></thead>
+              <tbody>
+                <tr><td>Name, model, provider and system prompt</td><td>Evaluation, validation, atomic activation and rollback</td></tr>
+                <tr><td>Which tools are enabled, by name</td><td>What each tool may do: project-confined reads, searches, writes and edits</td></tr>
+                <tr><td>The tool round limit, compaction threshold and recent-message retention</td><td>The journal, the trace spans and the session checkpoints</td></tr>
+                <tr><td>Context selection and user-input transformation</td><td>The mode and the approval policy</td></tr>
+                <tr><td>Shell policy, as <code>deny</code> or <code>ask</code></td><td>The authority ceiling: no <code>allow</code>, and no process, filesystem, network, dynamic-loading or <code>eval</code> functions in the live language</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><p><strong>Note:</strong> A live change cannot grant new authority. It can narrow what the model does and reshape how it works, but the runtime's limits apply to every generation. To pick up a new runtime, enter <code>/upgrade</code>: it checkpoints the session, restarts the current install against it, and records the runtime version on every later trace.</p></div>
+
+            <h2>Keep a change as an extension</h2>
+            <p>A live change is gone when the process ends unless you save it. An extension is a named Scheme artifact under <code>extensions/*.scm</code> that loads through the same validated generation boundary as the file. Extensions are created disabled, never load on their own, and never overwrite an existing name.</p>
+            <pre><code>/extensions
+      /extension-create terse (set! agent-system-prompt "Answer in one short paragraph.")
+      /extension-load terse
+      /extension-disable terse
+      /extension-export repaired-session</code></pre>
+            <ul>
+              <li><code>/extensions</code> lists the artifacts and their state.</li>
+              <li><code>/extension-create NAME FORM</code> writes the form as a new, disabled artifact.</li>
+              <li><code>/extension-load NAME</code> activates it as a generation. <code>/extension-enable</code> is an alias.</li>
+              <li><code>/extension-disable NAME</code> turns it off again.</li>
+              <li><code>/extension-export NAME</code> collects the session's current stack of live patches into one artifact, so a repaired session can be loaded again after a restart.</li>
+            </ul>
+            <p>The model can run the same lifecycle with its <code>extension</code> tool. Ask it to save the current live changes as an extension named <code>repaired-session</code>, and it writes the artifact for you to enable. Named sessions also keep active patches and generation continuity in their checkpoint; see <a href="sessions.html">Sessions</a>.</p>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="providers.html">Providers</a> for the model and provider definitions in the same file.</li>
+              <li><a href="policy.html">Tool policy</a> for the modes and approvals that live changes cannot alter.</li>
+              <li><a href="sessions.html">Sessions</a> for how patches and generations persist across restarts.</li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="subagents.html"><span aria-hidden="true">◀</span> Subagents</a><a href="mcp.html">Attach a desktop agent <span aria-hidden="true">▶</span></a></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

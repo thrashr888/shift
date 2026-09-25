@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18071e">
+  <meta name="description" content="Skills as procedures the agent can follow, notes the session keeps, and the notes and skills Shift proposes from its own turns.">
+  <title>Skills and notes · Shift docs</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../lab/cycle.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="../index.html" aria-label="Shift home">
+      <canvas data-mark="../assets/lab/gen3.json" data-period="70" width="640" height="200" aria-hidden="true"></canvas>
+      <span class="visually-hidden">shift ///</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="../index.html#policy">Policy</a>
+      <a href="../index.html#workflows">Workflows</a>
+      <a href="../index.html#measured">Measured</a>
+      <a href="./index.html">Docs</a>
+      <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main" class="docs wrap">
+    <aside class="rail" aria-label="Documentation pages">
+      <div><h2>Start</h2>
+        <a href="install.html">Install and first session</a>
+        <a href="providers.html">Providers and keys</a>
+        <a href="terminal.html">The terminal</a>
+      </div>
+      <div><h2>Use</h2>
+        <a href="policy.html">Modes and policy</a>
+        <a href="sessions.html">Receipts and sessions</a>
+        <a href="workflows.html">Workflows</a>
+        <a href="skills.html" aria-current="page">Skills and notes</a>
+        <a href="subagents.html">Subagents</a>
+      </div>
+      <div><h2>Change</h2>
+        <a href="agent-file.html">The agent file</a>
+        <a href="../panes.html">Pane packs</a>
+        <a href="mcp.html">Attach a desktop agent</a>
+      </div>
+      <div><h2>Measure</h2>
+        <a href="evals.html">Evals</a>
+        <a href="judge.html">The judge</a>
+      </div>
+    </aside>
+    <article class="doc">
+      <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
+<h1>Skills and notes</h1>
+            <p>This page describes skills, the instruction files Shift reads from a project and your config, and notes, the files a session keeps for itself. It covers where skills live, how the model and you load one, how a session turns work into a skill, and the three things Shift writes on its own after a turn.</p>
+
+            <h2>What a skill is</h2>
+            <p>A skill is a folder with a <code>SKILL.md</code> in the Agent Skills format: YAML frontmatter with <code>name</code> (1 to 64 lowercase letters, digits or hyphens, equal to the folder name) and a one-line <code>description</code> of at most 1024 characters, then Markdown instructions of at most 32 KiB. Supporting files sit beside it. Nothing in a skill is evaluated, and loading one never grants authority: the <code>skill</code> tool is read-only, so plan mode allows it and manual mode asks as it does for any read.</p>
+            <p>One optional frontmatter field matters. <code>disable-model-invocation: true</code> keeps a skill out of the model's index, so only you can load it.</p>
+
+            <h2>Where skills come from</h2>
+            <p>Shift reads skills from these sources. A project skill shadows a user skill of the same name.</p>
+            <table>
+              <thead><tr><th>Source</th><th>Location</th></tr></thead>
+              <tbody>
+                <tr><td>Project</td><td><code>.shift/skills/</code>, <code>.agents/skills/</code> and <code>.cortex/skills/</code>. The last holds flat <code>NAME.md</code> files, which count as skills too.</td></tr>
+                <tr><td>User</td><td><code>~/.config/shift/skills/</code> and <code>~/.agents/skills/</code>.</td></tr>
+                <tr><td>Setting</td><td>Any folder listed in the <code>skill-dirs</code> setting.</td></tr>
+              </tbody>
+            </table>
+            <p>Skill folders may sit directly in a source or one level down in category folders. Skills that other agents installed in <code>.agents/skills</code> work unchanged.</p>
+
+            <h2>Load a skill</h2>
+            <p>The model sees a <code>&lt;skills&gt;</code> index of names and descriptions in its system message. It loads a body with the <code>skill</code> tool, which returns the instructions and the folder; <code>skill</code> with a <code>path</code> returns one supporting file, and <code>read</code> accepts paths under a valid skill folder, so <code>references/</code> and <code>scripts/</code> are reachable without widening the project boundary.</p>
+            <p>To load a skill yourself:</p>
+            <ol>
+              <li>Enter <code>/skills</code> to list every skill with its source, validity and loaded state.</li>
+              <li>Enter <code>/skill NAME</code>. Tab completes the name.</li>
+              <li>Type your prompt. The skill goes with it, wrapped in a <code>&lt;skill name="…"&gt;</code> block that stays in history.</li>
+            </ol>
+            <p>The Session tab's SKILLS section shows the same list with a dot for loaded skills; clicking an unloaded row runs <code>/skill NAME</code>. The receipt records the skills loaded in the turn.</p>
+
+            <h2>Turn work into a skill</h2>
+            <p>To ask the model to write the procedure it carried out as a skill, enter <code>/learn NAME</code>, with notes after the name if you want to steer it. The model writes <code>.shift/skills/NAME/SKILL.md</code> through the normal <code>write</code> path and its approval, so a session that worked out a procedure leaves a committable skill behind and the next turn's index picks it up.</p>
+
+            <h2>Keep notes</h2>
+            <p>The <code>notes</code> tool writes files under the session's <code>notes/</code> folder, never in the project. Shift uses it before compaction: when the context window is about to reset, it asks the model to save progress, decisions, unresolved work and exact paths as notes, then replaces the earlier context with a pointer to those files. The pointer also reminds the model that <code>traces</code> and <code>recall</code> reach earlier turns. See <a href="sessions.html">Receipts and sessions</a>.</p>
+
+            <h2>What Shift writes on its own</h2>
+            <p>Three things run beside your turns and make later sessions better without your asking.</p>
+            <ul>
+              <li>After every turn, each refused tool call becomes one line in <code>.shift/skills/field-notes/SKILL.md</code>. Every turn's system prompt carries this skill, so the <code>skill</code> tool never offers it, and a quirk hit once, such as an argv shape or a path rule, is known in the next session. Edit or delete lines as you like.</li>
+              <li>A hard turn, one that ended at a limit, repeated the same call twice over, or took three refusals, gets one reflection exchange. It may propose a line for that file or a new skill. A proposed skill is written disabled, with <code>disable-model-invocation: true</code>, and nothing is ever overwritten.</li>
+              <li>A good turn, one that ended clean with eight or more tool calls, or a workflow run that resolved, gets one distillation exchange that may write the procedure as a disabled skill.</li>
+            </ul>
+            <p>Enter <code>/skills</code> to see proposed skills and enable the ones you want. Each of the three has a setting that turns it off:</p>
+            <table>
+              <thead><tr><th>Setting</th><th>Turns off</th></tr></thead>
+              <tbody>
+                <tr><td><code>field-notes false</code></td><td>The line per refused tool call.</td></tr>
+                <tr><td><code>reflection false</code></td><td>The exchange after a hard turn.</td></tr>
+                <tr><td><code>distillation false</code></td><td>The exchange after a good turn.</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><p><strong>Note:</strong> Workflows improve by a different route. <code>/workflow improve NAME</code> proposes one change and keeps it only when it resolves in no more rounds. See <a href="workflows.html">Workflows</a>.</p></div>
+
+            <h2>What's next</h2>
+            <ul>
+              <li><a href="workflows.html">Workflows</a></li>
+              <li><a href="sessions.html">Receipts and sessions</a></li>
+              <li><a href="policy.html">Modes and policy</a></li>
+            </ul>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="workflows.html"><span aria-hidden="true">◀</span> Workflows</a><a href="subagents.html">Subagents <span aria-hidden="true">▶</span></a></nav>
+    </article>
+  </main>
+  <footer class="site-footer wrap">
+    <p>shift /// · Guile and your terminal</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/thrashr888/shift">Source</a><a href="./index.html">Documentation</a><a href="https://github.com/thrashr888/shift/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>
