@@ -2,6 +2,7 @@
 """Capture the real terminal interface, one PNG per built-in theme.
 
     scripts/tui_capture.py OUT_DIR [--cols 140 --rows 44] [--scale 2] [themes...]
+    scripts/tui_capture.py OUT_DIR --scenes          the captures the docs pages show, acid theme
 
 The interface runs in a pseudo-terminal with the demo model, so nothing
 leaves the machine. After one demo exchange, each theme is selected with
@@ -175,6 +176,35 @@ class Capture:
             self.process.kill()
 
 
+# The docs captures: each is a name, then steps of (keys, text to wait for); a step whose keys
+# start with "/" is a slash command, typed, its suggestion palette dismissed with Escape, then
+# entered. "\t" is Tab, "\x02" is ^B. The session carries over from scene to scene.
+SCENES = [
+    ("first-session", [("/motion off", "READY"), ("What should I work on next?\n", "READY")]),
+    ("plan-mode", [("/mode plan", "PLAN"), ("Show me the failing test and propose a fix.\n", "READY")]),
+    ("live-eval", [("/mode manual", "MANUAL"), ('/eval (define agent-system-prompt "Reply in uppercase.")', "generation 2"),
+                   ("/generations", "READY"), ("/rollback", "READY")]),
+    ("receipt", [("/receipt", "READY")]),
+    ("session-tab", [("\t", None), ("\t", None)]),
+    ("workflows-tab", [("\t", None), ("\t", None), ("\t", None)]),
+    ("sidebar-full", [("\x02", None)]),
+]
+
+
+def scenes(cap, out):
+    for name, steps in SCENES:
+        for keys, needle in steps:
+            if keys.startswith("/"):
+                cap.send(keys); cap.drain(0.3); cap.send("\x1b"); cap.drain(0.2); cap.send("\n")
+            else:
+                cap.send(keys)
+            if needle:
+                cap.wait_for(needle)
+            cap.drain(0.6)
+        size = cap.render(out / ("%s.png" % name))
+        print(name, size, (out / ("%s.png" % name)).stat().st_size // 1024, "KB")
+
+
 def main(argv):
     out = Path(argv[0]); out.mkdir(parents=True, exist_ok=True)
     opts = {"--cols": 140, "--rows": 44, "--scale": 2}
@@ -185,8 +215,16 @@ def main(argv):
             opts[argv[i]] = int(argv[i + 1]); i += 2
         else:
             themes.append(argv[i]); i += 1
-    themes = themes or ["acid", "paddock", "blueprint", "qdos"]
     cap = Capture(opts["--cols"], opts["--rows"], opts["--scale"])
+    if "--scenes" in themes:
+        with tempfile.TemporaryDirectory(prefix="shift-capture-") as tmp:
+            cap.start(tmp)
+            try:
+                scenes(cap, out)
+            finally:
+                cap.stop()
+        return
+    themes = themes or ["acid", "paddock", "blueprint", "qdos"]
     with tempfile.TemporaryDirectory(prefix="shift-capture-") as tmp:
         cap.start(tmp)
         # A few turns, so the transcript and the sidebar have something to show: two demo

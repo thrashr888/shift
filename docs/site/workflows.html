@@ -33,6 +33,7 @@ description: Define a workflow with checks, run it in a session or unattended, a
 
       <h2>Run a workflow</h2>
       <p>To run a workflow, enter:</p>
+      <figure class="shot"><img src="../assets/docs/workflows-tab.png" alt="The Workflows tab listing the repository's five workflows with their steps, run counts and the rounds of the last resolved run" width="2848" height="1808" loading="lazy"><figcaption>The Workflows tab: every workflow the project provides, with its runs and how many rounds the last one took.</figcaption></figure>
       <pre><code>/workflow run NAME</code></pre>
       <p>Shift runs the steps as ordinary turns, so the mode, the allowlist, the judge, receipts and traces all apply. The run stops at the first failed check, at a failed or limited turn, or when the budget is spent; later steps are skipped. Each run writes one record to <code>.shift/workflows/NAME/runs/</code>.</p>
       <p>To list workflows, enter <code>/workflow</code>. To see a workflow's steps, checks and recent runs, enter <code>/workflow NAME</code>. The sidebar's Workflows tab shows the same list and follows a run step by step.</p>

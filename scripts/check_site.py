@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 GHOSTTY_THEMES = {"ghostty/shift-" + name for name in ("acid", "paddock", "blueprint", "qdos")}
 SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.png", "recall.png")} | {
-    "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")}   # scripts/tui_capture.py
+    "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")} | {   # scripts/tui_capture.py
+    "assets/docs/%s.png" % name for name in ("first-session", "plan-mode", "live-eval", "receipt", "session-tab", "workflows-tab", "sidebar-full")}   # --scenes
 FONTS = {"assets/fonts/" + name for name in ("ibm-cga.woff", "ibm-ega.woff", "ibm-vga.woff", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
 DOCS = {"docs/" + name for name in ("index.html", "install.html", "providers.html", "terminal.html", "policy.html", "sessions.html", "workflows.html",
                                      "skills.html", "subagents.html", "agent-file.html", "panes.html", "mcp.html", "benchmarks.html", "judge.html")}   # scripts/site_docs.py

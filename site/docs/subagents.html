@@ -76,6 +76,7 @@
 
             <h2>Start a child</h2>
             <p><code>spawn</code> is a model tool. It forks the live image into a new child folder, starts the child as a background job and returns at once. A call looks like this:</p>
+      <figure class="shot"><img src="../assets/fanout-log.png" alt="The terminal with two subagents running: the transcript shows two spawn calls and a job wait, and the Log tab lists both children as running jobs" width="2048" height="1568" loading="lazy"><figcaption>Two children spawned in one turn, both running under the job ceiling.</figcaption></figure>
             <pre><code>{"task": "Run make test and report failures with file:line",
        "name": "tests", "tools": ["read", "rg", "run", "job"],
        "history": false, "timeout_seconds": 600}</code></pre>
@@ -106,6 +107,7 @@
 
             <h2>Follow a child in the traces</h2>
             <p>The parent records one <code>subagent.run</code> span per child, opened at spawn and closed when the child exits, carrying the child's session name, job id, ceiling and exit status. A <code>job wait</code> on a child records a <code>subagent.join</code> span linked to the run span. The child process receives <code>TRACEPARENT</code>, so its own turn and tool spans nest under the parent's tool span in an OTLP viewer, while its local <code>traces.jsonl</code> stays inside its folder.</p>
+      <figure class="shot"><img src="../assets/fanout-sessions.png" alt="The Session tab listing the parent session with its two subagents nested beneath it" width="2048" height="1568" loading="lazy"><figcaption>Children sit under their parent in the Session tab, each an ordinary session you can resume.</figcaption></figure>
             <p><code>recall</code> and <code>/recall QUERY</code> search every session's traces in the project, subagent folders included, and name the session behind each hit. The <code>session</code> filter restricts a search to one session or its subtree. A parent can therefore inspect a child's tool outcomes without reading its transcript. See <a href="sessions.html">Receipts and sessions</a>.</p>
 
             <h2>Limits</h2>

@@ -60,6 +60,7 @@
 
             <h2>Read the receipt</h2>
             <p>Every turn ends with a receipt. It lists the model and generation, the tool rounds and tokens, the files the turn changed with their diffstats, the commands it ran, whether the turn can be undone, and the trace and resume identifiers:</p>
+      <figure class="shot"><img src="../assets/docs/receipt.png" alt="The transcript after /receipt: the turn number, model, generation, rounds and tokens, then the changed files, the trace id and the resume command" width="2848" height="1808" loading="lazy"><figcaption>The receipt of a demo turn: nothing changed, so the changed line says none, and the trace and resume lines are still there.</figcaption></figure>
             <pre><code>turn 3 · claude-sonnet-5 · generation 1 · 4 rounds · 2,445 in (1,900 cached) + 611 out · 6.1s
       changed  src/app.rs (+14 −3)  tests/app.rs (+22 −0) new
       ran      cargo test -- session  exit 0  4.8s
@@ -74,6 +75,7 @@
 
             <h2>Work in a named session</h2>
             <p>An interactive launch resumes or creates the project's <code>default</code> session. Use a named session when the conversation and live behavior should survive a process restart:</p>
+      <figure class="shot"><img src="../assets/docs/session-tab.png" alt="The Session tab: the session name and model, the mode and turn, the skills the session can load, and the list of durable sessions" width="2848" height="1808" loading="lazy"><figcaption>The Session tab lists the session, its skills, and every durable session in the project.</figcaption></figure>
             <pre><code>./bin/shift-agent --session dogfood       # resume if present, otherwise create
       ./bin/shift-agent --session recipes "Continue our Lisp cookie recipe."
       ./bin/shift-agent --new-session spike-2   # fail if the name already exists
@@ -106,6 +108,7 @@
 
             <h2>Search across sessions</h2>
             <p>Compacted turns remain searchable. <code>/traces QUERY</code> searches the completed spans of the current session, and <code>/trace SPAN_ID</code> fetches the full stored span behind a hit. To search the traces of every session in the project, child sessions included, enter:</p>
+      <figure class="shot"><img src="../assets/recall.png" alt="The transcript after /recall: trace hits from the parent session and its subagents, each naming its session and span" width="2048" height="1568" loading="lazy"><figcaption>A recall across sessions: each hit names its session and span.</figcaption></figure>
             <pre><code>/recall QUERY</code></pre>
             <p>The match is literal and case-insensitive over the stored span JSON, newest first, bounded by <code>limit</code>. Each hit names its session, so <code>traces</code> with the <code>span_id</code> inside that session, or resuming it, gets the full detail. The <code>session</code> filter restricts the search to one session or its subtree; <code>name</code>, <code>kind</code>, <code>status</code> and <code>errors_only</code> filter as they do for <code>traces</code>. The model has the same search as the read-only <code>recall</code> tool, which plan mode allows.</p>
 

@@ -35,6 +35,9 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 .section { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); column-gap: 3rem; row-gap: 1.5rem; padding-block: 4rem; border-bottom: 1px solid var(--plum); align-items: start; }
 .section:last-of-type { border-bottom: 0; }
 .section h2, .start h2, .doc h1 { font-family: "IBM EGA", ui-monospace, monospace; font-weight: 400; letter-spacing: 0; }
+/* Now and then a header flickers into the face of another generation for a frame or two (hero.js, docs.js). */
+[data-glitch="cga"] { font-family: "IBM CGA", ui-monospace, monospace !important; }
+[data-glitch="vga"] { font-family: "IBM VGA", ui-monospace, monospace !important; }
 .section h2 { font-size: 1.75rem; line-height: 1; margin-bottom: 1rem; }
 .section .lede { font-size: 1rem; line-height: 1.6; color: color-mix(in srgb, var(--paper) 82%, var(--plum-deep)); margin: 0; max-width: 40rem; }
 .section-copy .text-link { display: inline-block; margin-top: 1rem; }
@@ -109,6 +112,9 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 .doc th { text-align: left; font-weight: 400; color: var(--cyan-faded); padding: .5rem 1rem .5rem 0; border-bottom: 1px solid var(--cyan-faded); }
 .doc td { padding: .5rem 1rem .5rem 0; border-bottom: 1px solid var(--plum); vertical-align: top; }
 .doc .note { border-left: 3px solid var(--cyan-faded); padding: .25rem 0 .25rem 1rem; margin-bottom: 1rem; }
+.doc .shot { margin: 1.5rem 0; }
+.doc .shot img { display: block; width: 100%; height: auto; border: 1px solid var(--plum); }
+.doc .shot figcaption { font-size: .8125rem; line-height: 1.5; color: var(--cyan-faded); margin-top: .5rem; }
 .doc .note p { margin: 0; }
 .doc-nav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--plum); font-size: .875rem; }
 .doc-nav a { text-decoration: none; }
@@ -217,7 +223,7 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 /* Screen 3: the full palette and the reading faces. */
 .gen-3 { font-family: "IBM Plex Sans", system-ui, sans-serif; }
 .gen-3 .mono, .gen-3 .button, .gen-3 .pager, .gen-3 .continue, .gen-3 .back { font-family: "IBM VGA", ui-monospace, monospace; }
-.gen-3 h2 { font-size: clamp(1.75rem, 3vw, 2.75rem); font-weight: 700; line-height: 1.05; letter-spacing: -.02em; }
+.gen-3 h2 { font-family: "IBM VGA", ui-monospace, monospace; font-size: clamp(1.5rem, 3.3vw, 3rem); font-weight: 400; line-height: 1; letter-spacing: 0; }
 .gen-3 p { font-size: 1.0625rem; line-height: 1.5; color: color-mix(in srgb, var(--paper) 82%, var(--plum-deep)); }
 .gen-3 .actions { margin: .25rem 0 0; flex-wrap: wrap; gap: 1.25rem; }
 .gen-3 .button.primary { background: var(--lime-hi); border-color: var(--lime-hi); color: var(--plum-deep); font-weight: 400; font-size: 1rem; gap: 0; }

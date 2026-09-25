@@ -24,6 +24,7 @@ description: Skills as procedures the agent can follow, notes the session keeps,
 
             <h2>Load a skill</h2>
             <p>The model sees a <code>&lt;skills&gt;</code> index of names and descriptions in its system message. It loads a body with the <code>skill</code> tool, which returns the instructions and the folder; <code>skill</code> with a <code>path</code> returns one supporting file, and <code>read</code> accepts paths under a valid skill folder, so <code>references/</code> and <code>scripts/</code> are reachable without widening the project boundary.</p>
+      <figure class="shot"><img src="../assets/docs/session-tab.png" alt="The Session tab with the skills section: project skills such as checkout-health and field-notes, and skills found in the agents folder" width="2848" height="1808" loading="lazy"><figcaption>Skills appear in the Session tab with their source; click one or enter /skill NAME.</figcaption></figure>
             <p>To load a skill yourself:</p>
             <ol>
               <li>Enter <code>/skills</code> to list every skill with its source, validity and loaded state.</li>
