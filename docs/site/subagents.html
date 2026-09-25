@@ -35,7 +35,7 @@ description: Spawn a child session under the parent, wait for it as a job, and s
                 <tr><td><code>tools</code></td><td>Narrows the child's tool ceiling. It defaults to the parent's own ceiling and can never widen it. The ceiling is stored in the child's <code>authority.json</code>, so it holds when you resume the child by hand.</td></tr>
                 <tr><td><code>history</code></td><td><code>false</code> by default: the child starts with an empty conversation. <code>true</code> copies the parent's checkpoint so the child sees everything the parent saw.</td></tr>
                 <tr><td><code>model</code></td><td>Overrides the inherited model.</td></tr>
-                <tr><td><code>timeout_seconds</code></td><td>How long the job may run.</td></tr>
+                <tr><td><code>timeout_seconds</code> (30 through 3600 seconds; 600 when omitted)</td><td>How long the job may run.</td></tr>
               </tbody>
             </table>
             <p>The child runs <code>shift-agent --resume PATH --print TASK</code>. Its stdout is its answer and is captured as the job log; its narration goes to <code>progress.log</code> in its folder. Because print mode has nobody to ask, a child in manual mode can only read, search and run allowlisted commands. A child in autopilot uses the judge model as its parent would. See <a href="policy.html">Modes and policy</a>.</p>

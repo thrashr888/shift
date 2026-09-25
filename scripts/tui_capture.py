@@ -189,9 +189,15 @@ def main(argv):
     cap = Capture(opts["--cols"], opts["--rows"], opts["--scale"])
     with tempfile.TemporaryDirectory(prefix="shift-capture-") as tmp:
         cap.start(tmp)
-        cap.send("What should I work on next?\n")
-        cap.wait_for("READY")
-        cap.drain(0.5)
+        # A few turns, so the transcript and the sidebar have something to show: two demo
+        # exchanges, the real receipt of the last one, then the Workflows tab.
+        for prompt in ("What should I work on next?\n", "Run the site checker and tell me what it found.\n", "/receipt\n"):
+            cap.send(prompt)
+            cap.wait_for("READY")
+            cap.drain(0.4)
+        for _ in range(5):
+            cap.send("\t")
+        cap.drain(0.6)
         for theme in themes:
             cap.send("/theme %s\n" % theme)
             cap.drain(0.8)

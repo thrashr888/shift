@@ -43,6 +43,9 @@ and a copyable `./bin/shift-agent --resume NAME` command.
 variables take precedence. Claude uses `CLAUDE_API_KEY`; OpenAI uses
 `OPENAI_API_KEY`. Settings and checkpoints store only credential variable names.
 
+`/generations` lists the active generation and the rollback stack, and
+`/rollback` returns to the previous one.
+
 ## Providers and context
 
 Claude is a built-in native Messages adapter, including streaming text, thinking,
@@ -423,7 +426,9 @@ kept or not, recorded under the workflow's `versions/`.
 
 ## Trace recall
 
-`recall` and `/recall QUERY` search the traces of every session in the
+Each session keeps its spans in its own `traces.jsonl` under
+`.shift/sessions/NAME/`; `/traces` and the `traces` tool read the current
+session's file. `recall` and `/recall QUERY` search the traces of every session in the
 project, subagent folders included: a literal, case-insensitive match over
 stored span JSON, newest first, bounded by `limit`. Each hit names its session,
 so `traces` with `span_id` inside that session, or resuming it, gets the full

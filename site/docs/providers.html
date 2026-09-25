@@ -9,6 +9,7 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,39 +21,42 @@
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
   <main id="main" class="docs wrap">
-    <aside class="rail" aria-label="Documentation pages">
-      <div><h2>Start</h2>
-        <a href="install.html">Install and first session</a>
-        <a href="providers.html" aria-current="page">Providers and keys</a>
-        <a href="terminal.html">The terminal</a>
-      </div>
-      <div><h2>Use</h2>
-        <a href="policy.html">Modes and policy</a>
-        <a href="sessions.html">Receipts and sessions</a>
-        <a href="workflows.html">Workflows</a>
-        <a href="skills.html">Skills and notes</a>
-        <a href="subagents.html">Subagents</a>
-      </div>
-      <div><h2>Change</h2>
-        <a href="agent-file.html">The agent file</a>
-        <a href="../panes.html">Pane packs</a>
-        <a href="mcp.html">Attach a desktop agent</a>
-      </div>
-      <div><h2>Measure</h2>
-        <a href="evals.html">Evals</a>
-        <a href="judge.html">The judge</a>
-      </div>
-    </aside>
+    <details class="rail" open aria-label="Documentation pages">
+      <summary>All pages</summary>
+      <nav class="rail-pages">
+        <div><h2>Start</h2>
+          <a href="install.html">Install and first session</a>
+          <a href="providers.html" aria-current="page">Providers and keys</a>
+          <a href="terminal.html">The terminal</a>
+        </div>
+        <div><h2>Use</h2>
+          <a href="policy.html">Modes and policy</a>
+          <a href="sessions.html">Receipts and sessions</a>
+          <a href="workflows.html">Workflows</a>
+          <a href="skills.html">Skills and notes</a>
+          <a href="subagents.html">Subagents</a>
+        </div>
+        <div><h2>Change</h2>
+          <a href="agent-file.html">The agent file</a>
+          <a href="panes.html">Pane packs</a>
+          <a href="mcp.html">Attach a desktop agent</a>
+        </div>
+        <div><h2>Benchmarks</h2>
+          <a href="benchmarks.html">Benchmarks</a>
+          <a href="judge.html">The judge</a>
+        </div>
+      </nav>
+    </details>
     <article class="doc">
       <p class="crumbs"><a href="./index.html">Docs</a> &gt; Start</p>
 <h1>Providers and keys</h1>
-            <p>This page describes which model Shift talks to, how to choose a different provider or model, where a provider's key comes from, and how Shift keeps a conversation inside the model's context window. Shift ships with a local Ollama model selected, so nothing on this page is required to start.</p>
+            <p>This page describes which model Shift talks to, how to choose a different provider or model, where a provider's key comes from, and how Shift keeps a conversation inside the model's context window. Shift ships with a local Ollama model selected, so the first launch needs Ollama running with that model pulled, a provider key from this page, or the demo model described in <a href="install.html">Install and first session</a>.</p>
 
             <h2>The default: a local Ollama model</h2>
             <p>The agent file sets the provider to <code>ollama</code>, the model to <code>qwen3.8:27b-mlx</code>, and the endpoint to Ollama's standard local address. No key is configured: <code>agent-api-key-environment</code> is <code>#f</code>. To start with the default:</p>

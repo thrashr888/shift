@@ -9,6 +9,7 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,35 +21,38 @@
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
   <main id="main" class="docs wrap">
-    <aside class="rail" aria-label="Documentation pages">
-      <div><h2>Start</h2>
-        <a href="install.html">Install and first session</a>
-        <a href="providers.html">Providers and keys</a>
-        <a href="terminal.html">The terminal</a>
-      </div>
-      <div><h2>Use</h2>
-        <a href="policy.html">Modes and policy</a>
-        <a href="sessions.html">Receipts and sessions</a>
-        <a href="workflows.html">Workflows</a>
-        <a href="skills.html">Skills and notes</a>
-        <a href="subagents.html" aria-current="page">Subagents</a>
-      </div>
-      <div><h2>Change</h2>
-        <a href="agent-file.html">The agent file</a>
-        <a href="../panes.html">Pane packs</a>
-        <a href="mcp.html">Attach a desktop agent</a>
-      </div>
-      <div><h2>Measure</h2>
-        <a href="evals.html">Evals</a>
-        <a href="judge.html">The judge</a>
-      </div>
-    </aside>
+    <details class="rail" open aria-label="Documentation pages">
+      <summary>All pages</summary>
+      <nav class="rail-pages">
+        <div><h2>Start</h2>
+          <a href="install.html">Install and first session</a>
+          <a href="providers.html">Providers and keys</a>
+          <a href="terminal.html">The terminal</a>
+        </div>
+        <div><h2>Use</h2>
+          <a href="policy.html">Modes and policy</a>
+          <a href="sessions.html">Receipts and sessions</a>
+          <a href="workflows.html">Workflows</a>
+          <a href="skills.html">Skills and notes</a>
+          <a href="subagents.html" aria-current="page">Subagents</a>
+        </div>
+        <div><h2>Change</h2>
+          <a href="agent-file.html">The agent file</a>
+          <a href="panes.html">Pane packs</a>
+          <a href="mcp.html">Attach a desktop agent</a>
+        </div>
+        <div><h2>Benchmarks</h2>
+          <a href="benchmarks.html">Benchmarks</a>
+          <a href="judge.html">The judge</a>
+        </div>
+      </nav>
+    </details>
     <article class="doc">
       <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
 <h1>Subagents</h1>
@@ -83,7 +87,7 @@
                 <tr><td><code>tools</code></td><td>Narrows the child's tool ceiling. It defaults to the parent's own ceiling and can never widen it. The ceiling is stored in the child's <code>authority.json</code>, so it holds when you resume the child by hand.</td></tr>
                 <tr><td><code>history</code></td><td><code>false</code> by default: the child starts with an empty conversation. <code>true</code> copies the parent's checkpoint so the child sees everything the parent saw.</td></tr>
                 <tr><td><code>model</code></td><td>Overrides the inherited model.</td></tr>
-                <tr><td><code>timeout_seconds</code></td><td>How long the job may run.</td></tr>
+                <tr><td><code>timeout_seconds</code> (30 through 3600 seconds; 600 when omitted)</td><td>How long the job may run.</td></tr>
               </tbody>
             </table>
             <p>The child runs <code>shift-agent --resume PATH --print TASK</code>. Its stdout is its answer and is captured as the job log; its narration goes to <code>progress.log</code> in its folder. Because print mode has nobody to ask, a child in manual mode can only read, search and run allowlisted commands. A child in autopilot uses the judge model as its parent would. See <a href="policy.html">Modes and policy</a>.</p>

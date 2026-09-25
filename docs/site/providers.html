@@ -4,7 +4,7 @@ group: Start
 description: Ollama by default, Claude and OpenAI-compatible providers with keys from the environment, custom endpoints, effort and speed, and the context budget.
 -->
       <h1>Providers and keys</h1>
-            <p>This page describes which model Shift talks to, how to choose a different provider or model, where a provider's key comes from, and how Shift keeps a conversation inside the model's context window. Shift ships with a local Ollama model selected, so nothing on this page is required to start.</p>
+            <p>This page describes which model Shift talks to, how to choose a different provider or model, where a provider's key comes from, and how Shift keeps a conversation inside the model's context window. Shift ships with a local Ollama model selected, so the first launch needs Ollama running with that model pulled, a provider key from this page, or the demo model described in <a href="install.html">Install and first session</a>.</p>
 
             <h2>The default: a local Ollama model</h2>
             <p>The agent file sets the provider to <code>ollama</code>, the model to <code>qwen3.8:27b-mlx</code>, and the endpoint to Ollama's standard local address. No key is configured: <code>agent-api-key-environment</code> is <code>#f</code>. To start with the default:</p>

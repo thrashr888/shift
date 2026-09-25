@@ -34,7 +34,8 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 .page-nav a { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .8125rem; }
 .section { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); column-gap: 3rem; row-gap: 1.5rem; padding-block: 4rem; border-bottom: 1px solid var(--plum); align-items: start; }
 .section:last-of-type { border-bottom: 0; }
-.section h2 { font-size: 1.75rem; font-weight: 700; letter-spacing: -.01em; margin-bottom: 1rem; }
+.section h2, .start h2, .doc h1 { font-family: "IBM EGA", ui-monospace, monospace; font-weight: 400; letter-spacing: 0; }
+.section h2 { font-size: 1.75rem; line-height: 1; margin-bottom: 1rem; }
 .section .lede { font-size: 1rem; line-height: 1.6; color: color-mix(in srgb, var(--paper) 82%, var(--plum-deep)); margin: 0; max-width: 40rem; }
 .section-copy .text-link { display: inline-block; margin-top: 1rem; }
 .proof { min-width: 0; }
@@ -72,7 +73,7 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 /* Start: a plum box under the sixteen-color ramp, drawn as a band through a dot screen. */
 .start { margin-top: 4rem; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1.5rem 3rem; align-items: center; padding: 0 2rem 2rem; background: var(--plum); color: var(--paper); }
 .start .ramp { grid-column: 1 / -1; height: 12px; margin: 0 -2rem 1rem; background-color: var(--cyan-faded); background-image: radial-gradient(var(--plum) .75px, transparent .9px), linear-gradient(100deg, var(--lime-faded) 0%, var(--cyan-faded) 48%, var(--magenta-faded) 100%); background-size: 4px 4px, 100% 100%; }
-.start h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 1rem; }
+.start h2 { font-size: 1.75rem; line-height: 1; margin-bottom: 1rem; }
 .start p { margin: 0 0 .75rem; font-size: 1rem; line-height: 1.6; color: color-mix(in srgb, var(--paper) 82%, var(--plum)); }
 .start p:last-child { margin: 0; }
 .start a { color: var(--paper); }
@@ -85,13 +86,16 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 
 /* Docs: a rail of every page, one page of text beside it. */
 .docs { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 3rem; padding-block: 2rem 4rem; align-items: start; }
-.rail { position: sticky; top: 1.5rem; display: grid; gap: 1.25rem; font-size: .875rem; }
+.rail { position: sticky; top: 1.5rem; font-size: .875rem; }
+.rail > summary { list-style: none; cursor: default; pointer-events: none; }
+.rail > summary::-webkit-details-marker { display: none; }
+.rail-pages { display: grid; gap: 1.25rem; }
 .rail h2 { font: .75rem/1.6 "IBM Plex Mono", ui-monospace, monospace; color: var(--cyan-faded); margin-bottom: .25rem; }
 .rail a { display: block; text-decoration: none; padding: .25rem 0; }
 .rail a[aria-current] { color: var(--lime-hi); }
 .doc { max-width: 44rem; min-width: 0; }
 .doc .crumbs { font: .8125rem/1.6 "IBM Plex Mono", ui-monospace, monospace; color: var(--cyan-faded); margin-bottom: 1rem; }
-.doc h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -.01em; margin-bottom: 1rem; }
+.doc h1 { font-size: 2.625rem; line-height: 1; margin-bottom: 1rem; }
 .doc h2 { font-size: 1.375rem; font-weight: 700; margin: 2.5rem 0 .75rem; }
 .doc h3 { font-size: 1rem; font-weight: 700; margin: 1.5rem 0 .5rem; }
 .doc p, .doc li { font-size: 1rem; line-height: 1.6; color: color-mix(in srgb, var(--paper) 88%, var(--plum-deep)); }
@@ -132,6 +136,10 @@ nav a { text-decoration: none; padding-block: .75rem; font-size: .875rem; }
 @media (max-width: 900px) {
   .section, .start, .reference-block, .docs, .doc-index { grid-template-columns: 1fr; }
   .rail { position: static; }
+  .rail > summary { pointer-events: auto; cursor: pointer; padding: .75rem 0; border-block: 1px solid var(--plum); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .8125rem; color: var(--cyan-faded); }
+  .rail > summary::before { content: "▸ "; }
+  .rail[open] > summary::before { content: "▾ "; }
+  .rail-pages { padding-top: 1rem; }
   .screen-foot { grid-template-columns: minmax(0, 1fr); justify-items: start; }
   .screen-foot > :last-child, .pager { justify-self: start; }
   .theme-downloads { grid-template-columns: 1fr 1fr; }

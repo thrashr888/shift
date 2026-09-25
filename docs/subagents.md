@@ -41,7 +41,7 @@ the child as a background job:
 ```json
 {"task": "Run make test and report failures with file:line",
  "name": "tests", "tools": ["read", "rg", "run", "job"],
- "history": false, "timeout_seconds": 600}
+ "history": false, "timeout_seconds": 600}   ; 30 through 3600; 600 when omitted
 ```
 
 - `name` defaults to `agent-N`; it must be a plain session name.

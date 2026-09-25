@@ -24,7 +24,7 @@
     <nav aria-label="Main navigation">
       <a href="#policy">Policy</a>
       <a href="#workflows">Workflows</a>
-      <a href="#measured">Measured</a>
+      <a href="#benchmarks">Benchmarks</a>
       <a href="#yours">Make it yours</a>
       <a href="./docs/index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
@@ -36,8 +36,8 @@
       <article class="screen gen-1 wrap" id="screen-1">
         <div class="screen-copy">
           <h1 tabindex="-1">The coding agent that's yours to change.</h1>
-          <p class="lead">Its behavior is a program you edit while it runs. A receipt ends every turn.</p>
-          <p class="aside">One developer builds it and uses it daily on this repository. The evals are in the repo.</p>
+          <p class="lead">Its behavior is a program you edit while it runs. After each turn it lists what changed, what ran, and how to undo it.</p>
+          <p class="aside">Made by one person, who uses it every day to build Shift itself. The benchmark results are committed in the repository.</p>
         </div>
         <div class="screen-visual">
           <div class="stage"><canvas data-dither="./assets/lab/tui-acid.png" aria-label="A Shift session, dithered into lime on plum, with depth that tilts with the cursor"></canvas></div>
@@ -45,7 +45,7 @@
         <div class="screen-foot">
           <span class="install">&gt; brew install thrashr888/tap/shift<span class="caret" aria-hidden="true">_</span></span>
           <nav class="pager" aria-label="Hero screens"><a href="#screen-1" aria-current="true">1</a><a href="#screen-2">2</a><a href="#screen-3">3</a></nav>
-          <a class="continue" href="#screen-2">Continue <span aria-hidden="true">▶</span></a>
+          <a class="continue" href="#screen-2">Next: the receipt <span aria-hidden="true">▶</span></a>
         </div>
       </article>
 
@@ -61,7 +61,7 @@
         <div class="screen-foot">
           <a class="back" href="#screen-1"><span aria-hidden="true">◀</span> Back</a>
           <nav class="pager" aria-label="Hero screens"><a href="#screen-1">1</a><a href="#screen-2" aria-current="true">2</a><a href="#screen-3">3</a></nav>
-          <a class="continue" href="#screen-3">Continue <span aria-hidden="true">▶</span></a>
+          <a class="continue" href="#screen-3">Next: changing it live <span aria-hidden="true">▶</span></a>
         </div>
       </article>
 
@@ -69,7 +69,7 @@
         <div class="screen-copy">
           <h2 tabindex="-1">Change it while it runs.</h2>
           <p>The agent is a Scheme file. Edit it inside the session and the next turn runs the new behavior. Each accepted edit is a numbered generation, and one command returns to the previous one. The session keeps its context and its receipts.</p>
-          <p>The terminal is yours the same way. Four themes ship, each also a Ghostty theme, and the layout, the panes and the wordmark are files you change.</p>
+          <p>You can change the terminal the same way. Four themes ship, each also a Ghostty theme, and the layout, the panes and the wordmark are files you edit.</p>
           <div class="actions">
             <a class="button primary mono" href="#start">brew install thrashr888/tap/shift</a>
             <a class="text-link" href="./docs/index.html">Read the docs</a>
@@ -86,25 +86,36 @@
         <div class="screen-foot">
           <a class="back" href="#screen-2"><span aria-hidden="true">◀</span> Back</a>
           <nav class="pager" aria-label="Hero screens"><a href="#screen-1">1</a><a href="#screen-2">2</a><a href="#screen-3" aria-current="true">3</a></nav>
-          <a class="continue" href="#policy">Scroll <span aria-hidden="true">▼</span></a>
+          <a class="continue" href="#benchmarks">The benchmarks <span aria-hidden="true">▼</span></a>
         </div>
       </article>
     </section>
 
-    <nav class="page-nav wrap" aria-label="Sections">
-      <a href="#policy">Policy you can read</a>
-      <a href="#workflows">Workflows that improve</a>
-      <a href="#agents">From other agents</a>
-      <a href="#measured">Measured</a>
-      <a href="#yours">Make it yours</a>
-      <a href="#start">Start</a>
-    </nav>
+    <section class="section wrap" id="benchmarks" aria-labelledby="benchmarks-title">
+      <div class="section-copy">
+        <h2 id="benchmarks-title">Benchmarks.</h2>
+        <p class="lede">The evals run from the repository, and each result is committed with its date. These results cover the listed tasks, models and dates, the misses included.</p>
+        <a class="text-link" href="./docs/benchmarks.html">Every run, with its caveats</a>
+      </div>
+      <div class="proof">
+        <table class="results">
+          <thead><tr><th>benchmark</th><th>result</th><th>model</th><th>date</th><th>note</th></tr></thead>
+          <tbody>
+            <tr><td>SWE-bench Verified, 25-task slice</td><td class="good">16 of 25</td><td>Sonnet 5</td><td>2026-09-09</td><td class="dim">official harness; 17 after two harness fixes</td></tr>
+            <tr><td>The nine easiest of those 25</td><td class="good">7 of 9</td><td>Sonnet 5</td><td>2026-09-08</td><td class="dim">the first graded batch, counted in the row above</td></tr>
+            <tr><td>The seven the slice missed, rerun</td><td>3 of 7</td><td>qwen3.8:27b-mlx</td><td>2026-09-17</td><td class="dim">a local model; a harness check, not a comparable score</td></tr>
+            <tr><td>Terminal-Bench probe, one task</td><td>0 of 1</td><td>Sonnet 5</td><td>2026-09-21</td><td class="dim">through Harbor; the file the verifier tests was never written</td></tr>
+            <tr><td>DeepSWE probe, two tasks</td><td>0 of 2</td><td>Sonnet 5</td><td>2026-09-21</td><td class="dim">one could not be graded: the task image's Go toolchain is empty</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="section wrap" id="policy" aria-labelledby="policy-title">
       <div class="section-copy">
         <h2 id="policy-title">Policy you can read.</h2>
         <p class="lede">Three modes: manual, plan and autopilot. A list of commands allowed to run, kept per project. A fixed set of rules refuses the destructive cases before any model is asked. For the rest, autopilot asks a judge model, and its confidence goes in the receipt.</p>
-        <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#tool-policy">The tool policy, in full</a>
+        <a class="text-link" href="./docs/policy.html">Modes and policy, in full</a>
       </div>
       <div class="proof">
         <pre aria-label="The policy a session runs under"><code><span class="k">mode</span>        plan                     <span class="dim">manual · plan · autopilot</span>
@@ -117,17 +128,18 @@
     <section class="section wrap" id="workflows" aria-labelledby="workflows-title">
       <div class="section-copy">
         <h2 id="workflows-title">Workflows that improve themselves.</h2>
-        <p class="lede">A workflow is a file of steps, each with a check that decides. When a tool call is refused, the reason goes into a note that later sessions read first. After a hard turn the agent proposes a skill, which stays off until you turn it on. To change a workflow, two runs compare the old version with the new, and only a winner is kept.</p>
+        <p class="lede">A workflow runs its steps in order and stops when a check fails. To change one, Shift runs the current file and a candidate side by side and keeps the candidate only if it resolves in no more rounds. Between runs, a refused tool call becomes a note that later sessions read first, and a hard turn can propose a skill, which stays off until you turn it on.</p>
         <a class="text-link" href="./docs/workflows.html">How workflows work</a>
       </div>
       <div class="proof">
-        <pre aria-label="A workflow improvement and a field note"><code><span class="cmd">/workflow improve</span> site-check
-  A  4 of 4 checks · 41s
-  B  3 of 4 checks · 38s
-<span class="dim">kept A → .shift/workflows/site-check/versions/3</span>
+        <pre aria-label="A workflow improvement, from the run on September 22, 2026"><code><span class="cmd">/workflow improve</span> site-check
+  proposed   reword the step to state the verdict outright
+  baseline   resolved in 2 rounds · judge 0.97
+  candidate  resolved in 2 rounds · judge 0.96
+<span class="dim">kept → .shift/workflows/site-check/versions/</span>
 
-<span class="note">note</span>   the checker needs the site served, not opened as a file
-<span class="note">skill</span>  proposed · disabled until accepted</code></pre>
+<span class="note">note</span>   the judge check failed a correct answer at 0.40 until the claim named its fields
+<span class="dim">recorded September 22, 2026</span></code></pre>
       </div>
     </section>
 
@@ -135,7 +147,7 @@
       <div class="section-copy">
         <h2 id="agents-title">Drive it from another agent.</h2>
         <p class="lede">Every session serves MCP over HTTP on your machine, from the same process as the terminal. Codex, Claude Desktop and any client that speaks the protocol attach to the URL and get four tools: status, prompt, inspect, cancel. The session's policy still decides, and approvals stay in the terminal.</p>
-        <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#live-mcp">Attach a desktop agent</a>
+        <a class="text-link" href="./docs/mcp.html">Attach a desktop agent</a>
       </div>
       <div class="proof">
         <pre aria-label="The MCP endpoint and two client registrations"><code><span class="k">http://127.0.0.1:7331/mcp</span>          <span class="dim">the session you have open, no daemon</span>
@@ -154,28 +166,11 @@ url = "http://127.0.0.1:7331/mcp"
       </div>
     </section>
 
-    <section class="section wrap" id="measured" aria-labelledby="measured-title">
-      <div class="section-copy">
-        <h2 id="measured-title">Measured.</h2>
-        <p class="lede">The evals run from the repository, and results are committed with their date. A benchmark that has not been run is not on this table.</p>
-        <a class="text-link" href="https://github.com/thrashr888/shift/blob/main/docs/evals-rfc.md">The runs, with their caveats</a>
-      </div>
-      <div class="proof">
-        <table class="results">
-          <thead><tr><th>benchmark</th><th>result</th><th>model</th><th>date</th><th>note</th></tr></thead>
-          <tbody>
-            <tr><td>SWE-bench Verified, 25-task slice</td><td class="good">16 of 25</td><td>Sonnet 5</td><td>2026-09-08</td><td class="dim">official harness; 17 after two harness fixes</td></tr>
-            <tr><td>SWE-bench easy-9 slice</td><td class="good">7 of 9</td><td>Sonnet 5</td><td>2026-09-08</td><td class="dim">run inside the harness image</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
     <section class="section wrap" id="yours" aria-labelledby="yours-title">
       <div class="section-copy">
         <h2 id="yours-title">Make it yours.</h2>
-        <p class="lede">Every theme is also a Ghostty theme, generated from the same file the terminal loads. A project can add its own inspector tab as data. The wordmark, the layout and the name in the corner are settings you keep.</p>
-        <a class="text-link" href="./panes.html">The pane pack reference</a>
+        <p class="lede">Every theme is also a Ghostty theme, generated from the same file the terminal loads. A project can add its own inspector tab as data. Save your wordmark, layout and display name, and later sessions open with them.</p>
+        <a class="text-link" href="./docs/panes.html">The pane pack reference</a>
       </div>
       <div class="proof">
         <ul class="theme-downloads">
@@ -211,7 +206,7 @@ printf 'theme = shift-acid\n' &gt;&gt; ~/.config/ghostty/config</code></pre>
       <div>
         <h2 id="start-title">Start local.</h2>
         <p>Runs on your machine with your keys, or with Ollama. Sessions live in a folder you own. The demo model runs the interface without a provider or a network.</p>
-        <p><a href="./docs/install.html">Install and first session</a> · <a href="https://github.com/thrashr888/shift/blob/main/docs/daily-driver.md#terminal-interface">The terminal guide</a></p>
+        <p><a href="./docs/install.html">Install and first session</a> · <a href="./docs/terminal.html">The terminal</a></p>
       </div>
       <pre aria-label="Install Shift and start a session"><code>$ brew install thrashr888/tap/shift
 $ shift-agent                                <span class="dim"># this project's session, resumed</span>

@@ -9,6 +9,7 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,35 +21,38 @@
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
   <main id="main" class="docs wrap">
-    <aside class="rail" aria-label="Documentation pages">
-      <div><h2>Start</h2>
-        <a href="install.html">Install and first session</a>
-        <a href="providers.html">Providers and keys</a>
-        <a href="terminal.html">The terminal</a>
-      </div>
-      <div><h2>Use</h2>
-        <a href="policy.html">Modes and policy</a>
-        <a href="sessions.html">Receipts and sessions</a>
-        <a href="workflows.html">Workflows</a>
-        <a href="skills.html">Skills and notes</a>
-        <a href="subagents.html">Subagents</a>
-      </div>
-      <div><h2>Change</h2>
-        <a href="agent-file.html" aria-current="page">The agent file</a>
-        <a href="../panes.html">Pane packs</a>
-        <a href="mcp.html">Attach a desktop agent</a>
-      </div>
-      <div><h2>Measure</h2>
-        <a href="evals.html">Evals</a>
-        <a href="judge.html">The judge</a>
-      </div>
-    </aside>
+    <details class="rail" open aria-label="Documentation pages">
+      <summary>All pages</summary>
+      <nav class="rail-pages">
+        <div><h2>Start</h2>
+          <a href="install.html">Install and first session</a>
+          <a href="providers.html">Providers and keys</a>
+          <a href="terminal.html">The terminal</a>
+        </div>
+        <div><h2>Use</h2>
+          <a href="policy.html">Modes and policy</a>
+          <a href="sessions.html">Receipts and sessions</a>
+          <a href="workflows.html">Workflows</a>
+          <a href="skills.html">Skills and notes</a>
+          <a href="subagents.html">Subagents</a>
+        </div>
+        <div><h2>Change</h2>
+          <a href="agent-file.html" aria-current="page">The agent file</a>
+          <a href="panes.html">Pane packs</a>
+          <a href="mcp.html">Attach a desktop agent</a>
+        </div>
+        <div><h2>Benchmarks</h2>
+          <a href="benchmarks.html">Benchmarks</a>
+          <a href="judge.html">The judge</a>
+        </div>
+      </nav>
+    </details>
     <article class="doc">
       <p class="crumbs"><a href="./index.html">Docs</a> &gt; Change</p>
 <h1>The agent file</h1>
@@ -100,6 +104,7 @@
         12 tools · shell ask · /help for commands</code></pre>
 
             <h2>Roll back</h2>
+      <p>To list the active generation and the ones you can return to, enter <code>/generations</code>.</p>
             <p>To return to the previous generation, enter <code>/rollback</code>. The command restores the earlier definitions and reports the generation that is now active. Nothing is lost by trying a change: the generation you came from is still there.</p>
 
             <h2>Edit the file while Shift runs</h2>
@@ -127,7 +132,7 @@
             <div class="note"><p><strong>Note:</strong> A live change cannot grant new authority. It can narrow what the model does and reshape how it works, but the runtime's limits apply to every generation. To pick up a new runtime, enter <code>/upgrade</code>: it checkpoints the session, restarts the current install against it, and records the runtime version on every later trace.</p></div>
 
             <h2>Keep a change as an extension</h2>
-            <p>A live change is gone when the process ends unless you save it. An extension is a named Scheme artifact under <code>extensions/*.scm</code> that loads through the same validated generation boundary as the file. Extensions are created disabled, never load on their own, and never overwrite an existing name.</p>
+            <p>In an unnamed session a live change is gone when the process ends. A named session keeps its active patches in its checkpoint and resumes with them, although the rollback stack does not survive a restart. To keep a change in any session, save it. An extension is a named Scheme artifact under <code>extensions/*.scm</code> that loads through the same validated generation boundary as the file. Extensions are created disabled, never load on their own, and never overwrite an existing name.</p>
             <pre><code>/extensions
       /extension-create terse (set! agent-system-prompt "Answer in one short paragraph.")
       /extension-load terse
@@ -140,7 +145,7 @@
               <li><code>/extension-disable NAME</code> turns it off again.</li>
               <li><code>/extension-export NAME</code> collects the session's current stack of live patches into one artifact, so a repaired session can be loaded again after a restart.</li>
             </ul>
-            <p>The model can run the same lifecycle with its <code>extension</code> tool. Ask it to save the current live changes as an extension named <code>repaired-session</code>, and it writes the artifact for you to enable. Named sessions also keep active patches and generation continuity in their checkpoint; see <a href="sessions.html">Sessions</a>.</p>
+            <p>The model can run the same lifecycle with its <code>extension</code> tool. Ask it to save the current live changes as an extension named <code>repaired-session</code>, and it writes the artifact for you to enable. Named sessions keep active patches and generation continuity in their checkpoint; see <a href="sessions.html">Sessions</a>.</p>
 
             <h2>What's next</h2>
             <ul>
@@ -148,7 +153,7 @@
               <li><a href="policy.html">Tool policy</a> for the modes and approvals that live changes cannot alter.</li>
               <li><a href="sessions.html">Sessions</a> for how patches and generations persist across restarts.</li>
             </ul>
-      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="subagents.html"><span aria-hidden="true">◀</span> Subagents</a><a href="mcp.html">Attach a desktop agent <span aria-hidden="true">▶</span></a></nav>
+      <nav class="doc-nav" aria-label="Neighbouring pages"><a href="subagents.html"><span aria-hidden="true">◀</span> Subagents</a><a href="panes.html">Pane packs <span aria-hidden="true">▶</span></a></nav>
     </article>
   </main>
   <footer class="site-footer wrap">

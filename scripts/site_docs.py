@@ -23,10 +23,10 @@ RAIL = [
     ("Start", [("Install and first session", "install.html"), ("Providers and keys", "providers.html"), ("The terminal", "terminal.html")]),
     ("Use", [("Modes and policy", "policy.html"), ("Receipts and sessions", "sessions.html"), ("Workflows", "workflows.html"),
              ("Skills and notes", "skills.html"), ("Subagents", "subagents.html")]),
-    ("Change", [("The agent file", "agent-file.html"), ("Pane packs", "../panes.html"), ("Attach a desktop agent", "mcp.html")]),
-    ("Measure", [("Evals", "evals.html"), ("The judge", "judge.html")]),
+    ("Change", [("The agent file", "agent-file.html"), ("Pane packs", "panes.html"), ("Attach a desktop agent", "mcp.html")]),
+    ("Benchmarks", [("Benchmarks", "benchmarks.html"), ("The judge", "judge.html")]),
 ]
-ORDER = [(title, href) for _, pages in RAIL for title, href in pages if not href.startswith("..")]
+ORDER = [(title, href) for _, pages in RAIL for title, href in pages]
 PAGES = ["index.html"] + [href for _, href in ORDER]
 
 
@@ -38,14 +38,16 @@ def meta(text):
 
 
 def rail(current):
-    out = ['    <aside class="rail" aria-label="Documentation pages">']
+    # A details element: open, and inert, on wide screens; a toggle on narrow ones (docs.js closes it on a narrow screen).
+    out = ['    <details class="rail" open aria-label="Documentation pages">', "      <summary>All pages</summary>", '      <nav class="rail-pages">']
     for group, pages in RAIL:
-        out.append(f"      <div><h2>{group}</h2>")
+        out.append(f"        <div><h2>{group}</h2>")
         for title, href in pages:
             cur = ' aria-current="page"' if href == current else ""
-            out.append(f'        <a href="{href}"{cur}>{title}</a>')
-        out.append("      </div>")
-    out.append("    </aside>")
+            out.append(f'          <a href="{href}"{cur}>{title}</a>')
+        out.append("        </div>")
+    out.append("      </nav>")
+    out.append("    </details>")
     return "\n".join(out)
 
 
@@ -79,6 +81,7 @@ def page(name, fields, body):
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -90,7 +93,7 @@ def page(name, fields, body):
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>

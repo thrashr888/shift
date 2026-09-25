@@ -52,6 +52,7 @@ description: The Scheme file that defines the agent, how to change a definition 
         12 tools · shell ask · /help for commands</code></pre>
 
             <h2>Roll back</h2>
+      <p>To list the active generation and the ones you can return to, enter <code>/generations</code>.</p>
             <p>To return to the previous generation, enter <code>/rollback</code>. The command restores the earlier definitions and reports the generation that is now active. Nothing is lost by trying a change: the generation you came from is still there.</p>
 
             <h2>Edit the file while Shift runs</h2>
@@ -79,7 +80,7 @@ description: The Scheme file that defines the agent, how to change a definition 
             <div class="note"><p><strong>Note:</strong> A live change cannot grant new authority. It can narrow what the model does and reshape how it works, but the runtime's limits apply to every generation. To pick up a new runtime, enter <code>/upgrade</code>: it checkpoints the session, restarts the current install against it, and records the runtime version on every later trace.</p></div>
 
             <h2>Keep a change as an extension</h2>
-            <p>A live change is gone when the process ends unless you save it. An extension is a named Scheme artifact under <code>extensions/*.scm</code> that loads through the same validated generation boundary as the file. Extensions are created disabled, never load on their own, and never overwrite an existing name.</p>
+            <p>In an unnamed session a live change is gone when the process ends. A named session keeps its active patches in its checkpoint and resumes with them, although the rollback stack does not survive a restart. To keep a change in any session, save it. An extension is a named Scheme artifact under <code>extensions/*.scm</code> that loads through the same validated generation boundary as the file. Extensions are created disabled, never load on their own, and never overwrite an existing name.</p>
             <pre><code>/extensions
       /extension-create terse (set! agent-system-prompt "Answer in one short paragraph.")
       /extension-load terse
@@ -92,7 +93,7 @@ description: The Scheme file that defines the agent, how to change a definition 
               <li><code>/extension-disable NAME</code> turns it off again.</li>
               <li><code>/extension-export NAME</code> collects the session's current stack of live patches into one artifact, so a repaired session can be loaded again after a restart.</li>
             </ul>
-            <p>The model can run the same lifecycle with its <code>extension</code> tool. Ask it to save the current live changes as an extension named <code>repaired-session</code>, and it writes the artifact for you to enable. Named sessions also keep active patches and generation continuity in their checkpoint; see <a href="sessions.html">Sessions</a>.</p>
+            <p>The model can run the same lifecycle with its <code>extension</code> tool. Ask it to save the current live changes as an extension named <code>repaired-session</code>, and it writes the artifact for you to enable. Named sessions keep active patches and generation continuity in their checkpoint; see <a href="sessions.html">Sessions</a>.</p>
 
             <h2>What's next</h2>
             <ul>

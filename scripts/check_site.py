@@ -17,7 +17,7 @@ SCREENSHOTS = {"assets/" + name for name in ("fanout-log.png", "fanout-sessions.
     "assets/themes/%s.png" % name for name in ("acid", "paddock", "blueprint", "qdos")}   # scripts/tui_capture.py
 FONTS = {"assets/fonts/" + name for name in ("ibm-cga.woff", "ibm-ega.woff", "ibm-vga.woff", "plex-sans.woff2", "plex-mono-400.woff2", "plex-mono-600.woff2")}
 DOCS = {"docs/" + name for name in ("index.html", "install.html", "providers.html", "terminal.html", "policy.html", "sessions.html", "workflows.html",
-                                     "skills.html", "subagents.html", "agent-file.html", "mcp.html", "evals.html", "judge.html")}   # scripts/site_docs.py
+                                     "skills.html", "subagents.html", "agent-file.html", "panes.html", "mcp.html", "benchmarks.html", "judge.html")}   # scripts/site_docs.py
 # The font pack's home, credited in the footer.
 EXTERNAL_LINKS = {"https://int10h.org/oldschool-pc-fonts/"}
 # The lab: brand prototypes (docs/brand.md), plain files like the rest of the site, linked from nowhere yet.
@@ -27,8 +27,8 @@ LAB_IMAGES = {"assets/lab/" + name for name in ("tui-acid.png", "wordmark-dither
     "assets/lab/" + pattern % n for n in (1, 2, 3)
     for pattern in ("gen%d.idx.png", "wordmark-gen%d.gif", "wordmark-gen%d.png", "mark-gen%d.gif", "word-gen%d.png")}
 BINARY = SCREENSHOTS | LAB_IMAGES | FONTS
-PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "hero.js", "dither.js", "favicon.svg"} | DOCS | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
-PAGES = ("index.html", "panes.html") + tuple(sorted(DOCS))
+PUBLIC_FILES = {"index.html", "panes.html", "styles.css", "hero.js", "dither.js", "docs.js", "favicon.svg"} | DOCS | GHOSTTY_THEMES | SCREENSHOTS | FONTS | LAB_PAGES | LAB_IMAGES
+PAGES = ("index.html",) + tuple(sorted(DOCS))   # panes.html is a redirect to docs/panes.html
 PUBLIC_DIRS = {str(Path(name).parent) for name in PUBLIC_FILES} - {"."}
 
 
@@ -130,17 +130,17 @@ def check():
     ui = (ROOT / "src/live-agent/ui.scm").read_text(encoding="utf-8")
     block = re.search(r"\(define pane-fields '\((.*?)\)\)", ui, re.DOTALL)
     declared = re.findall(r'"([a-z_.]+)"', block.group(1)) if block else []
-    published = re.findall(r"<tr><td>([a-z_.]+)</td>", texts["panes.html"])
+    published = re.findall(r"<tr><td>([a-z_.]+)</td>", texts["docs/panes.html"])
     sources_block = re.search(r"\(define pane-sources '\((.*?)\)\)", ui, re.DOTALL)
     declared_sources = re.findall(r'"([a-z]+)"', sources_block.group(1)) if sources_block else []
     if declared + declared_sources != published:
-        errors.append(f"panes.html fields or sources drift from ui.scm: declared={declared + declared_sources}, published={published}")
+        errors.append(f"docs/panes.html fields or sources drift from ui.scm: declared={declared + declared_sources}, published={published}")
 
     # The only url() the stylesheet may carry is a self-hosted font from the allowlist.
     css = re.sub(r"url\(\./(assets/fonts/[a-z0-9-]+\.woff2?)\)", lambda m: "" if m.group(1) in FONTS else m.group(0), texts["styles.css"])
     if re.search(r"@import\b|url\s*\(", css, re.IGNORECASE):
         errors.append("CSS must not load unreviewed assets.")
-    for name in ("hero.js", "dither.js"):
+    for name in ("hero.js", "dither.js", "docs.js"):
         if re.search(r"\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", texts[name]):
             errors.append(f"{name} must not make network requests.")
     for script, message in (("scripts/ghostty_themes.py", "Ghostty themes are out of date."), ("scripts/site_docs.py", "Docs pages are out of date.")):

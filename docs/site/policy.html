@@ -55,7 +55,7 @@ description: The three modes, the run and MCP allowlists, the fixed rules that r
               <li><code>/judge on</code> keeps the judge for autopilot without shadowing in manual mode.</li>
               <li><code>/judge off</code> makes autopilot ask for anything the rules do not resolve, so nothing runs unattended.</li>
             </ul>
-            <div class="note"><p><strong>Note:</strong> Each <code>judge.jsonl</code> record stores the action's arguments, the run preview and the user messages the judge saw, so <code>scripts/evals.py judge --session NAME</code> can replay a session's decisions through another judge model. See <a href="evals.html">Evals</a>.</p></div>
+            <div class="note"><p><strong>Note:</strong> Each <code>judge.jsonl</code> record stores the action's arguments, the run preview and the user messages the judge saw, so <code>scripts/evals.py judge --session NAME</code> can replay a session's decisions through another judge model. See <a href="benchmarks.html">Benchmarks</a>.</p></div>
 
             <h2>What the receipt records</h2>
             <p>The receipt at the end of each turn records <code>judged</code>, <code>blocked</code> and <code>judge_ms</code>, and counts allows that asked you as <code>judge_asked</code>. Blocks appear in the Log tab as <code>[judge]</code> entries. Every answer you give an approval prompt, whether <code>y</code>, <code>a</code>, <code>n</code>, Esc or a typed reply, appears there too as an <code>[approval]</code> entry naming the tool and its subject. See <a href="sessions.html">Receipts and sessions</a> for the rest of the receipt.</p>

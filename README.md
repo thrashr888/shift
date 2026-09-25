@@ -450,7 +450,8 @@ next turn's index picked it up.
 ## Traces and Phoenix
 
 Every completed turn writes OpenInference-shaped `AGENT`, `LLM`, and `TOOL`
-spans to `.shift/traces.jsonl`. They include hierarchy, generation and turn
+spans to the session's own `traces.jsonl`, under `.shift/sessions/NAME/`
+(a subagent's under its folder). They include hierarchy, generation and turn
 IDs, model name, bounded inputs/outputs/thinking, duration, status, and Ollama
 or OpenAI token/cache counts. This is separate from the append-only audit journal at
 `.shift/events.scm-log`.

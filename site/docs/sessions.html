@@ -9,6 +9,7 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,35 +21,38 @@
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
   <main id="main" class="docs wrap">
-    <aside class="rail" aria-label="Documentation pages">
-      <div><h2>Start</h2>
-        <a href="install.html">Install and first session</a>
-        <a href="providers.html">Providers and keys</a>
-        <a href="terminal.html">The terminal</a>
-      </div>
-      <div><h2>Use</h2>
-        <a href="policy.html">Modes and policy</a>
-        <a href="sessions.html" aria-current="page">Receipts and sessions</a>
-        <a href="workflows.html">Workflows</a>
-        <a href="skills.html">Skills and notes</a>
-        <a href="subagents.html">Subagents</a>
-      </div>
-      <div><h2>Change</h2>
-        <a href="agent-file.html">The agent file</a>
-        <a href="../panes.html">Pane packs</a>
-        <a href="mcp.html">Attach a desktop agent</a>
-      </div>
-      <div><h2>Measure</h2>
-        <a href="evals.html">Evals</a>
-        <a href="judge.html">The judge</a>
-      </div>
-    </aside>
+    <details class="rail" open aria-label="Documentation pages">
+      <summary>All pages</summary>
+      <nav class="rail-pages">
+        <div><h2>Start</h2>
+          <a href="install.html">Install and first session</a>
+          <a href="providers.html">Providers and keys</a>
+          <a href="terminal.html">The terminal</a>
+        </div>
+        <div><h2>Use</h2>
+          <a href="policy.html">Modes and policy</a>
+          <a href="sessions.html" aria-current="page">Receipts and sessions</a>
+          <a href="workflows.html">Workflows</a>
+          <a href="skills.html">Skills and notes</a>
+          <a href="subagents.html">Subagents</a>
+        </div>
+        <div><h2>Change</h2>
+          <a href="agent-file.html">The agent file</a>
+          <a href="panes.html">Pane packs</a>
+          <a href="mcp.html">Attach a desktop agent</a>
+        </div>
+        <div><h2>Benchmarks</h2>
+          <a href="benchmarks.html">Benchmarks</a>
+          <a href="judge.html">The judge</a>
+        </div>
+      </nav>
+    </details>
     <article class="doc">
       <p class="crumbs"><a href="./index.html">Docs</a> &gt; Use</p>
 <h1>Receipts and sessions</h1>
@@ -98,7 +102,7 @@
             <div class="note"><p><strong>Note:</strong> Large artifacts belong in files, with references in the conversation, rather than in the checkpoint.</p></div>
 
             <h2>Compact a long conversation</h2>
-            <p>Older history compacts automatically after 80 provider messages, keeping at least 24 recent messages and a boundary-safe summary. The settings <code>agent-compaction-threshold</code> and <code>agent-compaction-keep-recent</code> change those values. <code>/compact</code> runs the same operation on demand. Compaction is notes-first: before the window resets, Shift asks the model to save progress, decisions, unresolved work and exact paths with the <code>notes</code> tool, then replaces the earlier context with a pointer to those files. If the model writes no note, the summary compaction runs instead. A failed or cancelled summary leaves the original checkpoint intact.</p>
+            <p>Before each request in a tool loop, Shift checks the model's budget; when the next request would pass 80% of input plus output, it compacts the earlier complete turns and keeps the current turn and its tool chain. Message count is the fallback: after 80 provider messages, it keeps at least 24 recent ones behind a summary. The settings <code>agent-compaction-threshold</code> and <code>agent-compaction-keep-recent</code> change those values. <code>/compact</code> runs the same operation on demand. Compaction is notes-first: before the window resets, Shift asks the model to save progress, decisions, unresolved work and exact paths with the <code>notes</code> tool, then replaces the earlier context with a pointer to those files. If the model writes no note, the summary compaction runs instead. A failed or cancelled summary leaves the original checkpoint intact.</p>
 
             <h2>Search across sessions</h2>
             <p>Compacted turns remain searchable. <code>/traces QUERY</code> searches the completed spans of the current session, and <code>/trace SPAN_ID</code> fetches the full stored span behind a hit. To search the traces of every session in the project, child sessions included, enter:</p>

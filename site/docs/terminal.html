@@ -9,6 +9,7 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
   <script src="../lab/cycle.js" defer></script>
+  <script src="../docs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,35 +21,38 @@
     <nav aria-label="Main navigation">
       <a href="../index.html#policy">Policy</a>
       <a href="../index.html#workflows">Workflows</a>
-      <a href="../index.html#measured">Measured</a>
+      <a href="../index.html#benchmarks">Benchmarks</a>
       <a href="./index.html">Docs</a>
       <a href="https://github.com/thrashr888/shift">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
   <main id="main" class="docs wrap">
-    <aside class="rail" aria-label="Documentation pages">
-      <div><h2>Start</h2>
-        <a href="install.html">Install and first session</a>
-        <a href="providers.html">Providers and keys</a>
-        <a href="terminal.html" aria-current="page">The terminal</a>
-      </div>
-      <div><h2>Use</h2>
-        <a href="policy.html">Modes and policy</a>
-        <a href="sessions.html">Receipts and sessions</a>
-        <a href="workflows.html">Workflows</a>
-        <a href="skills.html">Skills and notes</a>
-        <a href="subagents.html">Subagents</a>
-      </div>
-      <div><h2>Change</h2>
-        <a href="agent-file.html">The agent file</a>
-        <a href="../panes.html">Pane packs</a>
-        <a href="mcp.html">Attach a desktop agent</a>
-      </div>
-      <div><h2>Measure</h2>
-        <a href="evals.html">Evals</a>
-        <a href="judge.html">The judge</a>
-      </div>
-    </aside>
+    <details class="rail" open aria-label="Documentation pages">
+      <summary>All pages</summary>
+      <nav class="rail-pages">
+        <div><h2>Start</h2>
+          <a href="install.html">Install and first session</a>
+          <a href="providers.html">Providers and keys</a>
+          <a href="terminal.html" aria-current="page">The terminal</a>
+        </div>
+        <div><h2>Use</h2>
+          <a href="policy.html">Modes and policy</a>
+          <a href="sessions.html">Receipts and sessions</a>
+          <a href="workflows.html">Workflows</a>
+          <a href="skills.html">Skills and notes</a>
+          <a href="subagents.html">Subagents</a>
+        </div>
+        <div><h2>Change</h2>
+          <a href="agent-file.html">The agent file</a>
+          <a href="panes.html">Pane packs</a>
+          <a href="mcp.html">Attach a desktop agent</a>
+        </div>
+        <div><h2>Benchmarks</h2>
+          <a href="benchmarks.html">Benchmarks</a>
+          <a href="judge.html">The judge</a>
+        </div>
+      </nav>
+    </details>
     <article class="doc">
       <p class="crumbs"><a href="./index.html">Docs</a> &gt; Start</p>
 <h1>The terminal</h1>
@@ -116,7 +120,7 @@
             <div class="note"><p><strong>Note:</strong> Mode switching is a <code>/mode</code> command, not a preference. The agent's <code>ui</code> tool cannot change it.</p></div>
 
             <h2>Add your own tabs</h2>
-            <p>A project can add up to four tabs of its own in <code>.shift/panes.scm</code>, a pane pack: one Scheme data form, never evaluated, whose rows are text, a live field such as <code>session.model</code>, or a command. The file loads whenever Shift runs in that folder, reloads within half a second when it changes, and is safe to commit. Clicking a command row, or entering <code>/pane run NAME</code>, starts it as a background job, but only when the run allowlist already permits it. The grammar and the field list are in the <a href="../panes.html">pane pack reference</a>.</p>
+            <p>A project can add up to four tabs of its own in <code>.shift/panes.scm</code>, a pane pack: one Scheme data form, never evaluated, whose rows are text, a live field such as <code>session.model</code>, or a command. The file loads whenever Shift runs in that folder, reloads within half a second when it changes, and is safe to commit. Clicking a command row, or entering <code>/pane run NAME</code>, starts it as a background job, but only when the run allowlist already permits it. The grammar and the field list are in the <a href="panes.html">pane pack reference</a>.</p>
 
             <h2>Command reference</h2>
             <table>
@@ -139,7 +143,7 @@
 
             <h2>What's next</h2>
             <ul>
-              <li><a href="../panes.html">Pane packs</a> for the rows a tab of your own can hold.</li>
+              <li><a href="panes.html">Pane packs</a> for the rows a tab of your own can hold.</li>
               <li><a href="sessions.html">Sessions</a> for the durable sessions the Session tab lists.</li>
               <li><a href="providers.html">Providers and keys</a> for the Model tab and the context bar.</li>
             </ul>
