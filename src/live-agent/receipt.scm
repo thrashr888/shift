@@ -11,7 +11,16 @@
   #:use-module (live-agent json)
   #:use-module (live-agent pricing)
   #:export (build-receipt receipt->json receipt->text receipt-attributes
-            receipt-append! receipt-write! receipt-from-json))
+            receipt-append! receipt-write! receipt-from-json resume-command))
+
+;; How to start this session again. `--resume` takes the session's name, not
+;; its id: the id identifies the session in traces and receipts, and two
+;; sessions in different projects may share a name but never an id. A checkout
+;; runs its own launcher; an install has the command on PATH.
+(define (resume-command name)
+  (and name
+       (string-append (if (file-exists? "bin/shift-agent") "./bin/shift-agent" "shift-agent")
+                      " --resume " name)))
 
 (define (timestamp)
   (strftime "%Y-%m-%dT%H:%M:%SZ" (gmtime (current-time))))
@@ -110,7 +119,7 @@
       (span_id . ,span-id)
       (session . ,session-name)
       (session_id . ,session-id)
-      (resume . ,(and session-name (string-append "./bin/shift-agent --resume " session-name))))))
+      (resume . ,(resume-command session-name)))))
 
 (define (receipt->json receipt)
   (define (get key) (assq-ref receipt key))

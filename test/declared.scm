@@ -141,4 +141,41 @@
   (assq-ref (declared-tool "kanban_move") 'plugin))
 (test-equal "and there is only one of it" 1 (length (declared-tools)))
 
+
+;; A read binding: the `read` tool with its path fixed. No binary, no
+;; allowlist entry, and the project boundary is read's own.
+(define board
+  (parse '(tool "kanban_board"
+            (description "Read the board.")
+            (read ".shift/kanban.md"))))
+(declared-tools-set! (list board))
+(test-equal "a read binding says so" 'read (declared-binding "kanban_board"))
+(test-equal "and becomes a read call with its path fixed"
+  '("read" . ".shift/kanban.md")
+  (let ((pair (declared-arguments "kanban_board" (json-object))))
+    (cons (car pair) (json-object-ref (cdr pair) "path"))))
+(test-equal "a run binding still becomes a run call" "run"
+  (begin (declared-tools-set! (list move))
+         (car (declared-arguments "kanban_move"
+                                  (json-object (cons "card" "c-1") (cons "column" "done"))))))
+(test-equal "and carries its argv" '("kanban" "move" "c-1" "done")
+  (json-array-items (json-object-ref (cdr (declared-arguments "kanban_move"
+                                            (json-object (cons "card" "c-1") (cons "column" "done"))))
+                                     "argv")))
+
+;; A read path may be parameterised; read resolves it inside the project the
+;; way it resolves any other path, so a traversal fails there rather than here.
+(define note
+  (parse '(tool "note_read"
+            (description "Read one note.")
+            (parameter "name" string "Note name")
+            (read "notes/{name}.md"))))
+(declared-tools-set! (list note))
+(test-equal "a read path substitutes like any template" "notes/alpha.md"
+  (json-object-ref (cdr (declared-arguments "note_read" (json-object (cons "name" "alpha")))) "path"))
+
+(test-assert "a read binding takes exactly one path"
+  (not (false-if-exception
+        (parse '(tool "two" (description "d") (read "a.md" "b.md"))))))
+
 (test-end "declared")

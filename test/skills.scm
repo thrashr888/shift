@@ -30,10 +30,28 @@
 (test-equal "quoted descriptions lose their quotes" "Write notes" (assq-ref (skill-find "notes") 'description))
 (test-assert "folder names must be lowercase" (not (assq-ref (skill-find "Bad_Name") 'valid)))
 (test-assert "frontmatter name must match the folder" (string-prefix? "frontmatter name other" (assq-ref (skill-find "renamed") 'error)))
-(test-assert "the prompt block lists valid model-invocable skills only"
+;; Names only. A description in the prompt block is charged on every request
+;; of every session; here it is one `skill` search away instead.
+(test-assert "the prompt block names valid model-invocable skills only"
   (let ((block (skills-prompt-block)))
-    (and (string-contains block "- release: Cut a release") (string-contains block "- notes:")
+    (and (string-contains block "release") (string-contains block "notes")
          (not (string-contains block "review")) (not (string-contains block "Bad_Name")))))
+(test-assert "the prompt block carries no descriptions"
+  (not (string-contains (skills-prompt-block) "Cut a release")))
+
+;; Search is where the descriptions live, and it ranks by them.
+(test-equal "a search finds a skill by words from its description" "release"
+  (car (car (skill-search "cut a release"))))
+(test-assert "a search returns the description the prompt block dropped"
+  (string-contains (cdr (car (skill-search "cut a release"))) "Cut a release"))
+(test-assert "a skill the model may not invoke is not searchable"
+  (not (assoc "review" (skill-search "diff correctness"))))
+(test-assert "an invalid skill is not searchable"
+  (not (assoc "Bad_Name" (skill-search "bad"))))
+(test-equal "select: takes exact names" '("release")
+  (map car (skill-search "select:release")))
+(test-assert "a query matching nothing returns nothing"
+  (null? (skill-search "quantum chromodynamics")))
 (test-assert "loading returns the body with the directory" 
   (string-contains (skill-load! "release") "Run make release."))
 (test-assert "loaded state is tracked" (skill-loaded? "release"))

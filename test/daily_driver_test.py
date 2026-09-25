@@ -58,7 +58,9 @@ class DailyDriver(unittest.TestCase):
             (self.project / ".shift/sessions/one/session.json").read_text()
         )
         self.assertIn("Session closed · token usage unavailable", first_output)
-        self.assertIn("Resume ./bin/shift-agent --resume one", first_output)
+        # The command names itself the way it would be typed: a checkout runs
+        # its own launcher, and anywhere else it is on PATH as shift-agent.
+        self.assertIn("Resume this session with shift-agent --resume one", first_output)
         self.assertIn(f"ID {checkpoint['id']}", first_output)
         self.assertEqual(checkpoint["generation_id"], 1)
         self.assertEqual(checkpoint["patches"], [])

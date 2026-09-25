@@ -820,12 +820,24 @@
 (define queued-skills '())
 (define (emit-skills!) (when (ui-connected?) (ui-emit! "skills" (skills-json))))
 (define (execute-skill arguments)
-  (let ((name (json-object-ref arguments "name" #f)) (path (json-object-ref arguments "path" #f)))
-    (unless (string? name) (error "name must be a string"))
-    (let ((body (if (string? path) (skill-file name path) (skill-load! name))))
-      (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
-      (emit-skills!)
-      (make-tool-result #t body))))
+  (let ((name (json-object-ref arguments "name" #f))
+        (path (json-object-ref arguments "path" #f))
+        (query (json-object-ref arguments "query" #f)))
+    (cond
+     ;; A search reads; it does not load. Descriptions are what the system
+     ;; prompt stopped carrying, so this is where they are paid for.
+     ((and (string? query) (not (string? name)))
+      (let ((matches (skill-search query)))
+        (make-tool-result #t
+          (if (null? matches)
+              "No skill matches. The system prompt lists every name; search one of those, or a few words about the task."
+              (string-join (map (lambda (m) (string-append (car m) ": " (cdr m))) matches) "\n")))))
+     ((not (string? name)) (error "name or query must be a string"))
+     (else
+      (let ((body (if (string? path) (skill-file name path) (skill-load! name))))
+        (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
+        (emit-skills!)
+        (make-tool-result #t body))))))
 (define (queue-skill! name)
   (let ((body (skill-load! name #:by-model #f)))
     (set! queued-skills
@@ -1779,8 +1791,8 @@
               (session-cost-summary))
       (display "\nSession closed · token usage unavailable\n"))
   (when session
-    (format #t "Resume ./bin/shift-agent --resume ~a~%ID ~a~%"
-            (session-name session) (session-id session)))
+    (format #t "Resume this session with ~a~%ID ~a~%"
+            (resume-command (session-name session)) (session-id session)))
   (force-output))
 
 (define (show-context generation)
@@ -1839,11 +1851,10 @@
                ;; A declared tool becomes its run here too, so an action gets
                ;; no authority the model's call would not have had.
                (declared? (declared-tool? named))
-               (tool (if declared? "run" named))
-               (arguments (if declared?
-                              (json-object (cons "argv" (apply json-array (declared-argv named given))))
-                              given)))
-          (unless (member tool '("run" "workflow"))
+               (rewritten (and declared? (declared-arguments named given)))
+               (tool (if rewritten (car rewritten) named))
+               (arguments (if rewritten (cdr rewritten) given)))
+          (unless (member tool '("run" "read" "workflow"))
             (error "a pane action runs a command, a declared tool, or a workflow" named))
           ;; The decision is read, never asked. Prompting from here would block
           ;; the interface on a lock the turn needs, so an action that is not
@@ -1861,6 +1872,8 @@
                                  (string-join (json-array-items (json-object-ref arguments "argv")) " "))
                          (format #f "action is not permitted in ~a mode"
                                  (setting-ref generation 'mode))))))
+          (when (string=? tool "read")
+            (error "a read action would show nothing; use a command row for the file" named))
           (if (string=? tool "workflow")
               ;; The workflow tool spawns a child session for the run, so the
               ;; interface never blocks and the run lands under runs/ with its
@@ -3142,21 +3155,19 @@
                      (catch #t
                        (lambda () (declared-argv declared (tool-call-arguments original)) #f)
                        (lambda (key . arguments) (error-text key arguments)))))
-               (call (if (and declared (not rewrite-error))
-                         (make-tool-call
-                          (tool-call-id original) "run"
-                          (json-object (cons "argv" (apply json-array
-                                                           (declared-argv declared (tool-call-arguments original)))))
-                          (tool-call-raw-arguments original))
+               (rewritten (and declared (not rewrite-error)
+                               (declared-arguments declared (tool-call-arguments original))))
+               (call (if rewritten
+                         (make-tool-call (tool-call-id original) (car rewritten) (cdr rewritten)
+                                         (tool-call-raw-arguments original))
                          original))
                (name (tool-call-name call))
                (ui-id (begin (set! next-ui-tool-id (+ next-ui-tool-id 1))
                              next-ui-tool-id))
-               (enabled? (if (and (member name enabled-tools)
-                                  ;; The rewrite targets run, so a declared tool
-                                  ;; is unavailable wherever run is.
-                                  (or (not declared) (member "run" enabled-tools)))
-                             #t #f)))
+               ;; The rewrite targets a built-in, so a declared tool is
+               ;; unavailable wherever that built-in is: `name` is already the
+               ;; built-in's name here, so one membership test covers both.
+               (enabled? (if (member name enabled-tools) #t #f)))
           (runtime-record!
            runtime 'tool-call
            `((generation . ,(generation-id generation))
@@ -3444,10 +3455,13 @@
                               (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
                           (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
                    configured-tools)
-           ;; A declared tool becomes a `run` call, so it is worth offering only
-           ;; when run is available at all. The rest of a plugin's tools stay
-           ;; discoverable through tool_search rather than resident.
-           (if (member "run" configured-tools) (declared-resident-names) '())))
+           ;; A declared tool becomes a call to the built-in its binding names,
+           ;; so it is worth offering only where that built-in is available.
+           ;; The rest of a plugin's tools stay discoverable through
+           ;; tool_search rather than resident.
+           (filter (lambda (declared)
+                     (member (symbol->string (or (declared-binding declared) 'run)) configured-tools))
+                   (declared-resident-names))))
          (max-rounds
           (setting-ref generation 'agent-max-tool-rounds))
          (stream? (setting-ref generation 'agent-stream?))

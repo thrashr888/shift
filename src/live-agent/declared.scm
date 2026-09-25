@@ -14,6 +14,7 @@
   #:use-module (live-agent json)
   #:export (parse-declared-tool declared-tools-set! declared-tools
             declared-tool declared-tool? declared-schema declared-argv
+            declared-binding declared-arguments
             declared-resident-names declared-catalog max-resident-per-plugin))
 
 (define max-resident-per-plugin 2)
@@ -53,11 +54,11 @@
   (unless (and (list? form) (>= (length form) 3) (eq? (car form) 'tool) (valid-tool-name? (cadr form)))
     (error "a tool is (tool \"name\" (description ...) (parameter ...)... (run ...))" form))
   (let ((name (cadr form)))
-    (let loop ((rest (cddr form)) (description #f) (parameters '()) (argv #f) (resident #f))
+    (let loop ((rest (cddr form)) (description #f) (parameters '()) (argv #f) (resident #f) (binding 'run))
       (if (null? rest)
           (begin
             (unless (string? description) (error "tool needs a description" name))
-            (unless (pair? argv) (error "tool needs a (run ...) template" name))
+            (unless (pair? argv) (error "tool needs a (run ...) or (read ...) template" name))
             ;; Every placeholder must name a declared parameter, or the
             ;; rendered argv would carry a literal brace to the command.
             (for-each
@@ -71,13 +72,14 @@
             ;; The allowlist matches leading argv elements. A substituted head
             ;; would make the prefix unknowable, so every allow-run entry that
             ;; appeared to cover this tool would be meaningless.
-            (when (pair? (placeholders-in (car argv)))
+            (when (and (eq? binding 'run) (pair? (placeholders-in (car argv))))
               (error (format #f "tool ~a: the command itself cannot be a parameter" name)))
             `((name . ,name)
               (plugin . ,plugin-name)
               (description . ,description)
               (parameters . ,(reverse parameters))
               (argv . ,argv)
+              (binding . ,binding)
               (resident . ,resident)))
           (let ((section (car rest)))
             (unless (and (pair? section) (symbol? (car section)))
@@ -87,7 +89,7 @@
                (unless (and (= (length section) 2) (string? (cadr section))
                             (<= (string-length (cadr section)) 400))
                  (error "description takes one string up to 400 characters" section))
-               (loop (cdr rest) (cadr section) parameters argv resident))
+               (loop (cdr rest) (cadr section) parameters argv resident binding))
               ((parameter)
                (unless (and (= (length section) 4) (valid-parameter-name? (cadr section))
                             (memq (caddr section) '(string integer))
@@ -98,16 +100,27 @@
                  (error "duplicate parameter" (cadr section)))
                (loop (cdr rest) description
                      (cons (cons (cadr section) (cons (caddr section) (cadddr section))) parameters)
-                     argv resident))
+                     argv resident binding))
               ((run)
                (unless (and (pair? (cdr section)) (every string? (cdr section))
                             (every (lambda (e) (not (string-null? e))) (cdr section))
                             (<= (length (cdr section)) 24))
                  (error "run takes a non-empty argv template of strings" section))
-               (loop (cdr rest) description parameters (cdr section) resident))
+               (loop (cdr rest) description parameters (cdr section) resident 'run))
+              ;; A read binding needs no command and no allowlist entry: it is
+              ;; the `read` tool with its path fixed, so it stays inside the
+              ;; project by the same rule every other read does. A plugin that
+              ;; only exposes a file should use this rather than a pinned
+              ;; ripgrep, which needs the binary and an allowlist entry to say
+              ;; what one `read` already guarantees.
+              ((read)
+               (unless (and (= (length section) 2) (string? (cadr section))
+                            (not (string-null? (cadr section))))
+                 (error "read takes one project-relative path" section))
+               (loop (cdr rest) description parameters (list (cadr section)) resident 'read))
               ((resident)
                (unless (= (length section) 1) (error "resident takes no arguments" section))
-               (loop (cdr rest) description parameters argv #t))
+               (loop (cdr rest) description parameters argv #t binding))
               (else (error "unknown tool section" (car section)))))))))
 
 ;; Plugins are re-read when they change, so the registry is replaced whole.
@@ -181,6 +194,18 @@
 ;; The rendered argv for a call, or an error naming what the call got wrong.
 ;; Each parameter becomes part of exactly one element: there is no shell, so
 ;; nothing a value contains can split it into a second command.
+(define (declared-binding name)
+  (let ((tool (declared-tool name)))
+    (and tool (or (assq-ref tool 'binding) 'run))))
+
+;; The tool call this declared call becomes: the built-in's name and its
+;; arguments. Everything downstream sees that call and not this one.
+(define (declared-arguments name arguments)
+  (let ((rendered (declared-argv name arguments)))
+    (if (eq? (declared-binding name) 'read)
+        (cons "read" (json-object (cons "path" (car rendered))))
+        (cons "run" (json-object (cons "argv" (apply json-array rendered)))))))
+
 (define (declared-argv name arguments)
   (let ((tool (declared-tool name)))
     (unless tool (error "unknown declared tool" name))

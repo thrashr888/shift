@@ -618,10 +618,11 @@
    ((string=? name "skill")
     (function-tool
      "skill"
-     "Load one of the skills listed in the system prompt. Returns its instructions and its folder; pass path to read one of its supporting files instead. Load a skill before following it."
-     (json-object (cons "name" (string-parameter "Skill name from the skills list"))
+     "Search skills by a few words, or load one by name. The system prompt lists the names; a search says what each covers. Load a skill before following it."
+     (json-object (cons "query" (string-parameter "Words about the task, to see which skills cover it"))
+                  (cons "name" (string-parameter "Skill name to load"))
                   (cons "path" (string-parameter "Optional file inside the skill folder, such as references/api.md")))
-     '("name")))
+     '()))
    ((string=? name "read")
     (function-tool
      "read"

@@ -1012,17 +1012,22 @@ class CodingWorkflow(unittest.TestCase):
             "---\nname: hidden\ndescription: User only\ndisable-model-invocation: true\n---\nquiet\n")
         output = self.shift(
             "/mode autopilot\nsay hi\n/skills\n/quit\n",
-            plan=[tool_call("skill", {"name": "greet"}), tool_call("read", {"path": str(skill / "extra.md")}),
+            plan=[tool_call("skill", {"query": "greet someone politely"}),
+                  tool_call("skill", {"name": "greet"}), tool_call("read", {"path": str(skill / "extra.md")}),
                   tool_call("skill", {"name": "hidden"}), answer("hello")],
         )
         system = Provider.last_messages[0]["content"]
         self.assertIn("<skills>", system)
-        self.assertIn("- greet: Greet politely", system)
+        # Names ride in every request; descriptions are one search away, and
+        # are charged to the turn that asked rather than to every turn.
+        self.assertIn("greet", system)
+        self.assertNotIn("Greet politely", system)
         self.assertNotIn("hidden", system)
         results = self.tool_results()
-        self.assertIn("Always start with hello.", results[0])
-        self.assertIn("supporting file", results[1])
-        self.assertIn("user-only", results[2])
+        self.assertIn("greet: Greet politely", results[0])   # the search
+        self.assertIn("Always start with hello.", results[1])
+        self.assertIn("supporting file", results[2])
+        self.assertIn("user-only", results[3])
         self.assertIn("loaded  greet  agents  Greet politely", output)
         self.assertIn("        hidden  agents  User only", output)
         receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
@@ -1365,11 +1370,12 @@ class CodingWorkflow(unittest.TestCase):
         self.shift("hi\n/quit\n", plan=[answer("done")], session="on")
         loaded = len(str(Provider.last_messages[0]["content"]))
         tools = len(json.dumps(Provider.last_tools))
-        # Bundled plugins contribute a skill line each to the system prompt of
-        # every session, whether or not that project uses them. Measured at
-        # ~2,950 characters for the nine bundled; this catches a plugin that
-        # arrives with an essay, and a tenth or eleventh joining quietly.
-        self.assertLess(loaded - bare, 4000,
+        # Bundled plugins contribute a skill name each to the system prompt of
+        # every session, whether or not that project uses them. That was ~2,950
+        # characters while the block carried descriptions and is ~650 with
+        # names alone; the bound catches a return to descriptions long before
+        # it catches an eleventh plugin.
+        self.assertLess(loaded - bare, 1500,
                         f"bundled plugins add {loaded - bare} chars to every system prompt")
         # Tool schemas are the other static cost. Resident declared tools land
         # here, which is why almost none of them should be resident.
@@ -1386,10 +1392,13 @@ class CodingWorkflow(unittest.TestCase):
             plan=[tool_call("tool_search", {"query": "board"}),
                   tool_call("kanban_board", {}), answer("done")],
         )
-        self.assertIn("kanban 0.1", self.shift("/plugins\n/quit\n"))
+        self.assertIn("kanban 0.2", self.shift("/plugins\n/quit\n"))
         # The plugin pins the whole argv, so the read runs without asking.
+        # The read binding means this is the read tool with its path fixed:
+        # no binary, no allowlist entry, project boundary from read itself.
         self.assertIn("## Doing", self.tool_results()[-1])
         self.assertIn("- [c2] Declared tools", self.tool_results()[-1])
+        self.assertIn(".shift/kanban.md", self.tool_results()[-1])
 
     def test_a_bundled_plugin_does_not_make_itself_resident(self):
         """Residency is charged on every request of every session, used or not."""
@@ -1571,7 +1580,7 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("changed  notes.txt (+1 −1)", err)
         self.assertIn("ran      sh -c echo ran; exit 3  exit 3", err)
         self.assertIn("undo     available (/undo)", err)
-        self.assertIn("resume ./bin/shift-agent --resume p", err)
+        self.assertIn("resume shift-agent --resume p", err)
         (receipt,) = self.receipts()
         self.assertEqual(json.loads(receipt_file.read_text()), receipt)
         self.assertEqual(receipt["status"], "ok")

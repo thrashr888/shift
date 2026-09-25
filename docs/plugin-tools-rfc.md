@@ -328,6 +328,20 @@ or let the model edit the file under checks. Kanban took the third because the
 board is small, the format is one line per card, and a wrong edit is visible in
 the next render.
 
+**Skills were the larger half of that cost, and are now searched.** The
+`<skills>` block described every offered skill in every request. It now names
+them and says to search; the `skill` tool takes a `query` and ranks over the
+same index, so the description is paid for by the turn that needs it. With all
+nine bundled plugins the system prompt went from 4,956 characters to 910, and
+the plugins' own share from 2,941 to 643. Names stay because a bare count
+would not let a turn notice that something relevant exists, and they are a
+seventh of the cost of the descriptions. A plugin's skills join the searchable
+index when the plugin is enabled, so nothing registers itself.
+
+The ranking is now one function in `(live-agent search)`, shared by MCP tools,
+declared tools and skills. They are all name-and-description catalogs, and one
+heuristic means a query that finds a tool finds the skill explaining it.
+
 **Bundling has a cost the RFC did not price.** Adding kanban failed an
 unrelated compaction test, twice, for two different reasons. The first was its
 resident tool schema; the second, after that was dropped, was its skill line.
@@ -345,11 +359,24 @@ that is luck rather than design, and
 cost has its own guard rather than being discovered through an unrelated
 fixture.
 
-This sharpens open question 4. A read that is a pinned `rg` over one file is a
-workaround for the absence of a way to expose project data to the existing
-tools. A registered scheme — `kanban://board` resolving through `read` — would
-be the right shape for every read-only surface a plugin wants, and would have
-made the declared read here unnecessary.
+**A declared tool can bind to `read` as well as to `run`.** Written as
+`(read "PATH")`, the call becomes the `read` tool with its path fixed: no
+binary, no allowlist entry, and the project boundary is `read`'s own rather
+than a pinned argv that has to stay pinned. Kanban's board tool uses it, which
+is the honest answer to whether the existing tools can do the job — for reads,
+yes, completely.
+
+The pane cannot. A pane row renders a command's output and nothing else, so
+showing the board still needs a ripgrep and the allowlist entry that pins it.
+That asymmetry — the tool needs no binary, the pane does — is the sharpest
+form of open question 4. A registered scheme, or simply a pane row that names
+a file, would close it.
+
+Mutations remain outside this. An edit is computed from the file's current
+contents, which no static template can express, so cards move with `edit`
+under `card-done`'s checks. Binding a declared tool to `write` or `edit` would
+mean templating content, and a plugin that can template a write into an
+allowlist-free tool is a plugin that can write anywhere; that stays closed.
 
 ## What the allbeads proof showed
 
