@@ -180,4 +180,45 @@
   (json-object-ref (session-fork nested) "parent_name"))
 (close-session! nested)
 
+
+;; Resuming by id. The exit line and every receipt print a session's id, so
+;; pasting one back is the obvious thing to try.
+(let ((root (string-append "/tmp/shift-session-ids-" (number->string (getpid)))))
+  (system* "mkdir" "-p" root)
+  (let* ((one (open-session! root "alpha" 'new))
+         (id (session-id one)))
+    ;; The id lives in the checkpoint, so a session only becomes findable by it
+    ;; once one has been written — which is true of resuming by name as well.
+    (save-session! one (make-runtime source-path (session-directory one)
+                                     (session-patches one) (session-generation-id one))
+                   '() 1)
+    (close-session! one)
+    (test-assert "a fresh id looks like one" (session-id-like? id))
+    (test-equal "an id resolves to its session's name" "alpha"
+      (resolve-session-reference root id))
+    (test-equal "a name resolves to itself" "alpha"
+      (resolve-session-reference root "alpha"))
+    ;; Only the shape is special-cased, so an ordinary miss never reads every
+    ;; checkpoint under the root.
+    (test-equal "a name that does not exist is left alone" "nosuch"
+      (resolve-session-reference root "nosuch"))
+    (test-equal "an id nothing matches is left alone to fail as a name"
+      "00000000000000000000000000000000"
+      (resolve-session-reference root "00000000000000000000000000000000"))
+    (test-assert "a resume by id opens the session"
+      (let ((again (open-session! root (resolve-session-reference root id) 'resume)))
+        (let ((ok (and (string=? (session-name again) "alpha")
+                       (string=? (session-id again) id))))
+          (close-session! again)
+          ok)))
+    ;; A session named like an id wins over another session carrying it, so an
+    ;; id can never shadow a name somebody chose.
+    (let ((named (open-session! root id 'new)))
+      (save-session! named (make-runtime source-path (session-directory named)
+                                         (session-patches named) (session-generation-id named))
+                     '() 1)
+      (close-session! named)
+      (test-equal "an existing name wins over a matching id" id
+        (resolve-session-reference root id)))))
+
 (test-end "durable session")

@@ -61,6 +61,11 @@ class DailyDriver(unittest.TestCase):
         # The command names itself the way it would be typed: a checkout runs
         # its own launcher, and anywhere else it is on PATH as shift-agent.
         self.assertIn("Resume this session with shift-agent --resume one", first_output)
+        # The id it prints alongside resumes the same session.
+        session_id = first_output.split("\nID ")[1].split("\n")[0].strip()
+        by_id = self.cli("/quit\n", "--resume", session_id)
+        self.assertIn("session one", by_id)
+        self.assertIn("resumed", by_id)
         self.assertIn(f"ID {checkpoint['id']}", first_output)
         self.assertEqual(checkpoint["generation_id"], 1)
         self.assertEqual(checkpoint["patches"], [])

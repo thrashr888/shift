@@ -204,7 +204,7 @@
   (display
    (string-append
     "Usage: shift-agent [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
-    "                  [--session NAME|--new-session NAME|--resume NAME] [PROMPT]\n"
+    "                  [--session NAME|--new-session NAME|--resume NAME|ID] [PROMPT]\n"
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift-agent --list-sessions [--state-dir PATH]\n"
@@ -4325,7 +4325,11 @@
                     "session open"
                     (lambda ()
                       (open-session!
-                       state-directory requested-session-name session-mode)))))
+                       state-directory
+                       ;; A session id resolves to its name, so the id the exit
+                       ;; line printed can be pasted straight back.
+                       (resolve-session-reference state-directory requested-session-name)
+                       session-mode)))))
              (runtime-state-directory
               (if session (session-directory session) state-directory))
              (runtime

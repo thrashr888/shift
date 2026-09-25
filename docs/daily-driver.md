@@ -37,7 +37,10 @@ Up/down cycles through prompts and commands; down restores your unfinished draft
 The last 500 submitted inputs are kept in `.shift/input-history.jsonl`, separate
 from conversation history. File locking coordinates concurrent session writers.
 On close, a named session prints provider-reported token totals, its stable ID,
-and a copyable `./bin/shift-agent --resume NAME` command.
+and a copyable `shift-agent --resume NAME` command. `--resume` also takes a
+session's id, the one the exit line and every receipt print, so a line pasted
+back from a log finds the session even when its name is not to hand. A session
+that goes by that name wins, so an id can never shadow one.
 
 `.env` is read as data without shell evaluation. Existing process environment
 variables take precedence. Claude uses `CLAUDE_API_KEY`; OpenAI uses
