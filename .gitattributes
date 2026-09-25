@@ -1,0 +1,28 @@
+# What a release tarball is for: installing and running Shift. GitHub builds
+# that tarball with `git archive`, which honours export-ignore, and the
+# Homebrew formula copies the whole thing into libexec. Everything below is
+# this repository's own working material — imagery, the published website, CI
+# config — that nothing in bin/, src/, extensions/, agent/, scripts/, themes/
+# or plugins/ reads at runtime.
+#
+# v0.2.0's tarball was 20 MB, and these account for about 20.7 MB of tracked
+# files. The prose in docs/*.md is 356 KB and stays: someone who installs
+# Shift should still get the RFCs that explain it.
+#
+# A checkout is unaffected. `actions/checkout` clones rather than archives, so
+# the Pages workflow still publishes site/ and the suite still finds
+# everything it reads.
+
+# Brand and interface imagery. README.md links docs/assets/tui-acid.png, which
+# renders from the repository on GitHub rather than from the tarball.
+docs/assets     export-ignore
+
+# Fragments the website is built from, and the built site itself.
+docs/site       export-ignore
+site            export-ignore
+
+# Design exploration: mocks, dither labs, palette studies.
+output          export-ignore
+
+# Workflow definitions for this repository's CI.
+.github         export-ignore
