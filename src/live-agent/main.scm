@@ -36,6 +36,7 @@
   #:use-module (live-agent typesafe)
   #:use-module (live-agent typed)
   #:use-module (live-agent plugins)
+  #:use-module (live-agent declared)
   #:use-module (live-agent trace)
   #:use-module (live-agent tools)
   #:use-module (live-agent redact)
@@ -168,6 +169,7 @@
 ;; calls by name. Reset when a turn starts.
 (define turn-prompt-tokens 0)
 (define turn-cached-tokens 0)
+(define turn-cache-write-tokens 0)
 (define turn-uncached-tokens 0)
 (define turn-completion-tokens 0)
 (define turn-rounds 0)
@@ -184,6 +186,7 @@
   (set! turn-tokens 0)
   (set! turn-prompt-tokens 0)
   (set! turn-cached-tokens 0)
+  (set! turn-cache-write-tokens 0)
   (set! turn-uncached-tokens 0)
   (set! turn-completion-tokens 0)
   (set! turn-rounds 0)
@@ -201,7 +204,7 @@
   (display
    (string-append
     "Usage: shift-agent [--agent PATH] [--state-dir PATH] [--watch|--no-watch]\n"
-    "                  [--session NAME|--new-session NAME|--resume NAME] [PROMPT]\n"
+    "                  [--session NAME|--new-session NAME|--resume NAME|ID] [PROMPT]\n"
     "                  [--print TASK|-p TASK] [--mode MODE] [--model PROVIDER/MODEL]\n"
     "                  [--allow-run \"ARGV PREFIX\"]... [--set KEY=JSON]... [--receipt FILE]\n"
     "       shift-agent --list-sessions [--state-dir PATH]\n"
@@ -614,10 +617,30 @@
            (catch #t
              (lambda () (typed-rank-tools (car endpoint) (cdr endpoint) query candidates))
              (lambda _ (map car candidates)))))))
+;; A plugin's declared tools are searched beside the MCP ones and enabled the
+;; same way, so the cost of a schema is paid by the turn that asked for it.
+;; Matching is the plain substring test the word ranking falls back on; a
+;; declared catalog is small enough that ranking it would be ceremony.
+(define (declared-search query)
+  (let ((needle (string-downcase (string-trim-both query))))
+    (filter-map
+     (lambda (entry)
+       (and (or (string-prefix? "select:" needle)
+                (string-null? needle)
+                (string-contains (string-downcase (car entry)) needle)
+                (string-contains (string-downcase (cdr entry)) needle))
+            (if (string-prefix? "select:" needle)
+                (and (member (car entry)
+                             (map string-trim-both (string-split (substring (string-trim-both query) 7) #\,)))
+                     (list (car entry) (declared-schema (car entry))))
+                (list (car entry) (declared-schema (car entry))))))
+     (declared-catalog))))
+
 (define (execute-tool-search generation arguments)
   (let ((query (json-object-ref arguments "query" #f)))
     (unless (string? query) (error "query must be a string"))
-    (let ((matches (mcp-search query #:rerank (typed-rerank generation))))
+    (let ((matches (append (declared-search query)
+                           (mcp-search query #:rerank (typed-rerank generation)))))
       (emit-servers!)
       (for-each (lambda (m) (unless (member (car m) turn-mcp-tools) (set! turn-mcp-tools (append turn-mcp-tools (list (car m)))))) matches)
       (make-tool-result #t
@@ -700,6 +723,7 @@
     (extra-theme-dirs (delete-duplicates (append-map (lambda (p) (map dirname (plugin-field p 'themes))) enabled)))
     (catch #t (lambda () (ui-action! (json-object (cons "action" "reload")))) (lambda _ #f))
     ;; allowlists
+    (declared-tools-set! (append-map (lambda (p) (plugin-field p 'tools)) enabled))
     (allow-plugin-set! 'run-allow (append-map (lambda (p) (plugin-field p 'allow-run)) enabled))
     (allow-plugin-set! 'mcp-allow (append-map (lambda (p) (plugin-field p 'allow-mcp)) enabled))
     ;; live-image artifacts
@@ -796,12 +820,24 @@
 (define queued-skills '())
 (define (emit-skills!) (when (ui-connected?) (ui-emit! "skills" (skills-json))))
 (define (execute-skill arguments)
-  (let ((name (json-object-ref arguments "name" #f)) (path (json-object-ref arguments "path" #f)))
-    (unless (string? name) (error "name must be a string"))
-    (let ((body (if (string? path) (skill-file name path) (skill-load! name))))
-      (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
-      (emit-skills!)
-      (make-tool-result #t body))))
+  (let ((name (json-object-ref arguments "name" #f))
+        (path (json-object-ref arguments "path" #f))
+        (query (json-object-ref arguments "query" #f)))
+    (cond
+     ;; A search reads; it does not load. Descriptions are what the system
+     ;; prompt stopped carrying, so this is where they are paid for.
+     ((and (string? query) (not (string? name)))
+      (let ((matches (skill-search query)))
+        (make-tool-result #t
+          (if (null? matches)
+              "No skill matches. The system prompt lists every name; search one of those, or a few words about the task."
+              (string-join (map (lambda (m) (string-append (car m) ": " (cdr m))) matches) "\n")))))
+     ((not (string? name)) (error "name or query must be a string"))
+     (else
+      (let ((body (if (string? path) (skill-file name path) (skill-load! name))))
+        (unless (member name turn-skills) (set! turn-skills (cons name turn-skills)))
+        (emit-skills!)
+        (make-tool-result #t body))))))
 (define (queue-skill! name)
   (let ((body (skill-load! name #:by-model #f)))
     (set! queued-skills
@@ -1407,6 +1443,32 @@
 (define (runtime-state-directory tracer)
   (dirname (tracer-path tracer)))
 
+(define overflow-counter 0)
+
+;; Where a tool's oversized output goes so the transcript can carry a window
+;; and a path instead of a truncated head. An ephemeral session has no durable
+;; directory, so it gets no sink and the window says the middle is unrecorded
+;; rather than pointing at a file that will not be there.
+(define (make-overflow-sink state-directory)
+  (if (not state-directory)
+      (lambda (label text) #f)
+      (let ((directory (string-append state-directory "/overflow")))
+        (lambda (label text)
+          (unless (file-exists? directory) (mkdir directory))
+          (set! overflow-counter (+ overflow-counter 1))
+          (let* ((safe (string-map (lambda (c)
+                                     (if (or (char-alphabetic? c) (char-numeric? c)) c #\-))
+                                   label))
+                 (path (format #f "~a/~a-~a.txt" directory safe overflow-counter)))
+            (call-with-output-file path
+              (lambda (port) (display text port)))
+            ;; `read` and `rg` are project-confined, so hand back a path
+            ;; relative to the project when the file sits inside it.
+            (let ((root (string-append (getcwd) "/")))
+              (if (string-prefix? root path)
+                  (substring path (string-length root))
+                  path)))))))
+
 (define (short-hash hash)
   (if (string? hash) (string-append (substring hash 0 12) "…") "absent"))
 
@@ -1660,6 +1722,11 @@
 (define run-prompt-tokens 0)
 (define run-completion-tokens 0)
 (define run-usage-reported? #f)
+;; Session cost is the sum of the priced turns only, with the unpriced ones
+;; counted separately. A session that mixes a priced model with an unpriced
+;; one has to say so rather than report a total that silently omits turns.
+(define run-cost 0)
+(define run-unpriced-turns 0)
 
 (define (reset-run-usage!)
   (set! last-ui-identity #f)
@@ -1667,21 +1734,35 @@
   (set! last-ui-metadata #f)
   (set! run-prompt-tokens 0)
   (set! run-completion-tokens 0)
+  (set! run-cost 0)
+  (set! run-unpriced-turns 0)
   (set! run-usage-reported? #f))
 
 ;; The turn budget counts what a turn actually spends: uncached prompt tokens
 ;; plus completion tokens. Cache reads are near free and, once a turn is
 ;; deep in a repository, dwarf everything else in the raw prompt count.
 (define (record-run-usage! attributes)
-  (let ((prompt (assq-ref attributes 'llm.token_count.prompt))
-        (uncached (assq-ref attributes 'llm.token_count.prompt_uncached))
-        (completion (assq-ref attributes 'llm.token_count.completion)))
+  (let* ((prompt (assq-ref attributes 'llm.token_count.prompt))
+         (reported-uncached (assq-ref attributes 'llm.token_count.prompt_uncached))
+         (cache-write (assq-ref attributes 'llm.token_count.prompt_cache_write))
+         ;; The provider's prompt total already contains the cache write, and
+         ;; a write bills above a plain input token rather than below it. Keep
+         ;; the two apart so the four buckets partition the prompt and each
+         ;; can be priced at its own rate.
+         (uncached (if (and (number? reported-uncached) (number? cache-write))
+                       (max 0 (- reported-uncached cache-write))
+                       reported-uncached))
+         (completion (assq-ref attributes 'llm.token_count.completion)))
     (when (number? prompt)
       (set! run-prompt-tokens (+ run-prompt-tokens prompt))
       (set! turn-prompt-tokens (+ turn-prompt-tokens prompt))
       (set! turn-tokens (+ turn-tokens (if (number? uncached) uncached prompt)))
       (set! turn-uncached-tokens (+ turn-uncached-tokens (if (number? uncached) uncached prompt)))
       (set! run-usage-reported? #t))
+    (when (number? cache-write)
+      (set! turn-cache-write-tokens (+ turn-cache-write-tokens cache-write))
+      ;; A write is spend, not a saving: the budget counts it like uncached input.
+      (set! turn-tokens (+ turn-tokens cache-write)))
     (let ((cached (assq-ref attributes 'llm.token_count.prompt_cached)))
       (when (number? cached)
         (set! turn-cached-tokens (+ turn-cached-tokens cached))))
@@ -1691,15 +1772,27 @@
       (set! turn-tokens (+ turn-tokens completion))
       (set! run-usage-reported? #t))))
 
+(define (session-cost-summary)
+  (cond
+   ((and (> run-cost 0) (> run-unpriced-turns 0))
+    (format #f " · $~,4f plus ~a unpriced turn~:p"
+            (exact->inexact run-cost) run-unpriced-turns))
+   ((> run-cost 0) (format #f " · $~,4f" (exact->inexact run-cost)))
+   ((> run-unpriced-turns 0)
+    (format #f " · cost unavailable (~a unpriced turn~:p; set token-prices)"
+            run-unpriced-turns))
+   (else "")))
+
 (define (show-close-message session)
   (if run-usage-reported?
-      (format #t "~%Session closed · ~a input + ~a output = ~a tokens~%"
+      (format #t "~%Session closed · ~a input + ~a output = ~a tokens~a~%"
               run-prompt-tokens run-completion-tokens
-              (+ run-prompt-tokens run-completion-tokens))
+              (+ run-prompt-tokens run-completion-tokens)
+              (session-cost-summary))
       (display "\nSession closed · token usage unavailable\n"))
   (when session
-    (format #t "Resume ./bin/shift-agent --resume ~a~%ID ~a~%"
-            (session-name session) (session-id session)))
+    (format #t "Resume this session with ~a~%ID ~a~%"
+            (resume-command (session-name session)) (session-id session)))
   (force-output))
 
 (define (show-context generation)
@@ -1739,6 +1832,64 @@
                    (getcwd) ledger turn (coding-context generation #f)
                    `((pane . ,name) (index . ,index)))
                   (loop (cdr rows) (+ index 1) (+ ran 1)))))))))
+;; A pane action is the tool call it names, dispatched through the same
+;; authorization the model's own call would take. It is not a side door: plan
+;; mode denies what it denies, autopilot judges, and a run nobody allowed asks.
+;; Nothing here runs on load or on a tick; a person selects it.
+(define (act-pane! runtime tracer name index turn)
+  (let* ((generation (runtime-current runtime))
+         (panes (json-array-items (json-object-ref (json-object-ref (ui-state) "config") "panes" (json-array))))
+         (pane (find (lambda (pane) (equal? (json-object-ref pane "name" "") name)) panes)))
+    (unless pane (error "no pane named" name))
+    (let ((rows (json-array-items (json-object-ref pane "rows"))))
+      (unless (< -1 index (length rows)) (error "no row at that index" index))
+      (let ((action (json-object-ref (list-ref rows index) "action" #f)))
+        (unless action (error "that row is not an action" index))
+        (let* ((binding (json-object-ref action "binding"))
+               (named (json-object-ref binding "tool"))
+               (given (json-object-ref binding "arguments"))
+               ;; A declared tool becomes its run here too, so an action gets
+               ;; no authority the model's call would not have had.
+               (declared? (declared-tool? named))
+               (rewritten (and declared? (declared-arguments named given)))
+               (tool (if rewritten (car rewritten) named))
+               (arguments (if rewritten (cdr rewritten) given)))
+          (unless (member tool '("run" "read" "workflow"))
+            (error "a pane action runs a command, a declared tool, or a workflow" named))
+          ;; The decision is read, never asked. Prompting from here would block
+          ;; the interface on a lock the turn needs, so an action that is not
+          ;; already permitted says what would permit it instead of hanging.
+          ;; Plan mode still denies what it denies, and an unallowlisted run is
+          ;; still refused — the interface simply cannot talk you past it.
+          (let ((policy (tool-decision (setting-ref generation 'mode) tool arguments
+                                       (setting-ref generation 'run-allow)
+                                       (setting-ref generation 'mcp-allow)
+                                       (and (string=? tool "run") (run-sandboxed? generation arguments)))))
+            (unless (eq? policy 'allow)
+              (error (if (string=? tool "run")
+                         (format #f "action is not permitted in ~a mode; /allow-run ~s first"
+                                 (setting-ref generation 'mode)
+                                 (string-join (json-array-items (json-object-ref arguments "argv")) " "))
+                         (format #f "action is not permitted in ~a mode"
+                                 (setting-ref generation 'mode))))))
+          (when (string=? tool "read")
+            (error "a read action would show nothing; use a command row for the file" named))
+          (if (string=? tool "workflow")
+              ;; The workflow tool spawns a child session for the run, so the
+              ;; interface never blocks and the run lands under runs/ with its
+              ;; checks decided.
+              (let ((result (execute-workflow runtime generation tracer arguments #f)))
+                (unless (tool-result-success? result) (error (tool-result-output result)))
+                (format #f "Pane ~a started workflow ~a"
+                        name (json-object-ref arguments "name" "")))
+              (let ((argv (json-array-items (json-object-ref arguments "argv"))))
+                ((builtin-ref 'coding 'start-job!)
+                 (json-object (cons "argv" (apply json-array argv)) (cons "background" #t)
+                              (cons "timeout_seconds" 3600))
+                 (getcwd) ledger turn (coding-context generation #f)
+                 `((pane . ,name) (index . ,index)))
+                (format #f "Pane ~a started ~a" name (string-join argv " ")))))))))
+
 (define (host-command-allowed? command)
   (let ((parts (string-tokenize command)))
     (or (member command '("/mode manual" "/mode plan" "/mode autopilot" "/sessions" "/workflow"))
@@ -1751,6 +1902,9 @@
         (and (<= 3 (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "run")
              (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts))
              (or (= (length parts) 3) (string-every char-numeric? (cadddr parts))))
+        (and (= (length parts) 4) (string=? (car parts) "/pane") (string=? (cadr parts) "act")
+             (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (char=? c #\-))) (caddr parts))
+             (string-every char-numeric? (cadddr parts)))
         (and (= (length parts) 2) (string=? (car parts) "/model")
              (or (string=? (cadr parts) "list")
                  (and (string-index (cadr parts) #\/)
@@ -2986,10 +3140,33 @@
   (let loop ((remaining calls) (result messages))
     (if (null? remaining)
         result
-        (let* ((call (car remaining))
+        (let* ((original (car remaining))
+               ;; A declared tool has no authority of its own. Rewriting the
+               ;; call into the equivalent `run` here, before anything else
+               ;; reads it, is what makes that true rather than merely
+               ;; intended: the mode, the allowlist, the judge, the approval
+               ;; prompt, the ledger's run record and the receipt all see the
+               ;; argv, not the plugin's name for it. A template that renders
+               ;; to an argv nobody allowed asks, exactly as run would.
+               (declared (and (declared-tool? (tool-call-name original))
+                              (tool-call-name original)))
+               (rewrite-error
+                (and declared
+                     (catch #t
+                       (lambda () (declared-argv declared (tool-call-arguments original)) #f)
+                       (lambda (key . arguments) (error-text key arguments)))))
+               (rewritten (and declared (not rewrite-error)
+                               (declared-arguments declared (tool-call-arguments original))))
+               (call (if rewritten
+                         (make-tool-call (tool-call-id original) (car rewritten) (cdr rewritten)
+                                         (tool-call-raw-arguments original))
+                         original))
                (name (tool-call-name call))
                (ui-id (begin (set! next-ui-tool-id (+ next-ui-tool-id 1))
                              next-ui-tool-id))
+               ;; The rewrite targets a built-in, so a declared tool is
+               ;; unavailable wherever that built-in is: `name` is already the
+               ;; built-in's name here, so one membership test covers both.
                (enabled? (if (member name enabled-tools) #t #f)))
           (runtime-record!
            runtime 'tool-call
@@ -3001,14 +3178,18 @@
           (let* ((span
                   (trace-start!
                    tracer (string-append "tool." name) "TOOL"
-                   `((generation.id . ,(generation-id generation))
-                     (tool.name . ,name)
-                     (input.value . ,(json-write (tool-call-arguments call))))
+                   (append
+                    (if declared `((tool.declared . ,declared)) '())
+                    `((generation.id . ,(generation-id generation))
+                      (tool.name . ,name)
+                      (input.value . ,(json-write (tool-call-arguments call)))))
                    parent))
                  (outcome
                   (catch #t
                     (lambda ()
                       (cond
+                       (rewrite-error
+                        (make-tool-result #f (format #f "~a: ~a" declared rewrite-error)))
                        ((not enabled?) (unavailable-result name))
                        ((json-object-ref (tool-call-arguments call) "invalid_json" #f)
                         (runtime-record! runtime 'tool-arguments-invalid
@@ -3266,13 +3447,21 @@
          (configured-tools
           (map tool-name (generation-ref generation 'agent-tools)))
          (enabled-tools
-          (filter (lambda (name)
-                    (and (within-process-tool-ceiling? name)
-                         (or (not (member name '("traces" "recall"))) (builtin-enabled? 'tracing))
-                         (or (not (string=? name "spawn"))
-                             (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
-                         (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
-                  configured-tools))
+          (append
+           (filter (lambda (name)
+                     (and (within-process-tool-ceiling? name)
+                          (or (not (member name '("traces" "recall"))) (builtin-enabled? 'tracing))
+                          (or (not (string=? name "spawn"))
+                              (and (builtin-enabled? 'coding) spawn-session (< subagent-depth max-subagent-depth)))
+                          (or (not (member name coding-tool-names)) (builtin-enabled? 'coding))))
+                   configured-tools)
+           ;; A declared tool becomes a call to the built-in its binding names,
+           ;; so it is worth offering only where that built-in is available.
+           ;; The rest of a plugin's tools stay discoverable through
+           ;; tool_search rather than resident.
+           (filter (lambda (declared)
+                     (member (symbol->string (or (declared-binding declared) 'run)) configured-tools))
+                   (declared-resident-names))))
          (max-rounds
           (setting-ref generation 'agent-max-tool-rounds))
          (stream? (setting-ref generation 'agent-stream?))
@@ -3593,6 +3782,15 @@
          (summary (summarize-compaction generation prefix)))
     (display (json-write (json-object (cons "summary" summary) (cons "model" (format #f "~a/~a" (setting-ref generation 'agent-provider) (setting-ref generation 'agent-model))))))
     (newline) (force-output) 0))
+;; An image written against an older runtime will not have every binding a
+;; newer one looks for. Compaction has to keep working for that image.
+(define (generation-ref/default generation name default)
+  (catch #t (lambda () (generation-ref generation name)) (lambda _ default)))
+
+(define (compaction-summary-tokens generation)
+  (let ((value (generation-ref/default generation 'agent-compaction-summary-tokens 1024)))
+    (if (and (integer? value) (> value 0)) value 1024)))
+
 (define (summarize-compaction generation prefix)
   (when (context-over-budget? (+ 256 (estimate-input-tokens prefix '()))
                               (model-context-limit generation)
@@ -3616,16 +3814,25 @@
                 (make-message
                  "system"
                  (string-append
-                  "Summarize the earlier agent conversation for safe continuation. "
-                  "Preserve user intent, decisions, exact file paths, generation changes, "
-                  "tool outcomes, unresolved work, and safety constraints. Do not claim "
-                  "success without a recorded tool result. Return only the compact summary."))
+                  "Summarize the earlier conversation so the next window can continue it. "
+                  "Keep user intent, decisions, exact file paths, tool outcomes, and what "
+                  "is still unfinished. The full history stays searchable with the traces "
+                  "tool, so record what to look for rather than the detail itself. Do not "
+                  "claim success without a recorded tool result. "
+                  "150 to 400 words, summary only."))
                 (make-message
                  "user" (json-write (apply json-array prefix))))
                '() #f #f keep-alive
                (string-append
                 "shift-" (generation-fingerprint generation) "-compaction")
-               (lambda _ #t) (lambda _ #t))))
+               (lambda _ #t) (lambda _ #t)
+               'default #f
+               ;; The word range is what keeps the summary short; this ceiling
+               ;; is only a backstop against a runaway, set well above it. A
+               ;; summary that reaches the ceiling loses its ending, which is
+               ;; where unfinished work tends to be listed, so the span records
+               ;; the size for a reader who wonders why a window went thin.
+               (compaction-summary-tokens generation))))
         (record-run-usage! (usage-attributes completion))
         (let ((summary (or (completion-content completion) "")))
           (when (string-null? (string-trim-both summary))
@@ -3669,6 +3876,8 @@
                            span "OK"
                            `((generation.id . ,(generation-id generation))
                              (compaction.after_messages . ,(length compacted))
+                             (compaction.summary_chars . ,(string-length summary))
+                             (compaction.summary_ceiling . ,(compaction-summary-tokens generation))
                              (output.value . ,summary)))
                           (runtime-record!
                            runtime 'session-compacted
@@ -3704,8 +3913,10 @@
                   (round (* 1000 (/ (- (get-internal-real-time) started)
                                     internal-time-units-per-second))))
    #:usage `((prompt . ,turn-prompt-tokens) (cached . ,turn-cached-tokens)
+             (cache_write . ,turn-cache-write-tokens)
              (uncached . ,turn-uncached-tokens) (completion . ,turn-completion-tokens)
              (rounds . ,turn-rounds))
+   #:prices (setting-ref generation 'token-prices)
    #:tool-calls turn-tool-calls
    #:ledger ledger
    #:skills (reverse turn-skills)
@@ -3723,6 +3934,10 @@
 ;; --receipt FILE. A receipt that cannot be written never fails the turn.
 (define (deliver-receipt! runtime tracer receipt)
   (set! last-receipt receipt)
+  (let ((cost (assq-ref receipt 'cost)))
+    (if cost
+        (set! run-cost (+ run-cost cost))
+        (set! run-unpriced-turns (+ run-unpriced-turns 1))))
   (emit-ui-diff! (assq-ref receipt 'turn))
   (ui-emit! "receipt" (receipt->json receipt))
   (when (and (not (ui-connected?)) (setting-ref (runtime-current runtime) 'show-work))
@@ -3892,6 +4107,10 @@
                  (let ((parts (string-tokenize command)))
                    (run-pane! runtime (caddr parts) turn-count
                               (and (= (length parts) 4) (string->number (cadddr parts))))))
+                ((string-prefix? "/pane act " command)
+                 (let ((parts (string-tokenize command)))
+                   (act-pane! runtime tracer (caddr parts)
+                              (string->number (cadddr parts)) turn-count)))
                 ((string-prefix? "/skill " command)
                  (queue-skill! (trimmed-command-argument command "/skill ")))
                 ((string-prefix? "/mcp connect " command)
@@ -4106,7 +4325,11 @@
                     "session open"
                     (lambda ()
                       (open-session!
-                       state-directory requested-session-name session-mode)))))
+                       state-directory
+                       ;; A session id resolves to its name, so the id the exit
+                       ;; line printed can be pasted straight back.
+                       (resolve-session-reference state-directory requested-session-name)
+                       session-mode)))))
              (runtime-state-directory
               (if session (session-directory session) state-directory))
              (runtime
@@ -4141,7 +4364,9 @@
                    (string-append (or (getenv "XDG_CONFIG_HOME") (string-append (getenv "HOME") "/.config")) "/shift")
                    supported-tool-names
                    (string-append (or (getenv "SHIFT_PROJECT_ROOT") (getcwd)) "/.env"))
-        (external-tool-schema mcp-tool-schema)
+        (external-tool-schema
+         (lambda (name) (or (declared-schema name) (mcp-tool-schema name))))
+        (overflow-sink (make-overflow-sink (and session runtime-state-directory)))
         (set! runtime-state-directory-for-judge (and session runtime-state-directory))
         (set! spawn-session session)
         (set! spawn-state-directory state-directory)

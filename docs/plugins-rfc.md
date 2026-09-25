@@ -93,6 +93,20 @@ also ships a skill for the `op` CLI's non-secret operations.
 Each lives in its tool's repository under `.shift-plugin/` where the tool is
 yours, and under `~/.config/shift/plugins/` otherwise.
 
+Shift's own checkout carries one too. `.shift-plugin/` here is `shift-dev`: the
+`shift-dev` and `shift-evals` skills, a DEV pane listing the modules a build
+would recompile, and `allow-run` for `make build`, `make test`, `make check`,
+`make -n` and read-only `git` and `jj` subcommands. It loads only for a session
+whose project is this checkout, so none of it reaches a user running Shift on
+their own code.
+
+Its allowlist is where the boundary shows. A single suite runs as `guile -L src
+-L extensions -C build test/run.scm test/NAME.scm`, and no prefix of that is
+safe to allow: `test/run.scm` loads whatever path follows it, so any prefix
+reaching it would let a written-then-run file execute without approval. Single
+suites stay judged; the fixed `make` targets do not. `("git" "branch")` is
+absent for the same reason, since it would also allow `git branch -D`.
+
 ## Implementation order
 
 1. `(live-agent plugins)`: manifest parsing and lint, discovery, the

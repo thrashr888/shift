@@ -12,6 +12,8 @@
   #:use-module (srfi srfi-14)
   #:use-module (srfi srfi-9)
   #:use-module (live-agent json)
+  #:use-module ((live-agent tools) #:select (bounded))
+  #:use-module (live-agent search)
   #:export (mcp-init! mcp-servers mcp-servers-json mcp-connect! mcp-disconnect! mcp-stop-all!
             mcp-tools mcp-tool-schema mcp-tool-hints mcp-tool-name? mcp-tool-server mcp-search mcp-call!
             mcp-prompt-block check-mcp-file parse-mcp-pack mcp-server-tools
@@ -421,28 +423,6 @@
 ;; Ranked by query words, not by the whole phrase: a server name matches all
 ;; of its tools, a word in the tool's own name counts double, a word in the
 ;; description once, and the whole phrase as a substring counts as well.
-(define (search-tokens text)
-  (filter (lambda (w) (>= (string-length w) 3))
-          (string-tokenize (string-downcase text) char-set:letter+digit)))
-(define (search-ranked query tools description)
-  (let ((needle (string-downcase query)) (words (search-tokens query)))
-    (if (string-null? needle) tools
-        (let* ((scored
-                (filter-map
-                 (lambda (t)
-                   (let* ((full (string-downcase (car t)))
-                          (server (let ((at (string-contains full "__"))) (if at (substring full 0 at) "")))
-                          (bare (let ((at (string-contains full "__"))) (if at (substring full (+ at 2)) full)))
-                          (text (string-downcase (description t)))
-                          (score (+ (if (or (string-contains full needle) (string-contains text needle)) 2 0)
-                                    (apply + (map (lambda (w)
-                                                    (+ (if (string=? w server) 3 0)
-                                                       (if (string-contains bare w) 2 0)
-                                                       (if (string-contains text w) 1 0)))
-                                                  words)))))
-                     (and (> score 0) (cons score t))))
-                 tools)))
-          (map cdr (sort scored (lambda (a b) (> (car a) (car b)))))))))
 
 ;; tools/call → (values ok? text). Text items join; other content is named
 ;; with its type and size rather than inlined.
@@ -468,10 +448,11 @@
                            call-timeout)))
            (content (filter json-object? (json-array-items (json-object-ref result "content" (json-array)))))
            (text (string-join (map content-text content) "\n"))
-           (bounded (if (> (string-length text) max-output)
-                        (string-append (substring text 0 max-output) "\n…[output truncated; chars=" (number->string (string-length text)) "]")
-                        text)))
-      (values (not (json-object-ref result "isError" #f)) bounded))))
+           ;; An oversized MCP result spills to a file like any other tool
+           ;; output, labelled with the server so the file says where it came
+           ;; from. Integration responses are the ones most likely to be large.
+           (windowed (bounded text (server-name server))))
+      (values (not (json-object-ref result "isError" #f)) windowed))))
 
 (define (mcp-servers-json)
   (apply json-array

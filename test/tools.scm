@@ -254,4 +254,71 @@
                      "class A:")))
 (system* "rm" "-rf" loose-root)
 
+
+;; Oversized output spills to a file instead of losing its tail. The tail is
+;; where a command usually reports why it failed, so a truncation that keeps
+;; only the head drops the part most worth reading.
+(define spilled '())
+
+(define big (string-append (make-string 200000 #\a) "TAIL-MARKER"))
+
+(define windowed
+  (parameterize ((overflow-sink (lambda (label text)
+                                  (set! spilled (cons (cons label text) spilled))
+                                  "overflow/rg-1.txt")))
+    (bounded big "rg")))
+
+(test-assert "the whole output reaches the sink"
+  (string=? big (cdr (car spilled))))
+(test-equal "the spilled file is labelled with its tool" "rg" (car (car spilled)))
+(test-assert "the window keeps the tail"
+  (string-suffix? "TAIL-MARKER" windowed))
+(test-assert "the window names the file that holds the rest"
+  (string-contains windowed "overflow/rg-1.txt"))
+(test-assert "the window is smaller than the cap it replaced"
+  (< (string-length windowed) (* 64 1024)))
+(test-assert "output under the cap is untouched"
+  (string=? "short" (bounded "short" "rg")))
+
+;; Without a sink the window still carries head and tail, and says plainly
+;; that the middle is gone rather than implying it is retrievable.
+(define sinkless (bounded big "rg"))
+(test-assert "a sinkless window still keeps the tail"
+  (string-suffix? "TAIL-MARKER" sinkless))
+(test-assert "a sinkless window does not promise a file"
+  (string-contains sinkless "not recorded anywhere"))
+
+;; A file larger than one window is read as a window plus the offset that
+;; continues it, so the rest stays reachable without copying it anywhere.
+(define long-path (string-append "/tmp/shift-tools-long-" (number->string (getpid)) ".txt"))
+(call-with-output-file long-path
+  (lambda (port) (display (string-append (make-string 70000 #\b) "END-OF-FILE") port)))
+
+(define first-window
+  (execute-tool "read" (json-object (cons "path" long-path)) "/tmp" 'deny (lambda _ #f)))
+
+(test-assert "a long read reports the bytes that remain"
+  (string-contains (tool-result-output first-window) "bytes remain"))
+(test-assert "a long read names the offset that continues it"
+  (string-contains (tool-result-output first-window) "offset=65536"))
+
+(define second-window
+  (execute-tool "read"
+                (json-object (cons "path" long-path) (cons "offset" 65536))
+                "/tmp" 'deny (lambda _ #f)))
+
+(test-assert "the continuing window reaches the end of the file"
+  (string-suffix? "END-OF-FILE" (tool-result-output second-window)))
+(test-assert "the continuing window is not offered a further offset"
+  (not (string-contains (tool-result-output second-window) "bytes remain")))
+
+(define past-end
+  (execute-tool "read"
+                (json-object (cons "path" long-path) (cons "offset" 999999))
+                "/tmp" 'deny (lambda _ #f)))
+(test-assert "an offset past the end fails rather than returning nothing"
+  (not (tool-result-success? past-end)))
+
+(delete-file long-path)
+
 (test-end "tools")

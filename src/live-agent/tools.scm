@@ -1,5 +1,6 @@
 (define-module (live-agent tools)
   #:use-module (srfi srfi-1)
+  #:use-module (rnrs bytevectors)
   #:use-module (ice-9 threads)
   #:use-module (ice-9 format)
   #:use-module (ice-9 popen)
@@ -37,6 +38,8 @@
             prepared-change-diffstat
             prepared-change-summary
             execute-tool
+            overflow-sink
+            bounded
             tool-schema))
 
 ;; `changes` lists what a tool observed or mutated on disk, as alists with a
@@ -90,14 +93,40 @@
 (define max-write-input (* 256 1024))
 (define max-edit-input (* 512 1024))
 
-(define (bounded value)
-  (if (> (string-length value) max-tool-output)
-      (string-append
-       (substring value 0 max-tool-output)
-       "\n…[tool output truncated; original chars="
-       (number->string (string-length value))
-       "]")
-      value))
+;; Output over the cap is written whole to a file and the tool returns a
+;; window onto it. Truncating keeps the head and drops the tail, which is
+;; where a command usually says why it failed, and the dropped text cannot be
+;; recovered without running the command again. A file costs one path in the
+;; transcript and leaves everything reachable by `read` and `rg`.
+;;
+;; The sink takes a label and the full text and returns a project-relative
+;; path, or #f when this session has nowhere durable to write. A session
+;; without a sink still gets a window; it just has to say the middle is gone.
+(define overflow-sink (make-parameter (lambda (label text) #f)))
+
+;; Head and tail together stay well under the cap, so a spilled result is
+;; smaller in context than the truncation it replaces.
+(define overflow-head (* 24 1024))
+(define overflow-tail (* 8 1024))
+
+(define (spill-notice shown total path)
+  (if path
+      (format #f "~%…[~:d of ~:d chars shown. Full output: ~a — read it, or rg it for what you need.]~%"
+              shown total path)
+      (format #f "~%…[~:d of ~:d chars shown; the elided middle is not recorded anywhere.]~%"
+              shown total)))
+
+(define* (bounded value #:optional (label "output"))
+  (let ((total (string-length value)))
+    (if (<= total max-tool-output)
+        value
+        (let ((path (catch #t
+                      (lambda () ((overflow-sink) label value))
+                      (lambda (key . arguments) #f))))
+          (string-append
+           (substring value 0 overflow-head)
+           (spill-notice (+ overflow-head overflow-tail) total path)
+           (substring value (- total overflow-tail)))))))
 
 (define (inside-root? path root)
   (or (string=? path root)
@@ -190,29 +219,47 @@
       value)
      (write-char #\' port))))
 
+;; A file larger than the cap is read as a window rather than truncated. The
+;; rest stays on disk and the header gives the exact offset that continues it,
+;; so nothing needs copying elsewhere to remain reachable.
 (define (read-project-file arguments working-directory)
   (let* ((requested (require-string arguments "path"))
          (resolved (resolve-existing-path requested working-directory "read"))
          (root (car resolved))
-         (candidate (cadr resolved)))
+         (candidate (cadr resolved))
+         (offset (let ((value (json-object-ref arguments "offset" 0)))
+                   (if (and (integer? value) (>= value 0)) value 0))))
     (let* ((size (stat:size (stat candidate)))
            (content
             (call-with-input-file
                 candidate
               (lambda (port)
+                (when (> offset 0)
+                  (when (>= offset size)
+                    (error "read offset is past the end of the file" offset size))
+                  ;; An offset this tool reported always lands on a character
+                  ;; boundary. One invented by hand may not, and a decode
+                  ;; failure here is clearer than a mangled window.
+                  (seek port offset SEEK_SET))
                 (let ((value (get-string-n port max-tool-output)))
                   (if (eof-object? value) "" value)))))
+           (consumed (bytevector-length (string->utf8 content)))
+           (next (+ offset consumed))
            (hash (sha256-file candidate))
            (relative (relative-path root candidate)))
       (make-tool-result
        #t
        (string-append
-        (format #f "# ~a · ~a bytes · sha256 ~a~%" relative size (substring hash 0 12))
-        (if (> size max-tool-output)
-            (string-append
-             content
-             "\n…[file truncated; bytes=" (number->string size) "]")
-            content))
+        (format #f "# ~a · ~a bytes · sha256 ~a~a~%"
+                relative size (substring hash 0 12)
+                (if (or (> offset 0) (< next size))
+                    (format #f " · bytes ~:d–~:d" offset next)
+                    ""))
+        content
+        (if (< next size)
+            (format #f "~%…[~:d bytes remain; read this path again with offset=~a for the next window]"
+                    (- size next) next)
+            ""))
        (list `((kind . seen) (path . ,relative) (hash . ,hash)))))))
 
 (define (atomic-write-file path content)
@@ -489,7 +536,8 @@
       (cond
        ((= exit-code 0)
         (bounded
-         (replace-occurrences output (string-append root "/") "")))
+         (replace-occurrences output (string-append root "/") "")
+         "rg"))
        ((= exit-code 1) "No matches.")
        (else
         (error
@@ -498,7 +546,8 @@
              "rg failed")
          exit-code
          (bounded
-          (if (string-null? error-output) output error-output))))))))
+          (if (string-null? error-output) output error-output)
+          "rg")))))))
 
 (define (run-shell arguments working-directory policy confirm)
   (let ((command (json-object-ref arguments "command")))
@@ -514,7 +563,7 @@
            (output (get-string-all port))
            (status (close-pipe port))
            (exit-code (status:exit-val status)))
-      (format #f "exit=~a~%~a" exit-code (bounded output)))))
+      (format #f "exit=~a~%~a" exit-code (bounded output "shell")))))
 
 (define (execute-tool name arguments working-directory shell-policy confirm)
   (catch #t
@@ -569,15 +618,23 @@
    ((string=? name "skill")
     (function-tool
      "skill"
-     "Load one of the skills listed in the system prompt. Returns its instructions and its folder; pass path to read one of its supporting files instead. Load a skill before following it."
-     (json-object (cons "name" (string-parameter "Skill name from the skills list"))
+     "Search skills by a few words, or load one by name. The system prompt lists the names; a search says what each covers. Load a skill before following it."
+     (json-object (cons "query" (string-parameter "Words about the task, to see which skills cover it"))
+                  (cons "name" (string-parameter "Skill name to load"))
                   (cons "path" (string-parameter "Optional file inside the skill folder, such as references/api.md")))
-     '("name")))
+     '()))
    ((string=? name "read")
     (function-tool
      "read"
      "Read one exact UTF-8 text file inside the current project. Try the most likely path first; only try another path if it fails."
-     (json-object (cons "path" (string-parameter "Project-relative file path")))
+     (json-object (cons "path" (string-parameter "Project-relative file path"))
+                  ;; The window itself reports the offset that continues it, so
+                  ;; the schema carries the parameter and not the instructions.
+                  (cons "offset"
+                        (json-object
+                         (cons "type" "integer")
+                         (cons "minimum" 0)
+                         (cons "description" "Byte offset to resume an oversized read from"))))
      '("path")))
    ((string=? name "rg")
     (function-tool

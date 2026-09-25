@@ -214,7 +214,7 @@ class ClaudeTests(unittest.TestCase):
         self.assertIn(
             "Session closed · 60 input + 24 output = 84 tokens", result.stdout
         )
-        self.assertIn("Resume ./bin/shift-agent --resume native", result.stdout)
+        self.assertIn("Resume this session with shift-agent --resume native", result.stdout)
         self.assertEqual(len(self.server.requests), 3)
         second = self.server.requests[1][1]
         self.assertIn("fixture-signature", json.dumps(second))
@@ -260,6 +260,11 @@ class ClaudeTests(unittest.TestCase):
         checkpoint["next_turn"] = 7
         path.write_text(json.dumps(checkpoint))
         (path.parent / "settings.json").write_text(
+            # Low enough to force compaction before the request. It has slack
+            # above the static prompt now that skills are named rather than
+            # described there; the deliberate guard on that cost is
+            # test_bundled_plugins_stay_within_their_share_of_every_request,
+            # so this fixture can be about compaction alone.
             json.dumps({"mode": "plan", "context-limit": 8000, "output-reserve": 1024})
         )
         result = self.run_cli("inspect readme now\n/quit\n")
@@ -267,6 +272,15 @@ class ClaudeTests(unittest.TestCase):
             "Compacted earlier turns before the request", result.stdout + result.stderr
         )
         self.assertFalse(self.server.requests[0][1]["stream"])
+        # The summary rides in every later request of the new window, so the
+        # summarizer asks for a word range and caps its own output well above
+        # it as a backstop rather than letting a long summary through.
+        summarizer = [
+            r for _, r in self.server.requests
+            if "150 to 400 words" in str(r.get("system", ""))
+        ]
+        self.assertEqual(len(summarizer), 1)
+        self.assertEqual(summarizer[0]["max_tokens"], 1024)
         after = json.loads(path.read_text())
         self.assertEqual(after["next_turn"], 8)
         self.assertIn("Earlier session summary", after["history"][0]["content"])

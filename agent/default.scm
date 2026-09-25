@@ -12,6 +12,10 @@
 (define agent-max-tool-rounds 12)
 (define agent-compaction-threshold 80)
 (define agent-compaction-keep-recent 24)
+;; A compaction summary is carried by every later request in the window, so it
+;; is paid for many times over. The full history stays searchable with traces,
+;; which is what lets the summary stay this small.
+(define agent-compaction-summary-tokens 1024)
 
 (define agent-system-prompt
   (string-append

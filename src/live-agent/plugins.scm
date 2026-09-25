@@ -9,6 +9,7 @@
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
+  #:use-module (live-agent declared)
   #:export (plugins-init! plugin-index plugin-find plugins-json parse-plugin-manifest check-plugin-dir
             plugin-field plugin-available?))
 
@@ -40,10 +41,17 @@
                (plugin (list (cons 'name (cadar data)) (cons 'version (caddar data)) (cons 'path directory) (cons 'source source)
                              (cons 'description "") (cons 'requires '()) (cons 'mcp '()) (cons 'skills #f) (cons 'panes #f) (cons 'workflows #f)
                              (cons 'themes '()) (cons 'agent '()) (cons 'allow-run '()) (cons 'allow-mcp '())
-                             (cons 'env '()) (cons 'secrets '()))))
+                             (cons 'env '()) (cons 'secrets '()) (cons 'tools '()))))
       (define (put key value) (acons key value (filter (lambda (e) (not (eq? (car e) key))) plugin)))
       (if (null? rest)
-          plugin
+          (let ((resident (filter (lambda (t) (assq-ref t 'resident)) (plugin-field plugin 'tools))))
+            ;; A resident schema is charged on every request for as long as the
+            ;; plugin is enabled. The cap is here rather than in advice so a
+            ;; plugin cannot quietly reintroduce the cost tool_search removes.
+            (when (> (length resident) max-resident-per-plugin)
+              (error (format #f "a plugin may keep at most ~a tools resident; this one keeps ~a"
+                             max-resident-per-plugin (length resident))))
+            plugin)
           (let ((section (car rest)))
             (unless (and (pair? section) (symbol? (car section)) (list? (cdr section)))
               (error "manifest sections are lists headed by a symbol" section))
@@ -68,6 +76,16 @@
                      (put 'themes (append (plugin-field plugin 'themes) (map (lambda (f) (string-append directory "/" f)) (cdr section)))))
                     ((agent) (unless (every relative-file? (cdr section)) (error "agent takes artifact files" section))
                      (put 'agent (append (plugin-field plugin 'agent) (map (lambda (f) (string-append directory "/" f)) (cdr section)))))
+                    ;; A declared tool is a schema over an argv template. The
+                    ;; runtime rewrites a call into the equivalent `run`, so a
+                    ;; tool whose template is not covered by this plugin's
+                    ;; allow-run simply asks, the way that run would.
+                    ((tool)
+                     (let ((parsed (parse-declared-tool section (plugin-field plugin 'name))))
+                       (when (assoc (assq-ref parsed 'name)
+                                    (map (lambda (t) (cons (assq-ref t 'name) t)) (plugin-field plugin 'tools)))
+                         (error "a plugin declares each tool name once" (assq-ref parsed 'name)))
+                       (put 'tools (append (plugin-field plugin 'tools) (list parsed)))))
                     ((allow-run) (unless (every (lambda (p) (and (list? p) (pair? p) (every string? p))) (cdr section))
                                    (error "allow-run takes argv prefixes" section))
                      (put 'allow-run (cdr section)))
@@ -99,7 +117,7 @@
         (list (cons 'name (basename directory)) (cons 'version "") (cons 'path directory) (cons 'source source)
               (cons 'description "") (cons 'requires '()) (cons 'mcp '()) (cons 'skills #f) (cons 'panes #f) (cons 'workflows #f) (cons 'themes '())
               (cons 'agent '()) (cons 'allow-run '()) (cons 'allow-mcp '()) (cons 'env '()) (cons 'secrets '())
-              (cons 'valid #f)
+              (cons 'tools '()) (cons 'valid #f)
               (cons 'error (if (and (>= (length args) 2) (string? (cadr args)))
                                (if (and (>= (length args) 3) (pair? (caddr args))) (format #f "~a ~s" (cadr args) (car (caddr args))) (cadr args))
                                (format #f "~a" key)))
@@ -171,6 +189,15 @@
                                   (and (plugin-field p 'workflows) "workflows")
                                   (and (pair? (plugin-field p 'themes)) "theme")
                                   (and (pair? (plugin-field p 'agent)) "agent")
+                                  ;; Resident tools are named separately because
+                                  ;; they are the part charged on every request;
+                                  ;; the rest cost nothing until tool_search
+                                  ;; loads them.
+                                  (and (pair? (plugin-field p 'tools))
+                                       (let ((resident (length (filter (lambda (t) (assq-ref t 'resident))
+                                                                       (plugin-field p 'tools)))))
+                                         (format #f "~a tool~:p~a" (length (plugin-field p 'tools))
+                                                 (if (> resident 0) (format #f " (~a resident)" resident) ""))))
                                   (and (pair? (plugin-field p 'allow-run)) (format #f "~a run prefixes" (length (plugin-field p 'allow-run))))
                                   (and (pair? (plugin-field p 'secrets)) "secrets")))))))
          (plugin-index))))

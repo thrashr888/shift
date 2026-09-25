@@ -159,6 +159,7 @@ process restart:
 ./bin/shift-agent --session recipes "Continue our Lisp cookie recipe."
 ./bin/shift-agent --new-session spike-2   # fail if the name already exists
 ./bin/shift-agent --resume dogfood        # fail if it does not exist
+./bin/shift-agent --resume 00065c45fc…    # or the id the exit line printed
 ./bin/shift-agent --list-sessions
 ./bin/shift-agent session-fork dogfood experiment
 ```

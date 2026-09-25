@@ -6,8 +6,10 @@
   #:use-module (ice-9 ftw)
   #:use-module (srfi srfi-1)
   #:use-module (live-agent json)
+  #:use-module (live-agent search)
   #:export (skills-init! skill-index skill-find skill-directories skill-load!
             skills-prompt-block skills-json skill-loaded? loaded-skills reset-loaded-skills!
+            skill-search
             parse-skill-file skill-file))
 
 (define max-file-bytes (* 64 1024))
@@ -187,14 +189,34 @@
       (unless (member name loaded) (set! loaded (cons name loaded)))
       (string-append "Skill " name " (" (field rec 'path) ")\n\n" (string-trim-both body)))))
 
+;; Names, not descriptions. Every offered skill's description used to ride in
+;; every request of every session: for the bundled plugins alone that was
+;; about 2,950 characters, most of it about tools that project never touches.
+;; Names cost a seventh of that and still let a turn notice that something
+;; relevant exists, which a bare count would not. The description is one
+;; `skill` search away, paid for by the turn that needs it.
 (define (skills-prompt-block)
   (let ((offered (filter (lambda (r) (and (field r 'valid) (field r 'model?))) (skill-index))))
     (if (null? offered)
         ""
         (string-append
-         "\n\n<skills>\nSkills are instructions you can load with the skill tool when a task matches one; load a skill before following it.\n"
-         (string-join (map (lambda (r) (string-append "- " (field r 'name) ": " (field r 'description))) offered) "\n")
+         "\n\n<skills>\nSkills are instructions you load with the skill tool before following them. "
+         "These are the names; search with the skill tool to see what one covers.\n"
+         (string-join (map (lambda (r) (field r 'name)) offered) ", ")
          "\n</skills>"))))
+
+;; Ranked name-and-description pairs for a query, over the same index the
+;; prompt names. A plugin's skills are in it the moment the plugin is enabled,
+;; so nothing has to register itself to be findable.
+(define* (skill-search query #:optional (limit 8))
+  (let* ((offered (filter (lambda (r) (and (field r 'valid) (field r 'model?))) (skill-index)))
+         (pairs (map (lambda (r) (cons (field r 'name) (or (field r 'description) ""))) offered))
+         (ranked (if (string-prefix? "select:" (string-trim-both query))
+                     (let ((wanted (map string-trim-both
+                                        (string-split (substring (string-trim-both query) 7) #\,))))
+                       (filter (lambda (p) (member (car p) wanted)) pairs))
+                     (search-ranked query pairs cdr))))
+    (if (> (length ranked) limit) (take ranked limit) ranked)))
 
 (define (skills-json)
   (apply json-array

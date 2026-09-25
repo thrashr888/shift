@@ -103,6 +103,13 @@
                  ((string=? key "command")
                   (and (json-array? value) (<= 1 (length (json-array-items value)) 16)
                        (every (lambda (part) (safe-text? part 200)) (json-array-items value))))
+                 ((string=? key "action")
+                  (and (json-object? value)
+                       (safe-text? (json-object-ref value "label" #f) 32)
+                       (let ((binding (json-object-ref value "binding" #f)))
+                         (and (json-object? binding)
+                              (safe-text? (json-object-ref binding "tool" #f) 48)
+                              (json-object? (json-object-ref binding "arguments" #f))))))
                  (else #f)))))))
 (define (valid-panes? value)
   (and (json-array? value) (<= (length (json-array-items value)) 4)
@@ -173,6 +180,50 @@
      (json-object (cons "source" (symbol->string (cadr row)))))
     ((command) (unless (and (pair? (cdr row)) (every string? (cdr row))) (error "command rows take argv strings" row))
      (json-object (cons "command" (apply json-array (cdr row)))))
+    ;; An action is something a person selects. It is dispatched as an ordinary
+    ;; tool call of the session, so the mode, the allowlist and the judge all
+    ;; apply and it lands in the receipt; the pane holds only the label and
+    ;; what to call. Nothing here runs on load or on a tick.
+    ((action)
+     (unless (and (= (length row) 3) (string? (cadr row)) (<= (string-length (cadr row)) 32)
+                  (pair? (caddr row)) (symbol? (car (caddr row))))
+       (error "action rows take a label up to 32 characters and one of (run ...), (tool NAME ...), (workflow NAME)" row))
+     (let ((label (cadr row)) (binding (caddr row)))
+       (json-object
+        (cons "action"
+              (json-object
+               (cons "label" label)
+               (cons "binding"
+                     (case (car binding)
+                       ((run)
+                        (unless (and (pair? (cdr binding)) (every string? (cdr binding))
+                                     (<= (length (cdr binding)) 16))
+                          (error "an action's run takes 1-16 argv strings" binding))
+                        (json-object (cons "tool" "run")
+                                     (cons "arguments" (json-object (cons "argv" (apply json-array (cdr binding)))))))
+                       ((tool)
+                        (unless (and (>= (length binding) 2) (string? (cadr binding)))
+                          (error "an action's tool takes a tool name and optional (argv ...)" binding))
+                        (let ((argv (assq 'argv (cddr binding))))
+                          (json-object
+                           (cons "tool" (cadr binding))
+                           (cons "arguments"
+                                 (if argv
+                                     (begin
+                                       (unless (every string? (cdr argv)) (error "argv takes strings" argv))
+                                       (json-object (cons "argv" (apply json-array (cdr argv)))))
+                                     (json-object))))))
+                       ((workflow)
+                        (unless (and (= (length binding) 2) (string? (cadr binding)))
+                          (error "an action's workflow takes one workflow name" binding))
+                        ;; A workflow action is the form worth having: it runs
+                        ;; the procedure's checks and leaves a record under
+                        ;; runs/, so the interface reports a verdict rather
+                        ;; than the fact that someone clicked.
+                        (json-object (cons "tool" "workflow")
+                                     (cons "arguments" (json-object (cons "action" "run")
+                                                                    (cons "name" (cadr binding))))))
+                       (else (error "an action binds to (run ...), (tool NAME ...) or (workflow NAME)" binding)))))))))
     (else (error "unknown pane row" row))))
 (define (pane-form->json form)
   (unless (and (list? form) (>= (length form) 4) (eq? (car form) 'pane) (string? (cadr form)) (string? (caddr form)))

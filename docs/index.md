@@ -18,6 +18,7 @@ One line per document, then the open work those documents still describe.
 | [skills-and-jobs-rfc.md](skills-and-jobs-rfc.md) | RFC for skills, background jobs, concurrent read-only tools, and the composable sidebar; implemented. |
 | [mcp-client-rfc.md](mcp-client-rfc.md) | RFC for the MCP client and `tool_search`; implemented. |
 | [plugins-rfc.md](plugins-rfc.md) | RFC: plugins as folders of data that bundle skills, MCP servers, panes, themes, allowlist proposals and live-image artifacts; implemented, seven bundled. |
+| [plugin-tools-rfc.md](plugin-tools-rfc.md) | Draft RFC: declared tools as a schema over an argv template, pane rows that act, and pane actions that invoke workflows. Plugins still supply no code; language servers stay a plugin concern over MCP. |
 | [autopilot-judge-rfc.md](autopilot-judge-rfc.md) | RFC: autopilot resolves rules first, then a separate judge model, with a shadow mode; implemented. |
 | [quality-rfc.md](quality-rfc.md) | RFC: judge evals, session review, compaction scoring, diagnostics, hardening, the runtime handoff and the live-repair proof, in that order. |
 | [context-notes-rfc.md](context-notes-rfc.md) | Notes-first compaction after Codex's context management: one `notes` tool, `/compact` and the budget guard do the loop on the backend, summary as fallback; implemented. |

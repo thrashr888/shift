@@ -119,7 +119,7 @@
                    (run-host . (("git") ("cargo" "tauri") ("codesign") ("xcodebuild") ("xcrun") ("notarytool")
                                 ("open") ("swift") ("swiftc") ("brew")))
                    (judge . shadow) (judge-model . #f) (judge-ask-below . 0.5) (trace-content . full)
-                   (turn-token-budget . #f) (show-work . #t)
+                   (turn-token-budget . #f) (show-work . #t) (token-prices . ())
                    ;; The self-improvement loop (docs/workflows-rfc.md): field notes the
                    ;; harness appends after a turn, and reflection after a hard one.
                    (field-notes . #t) (reflection . #t) (distillation . #t)
@@ -156,6 +156,18 @@
                       (every (lambda (name) (and (string? name) (string-contains name "__")
                                                  (string-every (lambda (c) (or (char-lower-case? c) (char-numeric? c) (memv c '(#\- #\_)))) name)))
                              value)))
+    ;; Per-model rates in dollars per million tokens, as rows of
+    ;; (PROVIDER MODEL-PREFIX input cache-read cache-write output). These
+    ;; correct or extend the rates listed in (live-agent pricing), whose
+    ;; built-in table goes stale as providers change their prices.
+    ((token-prices)
+     (and (list? value)
+          (every (lambda (row)
+                   (and (list? row) (= (length row) 6)
+                        (memq (car row) '(ollama openai claude))
+                        (string? (cadr row))
+                        (every (lambda (rate) (and (real? rate) (>= rate 0))) (cddr row))))
+                 value)))
     ;; Extra folders of skills, absolute paths, such as a checked-out skills kit.
     ((skill-dirs plugin-dirs) (and (list? value) (every (lambda (d) (and (string? d) (string-prefix? "/" d))) value)))
     ((plugins) (and (json-object? value) (every (lambda (e) (boolean? (cdr e))) (json-object-entries value))))
@@ -181,6 +193,15 @@
     (map (lambda (prefix) (if (json-array? prefix) (json-array-items prefix) prefix))
          (json-array-items value)))
    ((and (memq key '(mcp-allow skill-dirs plugin-dirs)) (json-array? value)) (json-array-items value))
+   ;; Price rows carry a symbol provider, a string prefix and four numbers.
+   ;; JSON has no symbols, so the provider comes back as a string.
+   ((and (eq? key 'token-prices) (json-array? value))
+    (map (lambda (row)
+           (let ((items (if (json-array? row) (json-array-items row) row)))
+             (if (and (pair? items) (string? (car items)))
+                 (cons (string->symbol (car items)) (cdr items))
+                 items)))
+         (json-array-items value)))
    (else value)))
 (define (encoded value)
   (cond ((symbol? value) (symbol->string value))

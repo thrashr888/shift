@@ -27,6 +27,8 @@
             session-fork
             safe-session-name?
             safe-session-path?
+            session-id-like?
+            resolve-session-reference
             close-session!
             save-session!))
 
@@ -202,7 +204,10 @@
     (when (and (eq? mode 'new) exists?)
       (error "session already exists" name))
     (when (and (eq? mode 'resume) (not exists?))
-      (error "session does not exist" name))
+      (error (if (session-id-like? name)
+                 "no session has that name or id"
+                 "session does not exist")
+             name))
     (ensure-directory! directory)
     (let ((lock-port (acquire-session-lock directory name)))
       (catch #t
@@ -215,6 +220,35 @@
         (lambda (key . arguments)
           (unless (port-closed? lock-port) (close-port lock-port))
           (apply throw key arguments))))))
+
+;; A session id is the 32 hex digits `fresh-session-id` makes. Recognising the
+;; shape keeps the id lookup off the path of an ordinary mistyped name, which
+;; would otherwise read every checkpoint under the root to fail.
+(define (session-id-like? value)
+  (and (string? value) (= (string-length value) 32)
+       (string-every (lambda (c) (or (char-numeric? c) (memv c '(#\a #\b #\c #\d #\e #\f)))) value)))
+
+;; The exit line and every receipt print a session's id, so pasting one back
+;; into --resume is the obvious thing to try. A name that exists always wins:
+;; resolving only when no session goes by that name means an id can never
+;; shadow a session someone named.
+(define (resolve-session-reference state-directory reference)
+  (if (or (not (session-id-like? reference))
+          (and (safe-session-path? reference)
+               (file-exists? (checkpoint-path
+                              (string-append (session-root state-directory) "/" reference)))))
+      reference
+      (or (find (lambda (name)
+                  (catch #t
+                    (lambda ()
+                      (let ((root (call-with-input-file
+                                      (checkpoint-path (string-append (session-root state-directory) "/" name))
+                                    (lambda (port) (json-read (get-string-all port))))))
+                        (and (json-object? root)
+                             (equal? (json-object-ref root "id" #f) reference))))
+                    (lambda _ #f)))
+                (list-session-names state-directory))
+          reference)))
 
 (define (list-session-names state-directory)
   (let ((root (session-root state-directory)))

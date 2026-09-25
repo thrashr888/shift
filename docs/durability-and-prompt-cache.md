@@ -83,6 +83,92 @@ The hit span contained 1,753 prompt tokens: 1,280 cached and 473 uncached. This
 is an observed example, not a guarantee for shorter prompts or a different
 backend/cache window.
 
+## Compaction summary budget
+
+A compaction summary is not paid for once. It sits at the head of the new
+window and rides in every request made from it, so a summary that runs long
+is charged again on every later turn. Nothing bounded it: the summarizer asked
+for a "compact summary" and accepted whatever came back.
+
+The summarizer now asks for 150 to 400 words. A stated range works where an
+adjective does not, and this one is affordable at every later turn. The request
+also carries its own `max_tokens`, from `agent-compaction-summary-tokens` in
+the live image, set well above the range as a backstop against a runaway rather
+than as the thing that keeps the summary short — a summary that reached the
+ceiling would lose its ending, which is where unfinished work tends to be
+listed. The `session.compact` span records the summary's size and the ceiling
+in force, so a window that went thin can be explained.
+
+What lets the summary stay this small is that nothing depends on it alone. The
+full history is in `traces.jsonl` and stays searchable after compaction, so the
+prompt asks for what to look for rather than the detail itself. An image
+written against an older runtime that lacks the binding falls back to 1024.
+
+## Oversized tool output
+
+Output over 64 KiB used to be cut at the cap with a marker giving the original
+length. That keeps the head and drops the tail, which for a command is usually
+where it says why it failed, and the dropped text cannot be recovered without
+running the command again.
+
+An oversized result is now written whole to `overflow/` inside the session
+directory, and the tool returns the first 24 KiB, the last 8 KiB, and the path.
+The window is smaller in context than the truncation it replaced, and `read`
+and `rg` reach the rest. `rg`, `shell` and MCP results share the mechanism; a
+spilled file is named for the tool or server that produced it. An ephemeral
+session has no durable directory, so it has no sink: the window still carries
+head and tail, and says the middle is not recorded anywhere rather than naming
+a file that will not exist.
+
+`read` is the exception, because the file is already on disk and a copy would
+be pointless. A file larger than one window returns its first 64 KiB with the
+byte range in the header and the exact offset that continues it, and `read`
+takes an `offset` to resume from. Offsets this tool reports always land on a
+character boundary.
+
+## Cost accounting
+
+A token count is not a cost. An uncached input token, a cache read, a cache
+write and an output token bill at four different rates, and on Anthropic's
+published multiples a cache read is a tenth of an input token while an output
+token is five times one. A harness change that trades output for prompt can
+therefore shrink the raw count and raise the bill. Cursor's
+[token-efficiency report](https://cursor.com/blog/improved-token-efficiency)
+makes the same point and states the metric this project should use: price-
+weighted cost per completed task, not tokens per request.
+
+The four buckets now partition the prompt. The tracing layer already reported
+`llm.token_count.prompt_cache_write` separately; the turn counters previously
+folded it into uncached input, which priced a cache write at the base input
+rate instead of the higher write rate. `record-run-usage!` keeps the two apart,
+and the turn budget counts a write as spend rather than a saving.
+
+Rates are not compiled into the harness. Providers change prices without
+warning, and a rate baked into a release would go stale silently while
+falsifying every comparison drawn from it. The `token-prices` setting is the
+only source of rates, as rows of
+`(PROVIDER MODEL-PREFIX input cache-read cache-write output)` in dollars per
+million tokens. The longest matching prefix within the provider wins, so one
+family row covers its dated releases:
+
+```scheme
+(claude "claude-sonnet" 3.0 0.3 3.75 15.0)
+```
+
+The single built-in row is local inference at zero, which is a fact about the
+provider rather than a price that can go out of date.
+
+A model with no row is **unpriced**, never priced at zero. The receipt reports
+a null cost, the `agent.turn` span carries no cost attribute at all, and the
+session summary counts the turn separately from the priced total rather than
+folding it in. A sentinel zero would average and sum in a viewer as though the
+turn were free, which is worse than no number.
+
+Every receipt records a `price_source` of `configured` or `listed`, so a
+surprising figure can be traced back to the row that produced it. Rates are
+read per turn, so correcting one applies from the next receipt on without
+restarting.
+
 ## What Tardigrade changes in the longer-term design
 
 [Tardigrade's rationale](https://tardigrade.sh/docs/why) models agent behavior as

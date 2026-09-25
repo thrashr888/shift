@@ -87,6 +87,7 @@ class Provider(BaseHTTPRequestHandler):
 
     plan = []
     last_messages = []
+    last_tools = []
     judge_requests = 0
     lock = threading.Lock()
 
@@ -103,6 +104,7 @@ class Provider(BaseHTTPRequestHandler):
                     step = answer(json.dumps({"verdict": "allow", "rule": "ok", "reason": "fixture"}))
             else:
                 Provider.last_messages = body["messages"]
+                Provider.last_tools = body.get("tools", [])
                 step = Provider.plan.pop(0) if Provider.plan else answer("done")
                 if isinstance(step, tuple):
                     step = step[1]
@@ -151,6 +153,7 @@ class CodingWorkflow(unittest.TestCase):
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         Provider.plan = []
         Provider.last_messages = []
+        Provider.last_tools = []
         image = (ROOT / "test/session-agent.scm").read_text()
         for old, new in (
             ("(define agent-provider 'ollama)", "(define agent-provider 'openai)"),
@@ -1009,17 +1012,22 @@ class CodingWorkflow(unittest.TestCase):
             "---\nname: hidden\ndescription: User only\ndisable-model-invocation: true\n---\nquiet\n")
         output = self.shift(
             "/mode autopilot\nsay hi\n/skills\n/quit\n",
-            plan=[tool_call("skill", {"name": "greet"}), tool_call("read", {"path": str(skill / "extra.md")}),
+            plan=[tool_call("skill", {"query": "greet someone politely"}),
+                  tool_call("skill", {"name": "greet"}), tool_call("read", {"path": str(skill / "extra.md")}),
                   tool_call("skill", {"name": "hidden"}), answer("hello")],
         )
         system = Provider.last_messages[0]["content"]
         self.assertIn("<skills>", system)
-        self.assertIn("- greet: Greet politely", system)
+        # Names ride in every request; descriptions are one search away, and
+        # are charged to the turn that asked rather than to every turn.
+        self.assertIn("greet", system)
+        self.assertNotIn("Greet politely", system)
         self.assertNotIn("hidden", system)
         results = self.tool_results()
-        self.assertIn("Always start with hello.", results[0])
-        self.assertIn("supporting file", results[1])
-        self.assertIn("user-only", results[2])
+        self.assertIn("greet: Greet politely", results[0])   # the search
+        self.assertIn("Always start with hello.", results[1])
+        self.assertIn("supporting file", results[2])
+        self.assertIn("user-only", results[3])
         self.assertIn("loaded  greet  agents  Greet politely", output)
         self.assertIn("        hidden  agents  User only", output)
         receipt = json.loads((self.state() / "receipts.jsonl").read_text().splitlines()[-1])
@@ -1354,6 +1362,149 @@ class CodingWorkflow(unittest.TestCase):
         self.assertEqual(Provider.judge_requests, before)
         self.shift("/sandbox off\n/quit\n")
 
+    def test_bundled_plugins_stay_within_their_share_of_every_request(self):
+        """Every bundled plugin taxes every request, used or not."""
+        self.shift("hi\n/quit\n", plan=[answer("done")], session="off")
+        bare = len(str(Provider.last_messages[0]["content"]))
+        self.env["SHIFT_PLUGINS"] = "on"
+        self.shift("hi\n/quit\n", plan=[answer("done")], session="on")
+        loaded = len(str(Provider.last_messages[0]["content"]))
+        tools = len(json.dumps(Provider.last_tools))
+        # Bundled plugins contribute a skill name each to the system prompt of
+        # every session, whether or not that project uses them. That was ~2,950
+        # characters while the block carried descriptions and is ~650 with
+        # names alone; the bound catches a return to descriptions long before
+        # it catches an eleventh plugin.
+        self.assertLess(loaded - bare, 1500,
+                        f"bundled plugins add {loaded - bare} chars to every system prompt")
+        # Tool schemas are the other static cost. Resident declared tools land
+        # here, which is why almost none of them should be resident.
+        self.assertLess(tools, 13000, f"tool schemas are {tools} chars")
+
+    def test_kanban_board_reads_through_its_pinned_allowlist_entry(self):
+        """The bundled kanban plugin: one declared read over one pinned argv."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        (self.project / ".shift").mkdir(exist_ok=True)
+        (self.project / ".shift/kanban.md").write_text(
+            "# Board\n\n## Todo\n- [c1] Wire the receipt\n\n## Doing\n- [c2] Declared tools\n\n## Done\n- [c3] Pane actions\n")
+        output = self.shift(
+            "/mode autopilot\nwhat is on the board\n/quit\n",
+            plan=[tool_call("tool_search", {"query": "board"}),
+                  tool_call("kanban_board", {}), answer("done")],
+        )
+        self.assertIn("kanban 0.2", self.shift("/plugins\n/quit\n"))
+        # The plugin pins the whole argv, so the read runs without asking.
+        # The read binding means this is the read tool with its path fixed:
+        # no binary, no allowlist entry, project boundary from read itself.
+        self.assertIn("## Doing", self.tool_results()[-1])
+        self.assertIn("- [c2] Declared tools", self.tool_results()[-1])
+        self.assertIn(".shift/kanban.md", self.tool_results()[-1])
+
+    def test_a_bundled_plugin_does_not_make_itself_resident(self):
+        """Residency is charged on every request of every session, used or not."""
+        for manifest in sorted(ROOT.glob("plugins/*/plugin.scm")):
+            text = manifest.read_text()
+            if "(resident)" not in text:
+                continue
+            # A plugin that is available everywhere must not tax everywhere.
+            # allbeads needs ab and bd, so it is inert without them.
+            self.assertIn("(requires", text, manifest.name)
+            commands = text.split("(requires", 1)[1].split(")\n", 1)[0]
+            self.assertNotIn('"rg"', commands, f"{manifest.name} is resident behind a universal command")
+
+    def test_declared_tools_are_run_calls_under_another_name(self):
+        """A declared tool carries no authority: it is the equivalent run call."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        plugin = self.project / ".shift/plugins/board"
+        plugin.mkdir(parents=True)
+        (plugin / "plugin.scm").write_text(
+            '((plugin "board" "0.1")\n'
+            ' (description "fixture")\n'
+            ' (tool "board_say" (description "Print one word to the board.")\n'
+            '   (resident)\n'
+            '   (parameter "word" string "The word to print")\n'
+            '   (run "printf" "{word}"))\n'
+            ' (tool "board_peek" (description "Peek at a card by id.")\n'
+            '   (parameter "card" string "Card id")\n'
+            '   (run "printf" "peeked-{card}"))\n'
+            ' (allow-run ("printf")))\n')
+
+        # Resident: offered without a search, and allowlisted by the plugin, so
+        # it runs in manual mode without asking, exactly as the run would.
+        output = self.shift(
+            "/plugins\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "from-declared"}), answer("done")],
+        )
+        self.assertIn("2 tools (1 resident)", output)
+        self.assertIn("from-declared", self.tool_results()[-1])
+
+        # The schema reaches the model under its own name, and the one that did
+        # not ask to be resident does not ride along.
+        names = [t["function"]["name"] for t in Provider.last_tools]
+        self.assertIn("board_say", names)
+        self.assertNotIn("board_peek", names)
+
+        # Non-resident: tool_search enables it for the turn, then it runs.
+        # Autopilot, because manual asks before every read-only tool.
+        output = self.shift(
+            "/mode autopilot\npeek\n/quit\n",
+            plan=[tool_call("tool_search", {"query": "peek at a card"}),
+                  tool_call("board_peek", {"card": "c-12"}),
+                  answer("done")],
+        )
+        self.assertIn("board_peek", self.tool_results()[-2])
+        self.assertIn("peeked-c-12", self.tool_results()[-1])
+
+        # A value full of shell metacharacters is one argv element and nothing
+        # else. printf echoes it back whole; no second command runs.
+        self.shift(
+            "say\n/quit\n",
+            plan=[tool_call("board_say", {"word": "a; touch pwned"}), answer("done")],
+        )
+        self.assertIn("a; touch pwned", self.tool_results()[-1])
+        self.assertFalse((self.project / "pwned").exists())
+
+        # A call that does not satisfy the template is the model's mistake.
+        self.shift(
+            "say\n/quit\n",
+            plan=[tool_call("board_say", {}), answer("done")],
+        )
+        self.assertIn("requires word", self.tool_results()[-1])
+
+        # Plan mode denies it because it denies the run it becomes.
+        output = self.shift(
+            "/mode plan\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "nope"}), answer("done")],
+        )
+        self.assertIn("denied", json.dumps(Provider.last_messages))
+
+        # Disabling the plugin takes the tool with it.
+        output = self.shift(
+            "/plugin disable board\nsay it\n/quit\n",
+            plan=[tool_call("board_say", {"word": "gone"}), answer("done")],
+        )
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+
+    def test_declared_tool_without_an_allowlist_entry_asks(self):
+        """A plugin cannot widen its own authority by wrapping a command."""
+        self.env["SHIFT_PLUGINS"] = "on"
+        plugin = self.project / ".shift/plugins/unallowed"
+        plugin.mkdir(parents=True)
+        (plugin / "plugin.scm").write_text(
+            '((plugin "unallowed" "0.1")\n'
+            ' (description "fixture")\n'
+            ' (tool "sneak" (description "Run something nobody allowed.")\n'
+            '   (resident)\n'
+            '   (run "printf" "sneaky")))\n')
+        # The run is not allowlisted, so it needs approval. A piped session has
+        # nobody to ask, so it is denied and the command never runs.
+        self.shift(
+            "go\n/quit\n",
+            plan=[tool_call("sneak", {}), answer("done")],
+        )
+        self.assertIn("tool unavailable", self.tool_results()[-1])
+        self.assertNotIn("sneaky", " ".join(self.tool_results()))
+
     def test_plugins_contribute_and_scopes_override(self):
         self.env["SHIFT_PLUGINS"] = "on"
         fake = ROOT / "test/fake_mcp_server.py"
@@ -1429,11 +1580,17 @@ class CodingWorkflow(unittest.TestCase):
         self.assertIn("changed  notes.txt (+1 −1)", err)
         self.assertIn("ran      sh -c echo ran; exit 3  exit 3", err)
         self.assertIn("undo     available (/undo)", err)
-        self.assertIn("resume ./bin/shift-agent --resume p", err)
+        self.assertIn("resume shift-agent --resume p", err)
         (receipt,) = self.receipts()
         self.assertEqual(json.loads(receipt_file.read_text()), receipt)
         self.assertEqual(receipt["status"], "ok")
-        self.assertEqual(receipt["tokens"], {"prompt": 4300, "cached": 1000, "uncached": 3300, "completion": 55})
+        self.assertEqual(receipt["tokens"], {"prompt": 4300, "cached": 1000, "cache_write": 0,
+                                             "uncached": 3300, "completion": 55})
+        # The fake provider is not a priced model, so the turn reports no cost
+        # rather than a zero that would sum as a free turn.
+        self.assertIsNone(receipt["cost"])
+        self.assertIsNone(receipt["price_source"])
+        self.assertNotIn("receipt.cost", self.turn_span()["attributes"])
         self.assertEqual(receipt["tool_calls"], {"edit": 1, "run": 1})
         self.assertEqual([c["path"] for c in receipt["changed"]], ["notes.txt"])
         self.assertEqual((receipt["changed"][0]["added"], receipt["changed"][0]["removed"]), (1, 1))

@@ -52,7 +52,7 @@ build/shift/%.go: extensions/shift/%.scm
 	@GUILE_AUTO_COMPILE=0 guild compile $(LOAD_PATHS) -o $@ $< >/dev/null
 
 test: build
-	@set -e; for suite in sha256 changes patch receipt coding default-agent json provider provider-metadata provider-telemetry tools extensions runtime session trace prompt compaction recovery context daily ui skills settings mcp-client judge typed plugins redact authority fuzz workflow; do \
+	@set -e; for suite in sha256 changes patch receipt pricing declared coding default-agent json provider provider-metadata provider-telemetry tools extensions runtime session trace prompt compaction recovery context daily ui skills settings mcp-client judge typed plugins redact authority fuzz workflow; do \
 	  GUILE_AUTO_COMPILE=0 guile $(GUILE_PATHS) test/run.scm test/$$suite.scm; \
 	done
 	python3 test/stream_test.py
